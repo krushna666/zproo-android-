@@ -10,9 +10,9 @@ import {
   FormAlert,
   Skeleton,
 } from '@zproo/ui';
-import { Building2, CreditCard, Lock, Smartphone, Timer, Wallet } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { Link, Navigate, useLocation, useSearchParams } from 'react-router';
+import { Building2, CreditCard, Lock, Smartphone, Wallet } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Navigate, useLocation, useSearchParams } from 'react-router';
 import { errorMessage } from '@/features/auth/errors';
 import { useBusDraft } from '@/features/buses/draft';
 import { bookingKeys, checkoutApi, useBooking } from '@/features/checkout/api';
@@ -21,10 +21,19 @@ import { confirmationUrl, searchHome, serviceOf } from '@/features/checkout/link
 import { isAwaitingPayment, isConfirmed, isConfirming } from '@/features/checkout/status';
 import { TripSummary } from '@/features/checkout/TripSummary';
 import { CheckoutShell } from '@/features/checkout/CheckoutShell';
+import { HoldExpired, HoldTimer } from '@/features/checkout/HoldTimer';
+import { UpiQr } from '@/features/checkout/UpiQr';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
 import { useFlightDraft } from '@/features/flights/draft';
 import { inr } from '@/features/flights/format';
 import { useCountdown } from '@/hooks/useCountdown';
+
+const METHOD_NOUN = {
+  upi: 'UPI',
+  card: 'card',
+  netbanking: 'net banking',
+  wallet: 'wallet',
+} as const;
 
 const METHODS = [
   { id: 'upi', label: 'UPI', hint: 'Google Pay, PhonePe, Paytm & more', icon: Smartphone },
@@ -71,6 +80,7 @@ function Payment({ booking }: { booking: BookingDetails }) {
   const clearBus = useBusDraft((s) => s.clear);
   const [method, setMethod] = useState<(typeof METHODS)[number]['id']>('upi');
   const [paid, setPaid] = useState<string | null>(null);
+  const paying = useRef(false);
   const holdEnds = booking.holdExpiresAt ? Date.parse(booking.holdExpiresAt) : 0;
   const secondsLeft = useCountdown(holdEnds);
   const expired = !isAwaitingPayment(booking) || secondsLeft === 0;
@@ -105,9 +115,13 @@ function Payment({ booking }: { booking: BookingDetails }) {
 
   if (paid) return <Navigate to={confirmationUrl(service, paid)} replace />;
 
-  const minutes = Math.floor(secondsLeft / 60);
-  const seconds = String(secondsLeft % 60).padStart(2, '0');
   const mock = order.data?.provider === 'mock';
+  const submit = (outcome: 'success' | 'failure') => {
+    // Button lock: never two attempts at once (the API is idempotent as well).
+    if (paying.current || !order.data) return;
+    paying.current = true;
+    pay.mutate(outcome, { onSettled: () => (paying.current = false) });
+  };
 
   return (
     <CheckoutShell
@@ -122,36 +136,13 @@ function Payment({ booking }: { booking: BookingDetails }) {
       }
     >
       {expired ? (
-        <div className="space-y-3">
-          <FormAlert>
-            Your seat hold for booking {booking.reference} has expired and the seats were released.
-            Please search again to book.
-          </FormAlert>
-          <Button asChild>
-            <Link to={searchHome(service)}>Search again</Link>
-          </Button>
-        </div>
+        <HoldExpired searchHref={searchHome(service)} />
       ) : (
         <>
-          <div
-            role="timer"
-            aria-live="off"
-            className={cn(
-              'flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm',
-              secondsLeft < 120
-                ? 'border-danger/40 bg-danger/5 text-danger'
-                : 'border-border bg-card',
-            )}
-          >
-            <Timer aria-hidden className="size-5 shrink-0" />
-            <span>
-              Seats held for{' '}
-              <strong className="tabular-nums">
-                {minutes}:{seconds}
-              </strong>{' '}
-              · Booking <strong>{booking.reference}</strong>
-            </span>
-          </div>
+          <HoldTimer secondsLeft={secondsLeft} />
+          <p className="-mt-3 text-sm text-muted">
+            Booking <strong className="font-mono">{booking.reference}</strong>
+          </p>
 
           <Card>
             <CardHeader className="pb-3">
@@ -168,10 +159,11 @@ function Payment({ booking }: { booking: BookingDetails }) {
                     key={id}
                     type="button"
                     role="radio"
+                    data-testid={`checkout-pay-method-${id}`}
                     aria-checked={method === id}
                     onClick={() => setMethod(id)}
                     className={cn(
-                      'flex items-center gap-3 rounded-xl border p-3 text-left transition-colors',
+                      'flex min-h-11 items-center gap-3 rounded-xl border p-3 text-left transition-colors',
                       method === id
                         ? 'border-primary bg-primary-light'
                         : 'border-border hover:border-foreground/30',
@@ -184,6 +176,16 @@ function Payment({ booking }: { booking: BookingDetails }) {
                     </span>
                   </button>
                 ))}
+              </div>
+              <div className="mt-4 border-t border-border pt-4">
+                {method === 'upi' ? (
+                  <UpiQr amountPaise={booking.price.totalPaise} reference={booking.reference} />
+                ) : (
+                  <p className="text-sm text-muted">
+                    You'll enter your {METHOD_NOUN[method]} details on the payment gateway's secure
+                    page. ZPROO GO never sees or stores them.
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -206,8 +208,9 @@ function Payment({ booking }: { booking: BookingDetails }) {
                 <div className="flex flex-wrap gap-3">
                   <Button
                     size="lg"
+                    data-testid="checkout-pay-submit"
                     disabled={pay.isPending || !order.data}
-                    onClick={() => pay.mutate('success')}
+                    onClick={() => submit('success')}
                   >
                     <Lock aria-hidden />{' '}
                     {pay.isPending
@@ -217,8 +220,9 @@ function Payment({ booking }: { booking: BookingDetails }) {
                   <Button
                     size="lg"
                     variant="outline"
+                    data-testid="checkout-pay-fail"
                     disabled={pay.isPending || !order.data}
-                    onClick={() => pay.mutate('failure')}
+                    onClick={() => submit('failure')}
                   >
                     Simulate a failed payment
                   </Button>

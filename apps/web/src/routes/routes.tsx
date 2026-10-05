@@ -37,6 +37,8 @@ export const routes: RouteObject[] = [
       { path: '/flights/results', lazy: page(() => import('@/pages/flights/FlightResultsPage')) },
       { path: '/flights/:id', lazy: page(() => import('@/pages/flights/FlightDetailsPage')) },
       { path: '/buses', lazy: page(() => import('@/pages/buses/BusesPage')) },
+      { path: '/buses/search', lazy: page(() => import('@/pages/buses/BusResultsPage')) },
+      // Old results URL (shared links): same page.
       { path: '/buses/results', lazy: page(() => import('@/pages/buses/BusResultsPage')) },
       { path: '/buses/:id', lazy: page(() => import('@/pages/buses/BusDetailsPage')) },
       { path: '/buses/:id/seats', lazy: page(() => import('@/pages/buses/BusSeatsPage')) },

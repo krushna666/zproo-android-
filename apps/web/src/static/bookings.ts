@@ -1,8 +1,10 @@
+import { busRefund } from '@zproo/catalog';
 import { DEMO_COUPONS, findCity, type DemoCoupon } from '@zproo/config';
 import type {
   BookingDetails,
   BookingListItem,
   BookingStatus,
+  CancellationQuote,
   CouponRejection,
   PaymentOrder,
 } from '@zproo/types';
@@ -36,6 +38,7 @@ type NewBooking = Omit<
   | 'confirmedAt'
   | 'cancelledAt'
   | 'coupon'
+  | 'demo'
 >;
 
 /** Applies a status change through the shared state machine (throws on an illegal move). */
@@ -59,6 +62,7 @@ export function newBooking(input: NewBooking): BookingDetails {
     holdExpiresAt: new Date(now + holdMinutes * 60_000).toISOString(),
     serverNow: new Date(now).toISOString(),
     coupon: null,
+    demo: true,
     confirmedAt: null,
     cancelledAt: null,
   };
@@ -175,8 +179,8 @@ function listItem(b: StoredBooking): BookingListItem {
       serviceType: 'BUS',
       status: d.status,
       paymentStatus: d.paymentStatus,
-      title: `${cityName(d.bus.offer.from.code)} → ${cityName(d.bus.offer.to.code)}`,
-      subtitle: `${d.bus.offer.operator.name} · Seat${d.bus.seatNumbers.length === 1 ? '' : 's'} ${d.bus.seatNumbers.join(', ')}`,
+      title: `${cityName(d.bus.trip.from.code)} → ${cityName(d.bus.trip.to.code)}`,
+      subtitle: `${d.bus.trip.operator.name} · Seat${d.bus.seats.length === 1 ? '' : 's'} ${d.bus.seats.join(', ')}`,
       travelDate: d.travelDate,
       totalPaise: d.price.totalPaise,
       createdAt: d.createdAt,
@@ -212,7 +216,30 @@ function issueTickets(d: BookingDetails): void {
       ticketNumber: `999${randomDigits(10)}`,
     })),
   }));
-  if (d.bus) d.bus = { ...d.bus, pnr: `${d.bus.offer.operator.code}${randomDigits(7)}` };
+  if (d.bus) d.bus = { ...d.bus, pnr: `${d.bus.trip.operator.code}${randomDigits(7)}` };
+}
+
+/** Same rules as the API's CancellationService: confirmed bus bookings, refund by policy tier. */
+function cancellationQuote(d: BookingDetails): CancellationQuote {
+  const base = { bookingRef: d.reference, refundAmount: 0, refundPercent: 0 };
+  if (d.status !== 'CONFIRMED')
+    return { ...base, cancellable: false, reason: 'Only confirmed bookings can be cancelled.' };
+  if (!d.bus)
+    return {
+      ...base,
+      cancellable: false,
+      reason: 'Please contact support to cancel this booking.',
+    };
+  const minutes = (Date.parse(d.bus.trip.departure) - Date.now()) / 60_000;
+  if (minutes <= 0)
+    return { ...base, cancellable: false, reason: 'This bus has already departed.' };
+  const { refundPaise, refundPercent } = busRefund(
+    d.price.totalPaise,
+    d.price.feesPaise,
+    minutes,
+    d.bus.trip.cancellationPolicy,
+  );
+  return { ...base, cancellable: true, refundAmount: refundPaise, refundPercent };
 }
 
 export function bookingRoutes(req: StaticRequest): StaticResult | null {
@@ -226,6 +253,52 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
       .sort((a, b) => b.details.createdAt.localeCompare(a.details.createdAt))
       .map(listItem);
     return { data: items };
+  }
+
+  const quote = /^\/bookings\/([^/]+)\/cancellation$/.exec(path);
+  if (method === 'GET' && quote)
+    return { data: cancellationQuote(ownBooking(quote[1] as string).details) };
+
+  const release = /^\/bookings\/([^/]+)\/release$/.exec(path);
+  if (method === 'POST' && release) {
+    const booking = ownBooking(release[1] as string);
+    const d = booking.details;
+    if (d.paymentStatus === 'CAPTURED' || !OPEN_HOLD_STATUSES.includes(d.status))
+      throw new StaticError(409, 'INVALID_STATE', 'This booking is not on hold');
+    move(d, 'EXPIRED');
+    d.paymentStatus = 'CANCELLED';
+    booking.holds = [];
+    for (const p of db().payments) {
+      if (p.reference === d.reference && p.status === 'CREATED') p.status = 'CANCELLED';
+    }
+    save();
+    return { data: { bookingRef: d.reference, status: 'EXPIRED' }, message: 'Hold released' };
+  }
+
+  const cancel = /^\/buses\/([^/]+)\/cancel$/.exec(path);
+  if (method === 'POST' && cancel) {
+    const booking = ownBooking(cancel[1] as string);
+    const d = booking.details;
+    if (d.serviceType !== 'BUS') throw notFound('Booking not found');
+    const q = cancellationQuote(d);
+    if (!q.cancellable)
+      throw new StaticError(409, 'INVALID_STATE', q.reason ?? 'This booking can’t be cancelled');
+    move(d, 'CANCELLED');
+    d.cancelledAt = new Date().toISOString();
+    booking.holds = [];
+    if (q.refundAmount > 0) {
+      move(d, 'REFUND_PENDING');
+      const paid = db().payments.find(
+        (p) => p.reference === d.reference && p.status === 'CAPTURED',
+      );
+      if (paid)
+        paid.status = q.refundAmount >= paid.amountPaise ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
+    }
+    save();
+    return {
+      data: { bookingRef: d.reference, status: d.status, refundAmount: q.refundAmount },
+      message: 'Booking cancelled',
+    };
   }
 
   const details = /^\/bookings\/([^/]+)$/.exec(path);

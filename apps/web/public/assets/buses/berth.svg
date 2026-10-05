@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-label="Sleeper berth with blanket and reading light">
+  <rect width="240" height="160" fill="#F8FAFC"/>
+  <rect x="24" y="62" width="192" height="64" rx="10" fill="#FFFFFF" stroke="#6B7280" stroke-width="2"/>
+  <rect x="36" y="74" width="46" height="26" rx="8" fill="#E5E7EB"/>
+  <rect x="88" y="80" width="116" height="34" rx="8" fill="#D9141E" opacity="0.85"/>
+  <circle cx="196" cy="36" r="8" fill="#F59E0B"/>
+  <path d="M188 44 L170 62 L222 62 L204 44 Z" fill="#F59E0B" opacity="0.3"/>
+  <rect x="24" y="128" width="192" height="6" rx="3" fill="#111827"/>
+</svg>

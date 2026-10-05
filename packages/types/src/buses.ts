@@ -3,22 +3,13 @@
  * offset; dates are IST calendar dates (YYYY-MM-DD).
  */
 
+import type { PriceBreakdown } from './flights';
+
 export type BusLayout =
-  | 'SEATER_2_2'
-  | 'SEATER_2_1'
-  | 'SLEEPER_2_1'
-  | 'SEMI_SLEEPER_2_2'
-  | 'SEATER_SLEEPER_COMBO';
+  'SEATER_2_2' | 'SEATER_2_1' | 'SLEEPER_2_1' | 'SEMI_SLEEPER_2_2' | 'SEATER_SLEEPER_COMBO';
 
 export type BusAmenity =
-  | 'wifi'
-  | 'charging'
-  | 'water'
-  | 'blanket'
-  | 'reading_light'
-  | 'cctv'
-  | 'tracking'
-  | 'snacks';
+  'wifi' | 'charging' | 'water' | 'blanket' | 'reading_light' | 'cctv' | 'tracking' | 'snacks';
 
 export const BUS_AMENITY_LABELS: Record<BusAmenity, string> = {
   wifi: 'Wi-Fi',
@@ -177,6 +168,8 @@ export interface BusSeatMap {
   decks: BusDeckMap[];
   maxSelectable: number;
   bookable: boolean;
+  /** True when the seats come from the development provider (demo banner). */
+  demo: boolean;
 }
 
 /** POST /buses/book response */
@@ -185,7 +178,7 @@ export interface BusBookResponse {
   status: 'HELD';
   holdExpiresAt: string;
   serverNow: string;
-  priceBreakdown: import('./flights').PriceBreakdown;
+  priceBreakdown: PriceBreakdown;
 }
 
 /** The bus journey of a booking. */

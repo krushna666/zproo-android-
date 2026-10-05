@@ -13,10 +13,10 @@ export function TripSummary({
   if (booking.bus) {
     return (
       <BusTripSummary
-        trip={booking.bus.offer}
+        trip={booking.bus.trip}
         boarding={booking.bus.boardingPoint}
         dropping={booking.bus.droppingPoint}
-        seatNumbers={booking.bus.seatNumbers}
+        seats={booking.bus.seats}
       />
     );
   }

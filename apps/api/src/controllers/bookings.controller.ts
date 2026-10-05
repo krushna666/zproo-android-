@@ -51,5 +51,11 @@ export function createBookingsController(
     sendSuccess(res, await cancellations.quote(requireAuth(req).userId, reference));
   };
 
-  return { list, get, ticket, cancellation };
+  /** Give up an unpaid hold now (seats/travellers changed) instead of waiting for it to lapse. */
+  const release: RequestHandler = async (req, res) => {
+    const { reference } = validated<{ reference: string }>(req, 'params');
+    sendSuccess(res, await bookings.release(requireAuth(req).userId, reference), 'Hold released');
+  };
+
+  return { list, get, ticket, cancellation, release };
 }

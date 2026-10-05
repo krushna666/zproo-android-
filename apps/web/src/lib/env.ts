@@ -20,6 +20,10 @@ export const env = {
    * needs no server. Set VITE_DATA_SOURCE=api to use the ZPROO GO API instead.
    */
   staticMode: import.meta.env.VITE_DATA_SOURCE !== 'api',
+  /** UPI ID shown as a QR on the payment page (public; ignored unless it looks like name@bank). */
+  upiId: /^[\w.-]{2,256}@[A-Za-z]{2,64}$/.test(import.meta.env.VITE_UPI_ID ?? '')
+    ? (import.meta.env.VITE_UPI_ID as string)
+    : undefined,
   /** Absolute site URL. Empty only when prerendering without VITE_SITE_URL (canonical links are then omitted). */
   siteUrl:
     readUrl('VITE_SITE_URL', import.meta.env.VITE_SITE_URL) ??

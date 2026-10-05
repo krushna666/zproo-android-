@@ -26,16 +26,19 @@ export function Check({
   hint,
   checked,
   onChange,
+  testId,
 }: {
   label: string;
   hint?: string;
   checked: boolean;
   onChange: () => void;
+  testId?: string;
 }) {
   return (
-    <label className="flex cursor-pointer items-center gap-3 rounded-lg py-1 text-sm">
+    <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg py-1 text-sm">
       <input
         type="checkbox"
+        data-testid={testId}
         checked={checked}
         onChange={onChange}
         className="size-4 accent-primary"

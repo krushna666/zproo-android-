@@ -28,7 +28,11 @@ function daysAhead(days: number): string {
   return new Date(Date.now() + 330 * 60_000 + days * 86_400_000).toISOString().slice(0, 10);
 }
 
-function search(ctx: Ctx, query: Record<string, string> = {}, headers: Record<string, string> = {}) {
+function search(
+  ctx: Ctx,
+  query: Record<string, string> = {},
+  headers: Record<string, string> = {},
+) {
   return request(ctx.app)
     .get('/api/buses/search')
     .set(headers)
@@ -84,7 +88,13 @@ interface BookOptions {
   headers?: Record<string, string>;
 }
 
-function book(ctx: Ctx, token: string, trip: BusTripDetails, seats: BusSeat[], o: BookOptions = {}) {
+function book(
+  ctx: Ctx,
+  token: string,
+  trip: BusTripDetails,
+  seats: BusSeat[],
+  o: BookOptions = {},
+) {
   const seatNos = o.seats ?? seats.map((s) => s.seatNo);
   return request(ctx.app)
     .post('/api/buses/book')
@@ -116,7 +126,12 @@ describe('GET /api/buses/cities', () => {
   it('suggests bus cities by name or code', async () => {
     const ctx = createTestContext();
     const res = await request(ctx.app).get('/api/buses/cities').query({ q: 'pun' }).expect(200);
-    expect(res.body.data[0]).toEqual({ code: 'PNQ', name: 'Pune', state: 'Maharashtra', popular: true });
+    expect(res.body.data[0]).toEqual({
+      code: 'PNQ',
+      name: 'Pune',
+      state: 'Maharashtra',
+      popular: true,
+    });
     const byCode = await request(ctx.app).get('/api/buses/cities').query({ q: 'bom' }).expect(200);
     expect(byCode.body.data.map((c: { code: string }) => c.code)).toContain('BOM');
   });
@@ -197,9 +212,7 @@ describe('GET /api/buses/search', () => {
     const res = await search(ctx, query).expect(400);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
     expect(res.body.error.details.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining(message ? { path, message } : { path }),
-      ]),
+      expect.arrayContaining([expect.objectContaining(message ? { path, message } : { path })]),
     );
   });
 
@@ -241,15 +254,19 @@ describe('trip details and seat map', () => {
     const open = allSeats(map).filter((s) => s.status === 'AVAILABLE');
     expect(open).toHaveLength(summary.seatsLeft);
     expect(Math.min(...open.map((s) => s.price))).toBe(summary.fromPrice);
-    expect(allSeats(map).filter((s) => s.ladiesOnly && s.status === 'AVAILABLE').length).toBeLessThanOrEqual(
-      allSeats(map).length,
-    );
+    expect(
+      allSeats(map).filter((s) => s.ladiesOnly && s.status === 'AVAILABLE').length,
+    ).toBeLessThanOrEqual(allSeats(map).length);
   });
 
   it('returns 404 for a well-formed but unknown trip and 400 for a malformed id', async () => {
     const ctx = createTestContext();
-    const missing = await request(ctx.app).get('/api/buses/trp_PNQ_BOM_20300101_99/seats').expect(404);
-    expect(missing.body.error.message).toBe('This bus is no longer available. Please search again.');
+    const missing = await request(ctx.app)
+      .get('/api/buses/trp_PNQ_BOM_20300101_99/seats')
+      .expect(404);
+    expect(missing.body.error.message).toBe(
+      'This bus is no longer available. Please search again.',
+    );
     await request(ctx.app).get('/api/buses/bs_nope/seats').expect(400);
   });
 });
@@ -449,9 +466,7 @@ describe('POST /api/buses/book', () => {
       expect.arrayContaining([{ path: 'body.seats.0', message: "Seat L99 isn't on this bus" }]),
     );
 
-    const point = await book(ctx, accessToken, trip, one, { boardingPointId: 'bp_99' }).expect(
-      400,
-    );
+    const point = await book(ctx, accessToken, trip, one, { boardingPointId: 'bp_99' }).expect(400);
     expect(point.body.error.details.issues).toEqual([
       { path: 'body.boardingPointId', message: 'Choose a boarding point' },
     ]);
@@ -561,14 +576,21 @@ describe('bus payment, ticket, cancellation and expiry', () => {
       refundPercent: 50,
       refundAmount: Math.floor(total / 2),
     });
-    expect(await quoteAt(2)).toMatchObject({ cancellable: true, refundPercent: 0, refundAmount: 0 });
+    expect(await quoteAt(2)).toMatchObject({
+      cancellable: true,
+      refundPercent: 0,
+      refundAmount: 0,
+    });
     expect(await quoteAt(-1)).toMatchObject({
       cancellable: false,
       reason: 'This bus has already departed.',
     });
 
     const auth = { Authorization: `Bearer ${user.accessToken}` };
-    const res = await request(ctx.app).post(`/api/buses/${bookingRef}/cancel`).set(auth).expect(200);
+    const res = await request(ctx.app)
+      .post(`/api/buses/${bookingRef}/cancel`)
+      .set(auth)
+      .expect(200);
     expect(res.body.data).toEqual({
       bookingRef,
       status: 'REFUND_PENDING',
@@ -598,6 +620,31 @@ describe('bus payment, ticket, cancellation and expiry', () => {
       expect(allSeats(after).find((x) => x.seatNo === s.seatNo)?.status).toBe('AVAILABLE');
     // The same seats can be booked again.
     await book(ctx, accessToken, trip, seats).expect(201);
+  });
+
+  it('lets the owner release an unpaid hold at once (and nobody else)', async () => {
+    const ctx = createTestContext();
+    const owner = await signUp(ctx);
+    const { trip, seats } = await pickTrip(ctx, 1);
+    const bookingRef = (await book(ctx, owner.accessToken, trip, seats).expect(201)).body.data
+      .bookingRef as string;
+    const stranger = await signUp(ctx);
+    await request(ctx.app)
+      .post(`/api/bookings/${bookingRef}/release`)
+      .set('Authorization', `Bearer ${stranger.accessToken}`)
+      .expect(403);
+    const res = await request(ctx.app)
+      .post(`/api/bookings/${bookingRef}/release`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+    expect(res.body.data).toEqual({ bookingRef, status: 'EXPIRED' });
+    expect(await prisma.busSeatHold.count({ where: { active: true } })).toBe(0);
+    // The same customer can now hold those seats again.
+    await book(ctx, owner.accessToken, trip, seats).expect(201);
+    await request(ctx.app)
+      .post(`/api/bookings/${bookingRef}/release`)
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(409);
   });
 
   it("hides other users' bus bookings (403), but not from support", async () => {

@@ -332,6 +332,6 @@ export function busSearchInputFromParams(params: { get(name: string): string | n
   return {
     from: params.get('from') ?? '',
     to: params.get('to') ?? '',
-    date: params.get('date') ?? addDays(todayIso(), DEFAULT_LEAD_DAYS.bus),
+    date: params.get('date') ?? addDays(todayInIst(), DEFAULT_LEAD_DAYS.bus),
   };
 }

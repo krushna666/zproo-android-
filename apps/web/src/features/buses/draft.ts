@@ -1,31 +1,41 @@
-import type { BusPassengerInput } from '@zproo/validation';
+import type { BusTravellerInput, TravelContact } from '@zproo/validation';
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
-import type { Contact } from '@/features/flights/draft';
 
+export interface BusSelectedSeat {
+  seatNo: string;
+  /** Price shown when chosen (taxes included) */
+  price: number;
+  ladiesOnly: boolean;
+}
+
+/** What the seat page hands to checkout (and what deep login restores). */
 export interface BusSelection {
   tripId: string;
-  /** Seat numbers with the price shown when chosen */
-  seats: { number: string; pricePaise: number; ladiesOnly: boolean }[];
+  seats: BusSelectedSeat[];
   boardingPointId: string;
   droppingPointId: string;
-  /** Total shown when the seats were chosen; the API refuses the booking if it has moved. */
-  expectedTotalPaise: number;
-  /** Where "change seats" goes back to. */
+  /** Total shown on the seat page; the API refuses the booking if it has moved. */
+  expectedTotal: number;
+  /** Where "Change seats" goes back to. */
   seatsUrl: string;
 }
 
 interface BusDraftState {
   selection: BusSelection | null;
-  passengers: BusPassengerInput[] | null;
-  contact: Contact | null;
+  travellers: BusTravellerInput[] | null;
+  contact: TravelContact | null;
   /** Renewed whenever the selection or travellers change, so edits aren't mistaken for retries. */
   idempotencyKey: string;
+  /** Booking held for this draft (set after POST /buses/book). */
   reference: string | null;
   start: (selection: BusSelection) => void;
-  setTravellers: (passengers: BusPassengerInput[], contact: Contact) => void;
-  acceptPrice: (totalPaise: number) => void;
+  setTravellers: (travellers: BusTravellerInput[], contact: TravelContact) => void;
+  /** "Continue at ₹new": take the server's total and book again with a new key. */
+  acceptPrice: (total: number) => void;
   setReference: (reference: string) => void;
+  /** Forget the hold without releasing it (it was released elsewhere). */
+  forgetReference: () => void;
   clear: () => void;
 }
 
@@ -55,44 +65,71 @@ const safeSessionStorage: StateStorage = {
 
 const newKey = () => crypto.randomUUID();
 
-/** The bus being booked, kept per browser tab (sessionStorage). Holds no payment data. */
+/**
+ * A changed selection or traveller list replaces any hold made from the old one: release it so
+ * the customer isn't blocked by their own seats (best effort; the hold lapses on its own anyway).
+ */
+function releasePrevious(reference: string | null): void {
+  if (!reference) return;
+  void import('@/features/checkout/api')
+    .then(({ checkoutApi }) => checkoutApi.releaseHold(reference))
+    .catch(() => undefined);
+}
+
+/**
+ * The bus being booked, kept per browser tab in sessionStorage under `zproo:draft:bus` — it
+ * survives the deep-login round trip and is cleared on logout. Holds no payment data.
+ */
 export const useBusDraft = create<BusDraftState>()(
   persist(
     (set) => ({
       selection: null,
-      passengers: null,
+      travellers: null,
       contact: null,
       idempotencyKey: newKey(),
       reference: null,
       start: (selection) =>
+        set((s) => {
+          releasePrevious(s.reference);
+          return {
+            selection,
+            // Keep travellers already typed for seats that are still chosen.
+            travellers:
+              s.travellers?.filter((t) => selection.seats.some((x) => x.seatNo === t.seatNo)) ??
+              null,
+            idempotencyKey: newKey(),
+            reference: null,
+          };
+        }),
+      setTravellers: (travellers, contact) =>
+        set((s) => {
+          releasePrevious(s.reference);
+          return { travellers, contact, idempotencyKey: newKey(), reference: null };
+        }),
+      acceptPrice: (total) =>
         set((s) => ({
-          selection,
-          // Keep names already typed for seats that are still chosen.
-          passengers:
-            s.passengers?.filter((p) =>
-              selection.seats.some((seat) => seat.number === p.seatNumber),
-            ) ?? null,
-          idempotencyKey: newKey(),
-          reference: null,
-        })),
-      setTravellers: (passengers, contact) =>
-        set({ passengers, contact, idempotencyKey: newKey(), reference: null }),
-      acceptPrice: (totalPaise) =>
-        set((s) => ({
-          selection: s.selection && { ...s.selection, expectedTotalPaise: totalPaise },
+          selection: s.selection && { ...s.selection, expectedTotal: total },
           idempotencyKey: newKey(),
         })),
       setReference: (reference) => set({ reference }),
+      forgetReference: () => set({ reference: null, idempotencyKey: newKey() }),
       clear: () =>
-        set({ selection: null, passengers: null, reference: null, idempotencyKey: newKey() }),
+        set({
+          selection: null,
+          travellers: null,
+          reference: null,
+          idempotencyKey: newKey(),
+        }),
     }),
     {
       name: 'zproo:draft:bus',
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => safeSessionStorage),
-      partialize: ({ selection, passengers, contact, idempotencyKey, reference }) => ({
+      // Drafts from the old contract (seat "number", passengers) are dropped, not migrated.
+      migrate: () => ({ selection: null, travellers: null, contact: null, reference: null }),
+      partialize: ({ selection, travellers, contact, idempotencyKey, reference }) => ({
         selection,
-        passengers,
+        travellers,
         contact,
         idempotencyKey,
         reference,

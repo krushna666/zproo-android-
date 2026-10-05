@@ -1,30 +1,48 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useMutation } from '@tanstack/react-query';
 import {
   Button,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
+  cn,
   FormAlert,
   FormField,
   Input,
   PhoneInput,
   Skeleton,
+  toast,
 } from '@zproo/ui';
-import { busPassengerSchema, contactSchema } from '@zproo/validation';
+import {
+  BUS_MESSAGES,
+  busTravellerSchema,
+  travelContactSchema,
+  type BusTravellerInput,
+  type TravelContact,
+} from '@zproo/validation';
 import { ArrowRight, Venus } from 'lucide-react';
-import type { ComponentProps } from 'react';
-import { useForm, type FieldErrors } from 'react-hook-form';
+import { useState } from 'react';
+import { useForm, useWatch, type FieldErrors } from 'react-hook-form';
 import { useNavigate } from 'react-router';
 import { z } from 'zod';
-import { errorMessage } from '@/features/auth/errors';
+import { invalidForm } from '@/features/auth/errors';
 import { useAuthStore } from '@/features/auth/store';
-import { useBusTrip } from '@/features/buses/api';
+import { busesApi, useBusTrip } from '@/features/buses/api';
 import { BusTripSummary } from '@/features/buses/components/BusTripSummary';
 import { useBusDraft, type BusSelection } from '@/features/buses/draft';
-import { CheckoutShell, NothingSelected } from '@/features/checkout/CheckoutShell';
-import { PriceSummary } from '@/features/checkout/PriceSummary';
 import { busPriceBreakdown } from '@/features/buses/price';
+import { CheckoutShell, NothingSelected } from '@/features/checkout/CheckoutShell';
+import { PriceChangedDialog } from '@/features/checkout/PriceChangedDialog';
+import { PriceSummary } from '@/features/checkout/PriceSummary';
+import { userMessage } from '@/lib/apiErrors';
+import { ApiClientError } from '@/services/http';
+
+const GENDERS = [
+  { id: 'MALE', label: 'Male' },
+  { id: 'FEMALE', label: 'Female' },
+  { id: 'OTHER', label: 'Other' },
+] as const;
 
 export default function BusTravellersPage() {
   const selection = useBusDraft((s) => s.selection);
@@ -33,7 +51,7 @@ export default function BusTravellersPage() {
 }
 
 function Travellers({ selection }: { selection: BusSelection }) {
-  const { data: trip, isPending, error } = useBusTrip(selection.tripId);
+  const { data: trip, isPending, error, refetch } = useBusTrip(selection.tripId);
   return (
     <CheckoutShell
       step={2}
@@ -43,23 +61,28 @@ function Travellers({ selection }: { selection: BusSelection }) {
       aside={
         trip ? (
           <>
-            <PriceSummary price={busPriceBreakdown(selection)} />
+            <PriceSummary price={busPriceBreakdown(selection.seats, trip.busType.ac)} />
             <BusTripSummary
               trip={trip}
               boarding={trip.boardingPoints.find((p) => p.id === selection.boardingPointId)}
               dropping={trip.droppingPoints.find((p) => p.id === selection.droppingPointId)}
-              seatNumbers={selection.seats.map((s) => s.number)}
+              seats={selection.seats.map((s) => s.seatNo)}
             />
           </>
         ) : (
-          <Skeleton className="h-64 rounded-2xl" />
+          <Skeleton className="h-64 rounded-[14px]" />
         )
       }
     >
       {error ? (
-        <FormAlert>{errorMessage(error)}</FormAlert>
+        <div role="alert" className="space-y-3">
+          <FormAlert>{userMessage(error)}</FormAlert>
+          <Button variant="outline" onClick={() => void refetch()}>
+            Retry
+          </Button>
+        </div>
       ) : isPending || !trip ? (
-        <Skeleton className="h-96 rounded-2xl" />
+        <Skeleton className="h-96 rounded-[14px]" />
       ) : (
         <TravellerForm selection={selection} />
       )}
@@ -71,29 +94,30 @@ function TravellerForm({ selection }: { selection: BusSelection }) {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const draft = useBusDraft();
-  const ladies = new Set(selection.seats.filter((s) => s.ladiesOnly).map((s) => s.number));
+  const [priceChange, setPriceChange] = useState<{ oldTotal: number; newTotal: number } | null>(
+    null,
+  );
+  const ladies = new Set(selection.seats.filter((s) => s.ladiesOnly).map((s) => s.seatNo));
 
   const schema = z
-    .object({ passengers: z.array(busPassengerSchema), contact: contactSchema })
+    .object({ travellers: z.array(busTravellerSchema), contact: travelContactSchema })
     .superRefine((v, ctx) =>
-      v.passengers.forEach((p, i) => {
-        if (ladies.has(p.seatNumber) && p.gender !== 'FEMALE') {
+      v.travellers.forEach((t, i) => {
+        if (ladies.has(t.seatNo) && t.gender !== 'FEMALE')
           ctx.addIssue({
             code: 'custom',
-            path: ['passengers', i, 'gender'],
-            message: `Seat ${p.seatNumber} is reserved for women`,
+            path: ['travellers', i, 'gender'],
+            message: BUS_MESSAGES.ladiesSeat,
           });
-        }
       }),
     );
 
-  const saved = new Map(draft.passengers?.map((p) => [p.seatNumber, p]) ?? []);
-  const passengers = selection.seats.map(
-    (seat) =>
-      saved.get(seat.number) ?? {
-        seatNumber: seat.number,
-        firstName: '',
-        lastName: '',
+  const saved = new Map(draft.travellers?.map((t) => [t.seatNo, t]) ?? []);
+  const defaults = selection.seats.map(
+    (seat, i) =>
+      saved.get(seat.seatNo) ?? {
+        seatNo: seat.seatNo,
+        name: i === 0 ? (user?.fullName ?? '') : '',
         age: '' as unknown as number,
         gender: seat.ladiesOnly ? ('FEMALE' as const) : ('MALE' as const),
       },
@@ -102,70 +126,166 @@ function TravellerForm({ selection }: { selection: BusSelection }) {
   const form = useForm<z.input<typeof schema>, unknown, z.output<typeof schema>>({
     resolver: zodResolver(schema),
     defaultValues: {
-      passengers,
+      travellers: defaults,
       contact: draft.contact ?? {
         email: user?.email ?? '',
-        phone: user?.phone?.replace(/^\+91/, '') ?? '',
+        mobile: user?.phone?.replace(/^\+91/, '') ?? '',
       },
     },
     mode: 'onTouched',
   });
-  const { register, handleSubmit, formState } = form;
+  const { register, handleSubmit, formState, control } = form;
   const errors = formState.errors as FieldErrors<z.output<typeof schema>>;
+  const genders = useWatch({ control, name: 'travellers' });
+
+  const book = useMutation({
+    mutationFn: (input: {
+      travellers: BusTravellerInput[];
+      contact: TravelContact;
+      expectedTotal: number;
+      key: string;
+    }) =>
+      busesApi.book(
+        {
+          tripId: selection.tripId,
+          seats: selection.seats.map((s) => s.seatNo),
+          boardingPointId: selection.boardingPointId,
+          droppingPointId: selection.droppingPointId,
+          travellers: input.travellers,
+          contact: input.contact,
+          expectedTotal: input.expectedTotal,
+        },
+        input.key,
+      ),
+    onSuccess: (result) => {
+      useBusDraft.getState().setReference(result.bookingRef);
+      void navigate(`/buses/review?ref=${encodeURIComponent(result.bookingRef)}`);
+    },
+    onError: (err) => {
+      if (!(err instanceof ApiClientError)) return;
+      if (err.errorCode === 'PRICE_CHANGED' && err.details.newTotal !== undefined) {
+        setPriceChange({
+          oldTotal: err.details.oldTotal ?? selection.expectedTotal,
+          newTotal: err.details.newTotal,
+        });
+      } else if (err.errorCode === 'SEAT_UNAVAILABLE') {
+        // Back to the seat map, which refreshes and drops the taken seats with the same message.
+        toast.error(userMessage(err));
+        void navigate(selection.seatsUrl);
+      }
+    },
+  });
+
+  const submit = (values: z.output<typeof schema>, expectedTotal: number, key: string) =>
+    book.mutate({ travellers: values.travellers, contact: values.contact, expectedTotal, key });
 
   const onSubmit = handleSubmit((values) => {
-    draft.setTravellers(values.passengers, values.contact);
-    void navigate('/buses/review');
-  });
+    if (book.isPending) return;
+    // Remember what was typed; a new idempotency key only when the travellers changed.
+    const unchanged =
+      JSON.stringify(values.travellers) === JSON.stringify(draft.travellers) &&
+      JSON.stringify(values.contact) === JSON.stringify(draft.contact);
+    if (!unchanged) draft.setTravellers(values.travellers, values.contact);
+    const state = useBusDraft.getState();
+    submit(values, selection.expectedTotal, state.idempotencyKey);
+  }, invalidForm);
+
+  const continueAtNewPrice = () => {
+    if (!priceChange) return;
+    // A new key and the server's total (SOP edge case 2).
+    draft.acceptPrice(priceChange.newTotal);
+    const state = useBusDraft.getState();
+    const values = form.getValues() as z.output<typeof schema>;
+    setPriceChange(null);
+    submit(values, priceChange.newTotal, state.idempotencyKey);
+  };
+
+  const otherError =
+    book.error instanceof ApiClientError &&
+    ['PRICE_CHANGED', 'SEAT_UNAVAILABLE'].includes(book.error.errorCode)
+      ? null
+      : book.error;
 
   return (
     <form onSubmit={onSubmit} noValidate className="space-y-6">
-      <p className="text-sm text-muted">
-        One traveller per seat. Names as on a government photo ID.
-      </p>
-      {passengers.map((p, i) => {
-        const e = errors.passengers?.[i];
+      <p className="text-sm text-muted">One traveller per seat.</p>
+      {otherError && <FormAlert>{userMessage(otherError)}</FormAlert>}
+      {defaults.map((t, i) => {
+        const e = errors.travellers?.[i];
+        const prefix = `checkout-traveller-${i}`;
         return (
-          <Card key={p.seatNumber}>
+          <Card key={t.seatNo}>
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                Seat {p.seatNumber}
-                {ladies.has(p.seatNumber) && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-pink-50 px-2 py-0.5 text-xs font-semibold text-pink-800">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+                Traveller {i + 1} · Seat {t.seatNo}
+                {ladies.has(t.seatNo) && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-primary-light px-2 py-0.5 text-xs font-semibold text-primary">
                     <Venus aria-hidden className="size-3" /> Reserved for women
                   </span>
                 )}
               </CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
-              <FormField label="First & middle name" error={e?.firstName?.message}>
+            <CardContent className="grid gap-4 sm:grid-cols-[2fr_1fr]">
+              <FormField
+                label="Full name"
+                name={`traveller-${i}-name`}
+                error={e?.name?.message}
+                hint="As on your ID — used for tickets"
+              >
                 <Input
-                  autoComplete={i === 0 ? 'given-name' : 'off'}
-                  {...register(`passengers.${i}.firstName`)}
+                  autoComplete={i === 0 ? 'name' : 'off'}
+                  data-testid={`${prefix}-name`}
+                  {...register(`travellers.${i}.name`)}
                 />
               </FormField>
-              <FormField label="Last name" error={e?.lastName?.message}>
-                <Input
-                  autoComplete={i === 0 ? 'family-name' : 'off'}
-                  {...register(`passengers.${i}.lastName`)}
-                />
-              </FormField>
-              <FormField label="Age" error={e?.age?.message}>
+              <FormField label="Age" name={`traveller-${i}-age`} error={e?.age?.message}>
                 <Input
                   type="number"
                   inputMode="numeric"
                   min={1}
                   max={120}
-                  {...register(`passengers.${i}.age`)}
+                  data-testid={`${prefix}-age`}
+                  {...register(`travellers.${i}.age`)}
                 />
               </FormField>
-              <FormField label="Gender" error={e?.gender?.message}>
-                <Select {...register(`passengers.${i}.gender`)}>
-                  <option value="MALE">Male</option>
-                  <option value="FEMALE">Female</option>
-                  <option value="OTHER">Other</option>
-                </Select>
-              </FormField>
+              <fieldset
+                className="sm:col-span-2"
+                aria-invalid={e?.gender ? true : undefined}
+                aria-describedby={e?.gender ? `${prefix}-gender-error` : undefined}
+              >
+                <legend className="mb-1.5 text-sm font-semibold">Gender</legend>
+                <div className="inline-flex rounded-xl border border-border bg-background p-1">
+                  {GENDERS.map((g) => (
+                    <label
+                      key={g.id}
+                      className={cn(
+                        'inline-flex min-h-11 min-w-20 cursor-pointer items-center justify-center rounded-lg px-3 text-sm font-semibold transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
+                        genders?.[i]?.gender === g.id
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted hover:text-foreground',
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        value={g.id}
+                        className="sr-only"
+                        data-testid={`${prefix}-gender-${g.id.toLowerCase()}`}
+                        {...register(`travellers.${i}.gender`)}
+                      />
+                      {g.label}
+                    </label>
+                  ))}
+                </div>
+                {e?.gender && (
+                  <p
+                    id={`${prefix}-gender-error`}
+                    data-testid={`field-error-traveller-${i}-gender`}
+                    className="mt-1.5 text-xs font-semibold text-danger"
+                  >
+                    {e.gender.message}
+                  </p>
+                )}
+              </fieldset>
             </CardContent>
           </Card>
         );
@@ -177,29 +297,41 @@ function TravellerForm({ selection }: { selection: BusSelection }) {
           <p className="text-sm text-muted">We send the ticket and bus updates here.</p>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Email" error={errors.contact?.email?.message}>
-            <Input type="email" autoComplete="email" {...register('contact.email')} />
+          <FormField label="Email" name="email" error={errors.contact?.email?.message}>
+            <Input
+              type="email"
+              autoComplete="email"
+              data-testid="checkout-contact-email"
+              {...register('contact.email')}
+            />
           </FormField>
-          <FormField label="Mobile number" error={errors.contact?.phone?.message}>
-            <PhoneInput {...register('contact.phone')} />
+          <FormField label="Mobile number" name="mobile" error={errors.contact?.mobile?.message}>
+            <PhoneInput data-testid="checkout-contact-mobile" {...register('contact.mobile')} />
           </FormField>
         </CardContent>
       </Card>
 
       <div className="flex justify-end">
-        <Button type="submit" size="lg">
-          Continue to review <ArrowRight aria-hidden />
+        <Button
+          type="submit"
+          size="lg"
+          data-testid="checkout-travellers-continue"
+          disabled={book.isPending}
+        >
+          {book.isPending ? 'Holding your seats...' : 'Continue to review'}
+          {!book.isPending && <ArrowRight aria-hidden />}
         </Button>
       </div>
-    </form>
-  );
-}
 
-function Select(props: ComponentProps<'select'>) {
-  return (
-    <select
-      {...props}
-      className="flex h-11 w-full rounded-xl border border-border bg-card px-3 text-sm focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 aria-invalid:border-danger"
-    />
+      <PriceChangedDialog
+        change={priceChange}
+        pending={book.isPending}
+        onContinue={continueAtNewPrice}
+        onBack={() => {
+          setPriceChange(null);
+          void navigate(selection.seatsUrl);
+        }}
+      />
+    </form>
   );
 }

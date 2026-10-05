@@ -112,6 +112,7 @@ export function toBookingDetails(booking: BookingRecord, now: Date = clock.now()
       tickets: (f.tickets as { passengerId: string; ticketNumber: string }[] | null) ?? [],
     })),
     bus: busInfo(booking),
+    demo: Boolean((booking.metadata as { demo?: boolean } | null)?.demo),
   };
 }
 

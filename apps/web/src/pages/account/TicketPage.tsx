@@ -9,6 +9,7 @@ import { Seo } from '@/components/seo/Seo';
 import { errorMessage } from '@/features/auth/errors';
 import { IST } from '@/features/buses/format';
 import { useBooking } from '@/features/checkout/api';
+import { ReferenceQr } from '@/features/checkout/ReferenceQr';
 import { duration, localDay, localTime } from '@/features/flights/format';
 
 const TITLE: Record<string, string> = {
@@ -53,24 +54,33 @@ function Ticket({ booking }: { booking: BookingDetails }) {
         </Button>
       </div>
       <article className="relative mx-auto max-w-3xl overflow-hidden bg-white px-8 py-8 shadow-card print:shadow-none">
-        <p
-          aria-hidden
-          className="pointer-events-none absolute inset-0 grid -rotate-[30deg] place-items-center text-5xl font-black tracking-widest text-primary/10"
-        >
-          DEMO — NOT VALID FOR TRAVEL
-        </p>
+        {booking.demo && (
+          <p
+            aria-hidden
+            className="pointer-events-none absolute inset-0 grid -rotate-[30deg] place-items-center text-5xl font-black tracking-widest text-primary/10"
+          >
+            DEMO — NOT VALID FOR TRAVEL
+          </p>
+        )}
         <header className="flex items-start justify-between border-b-2 border-primary pb-4">
           <div>
             <Logo height={34} priority />
           </div>
-          <div className="text-right">
-            <p className="text-xl font-extrabold">E-TICKET</p>
-            <p className="text-sm text-muted">Booking {booking.reference}</p>
+          <div className="flex items-start gap-4 text-right">
+            <div>
+              <p className="text-xl font-extrabold">E-TICKET</p>
+              <p className="text-sm text-muted">
+                Booking <span className="font-mono">{booking.reference}</span>
+              </p>
+            </div>
+            <ReferenceQr reference={booking.reference} size={88} />
           </div>
         </header>
-        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
-          Demo booking from the ZPROO GO website demo — not valid for travel.
-        </p>
+        {booking.demo && (
+          <p className="mt-4 rounded-lg bg-warning/10 px-3 py-2 text-xs font-semibold text-foreground">
+            Demo booking — simulated inventory and payment, not valid for travel.
+          </p>
+        )}
 
         <dl className="mt-5 grid grid-cols-3 gap-4 text-sm">
           <div>
@@ -93,12 +103,13 @@ function Ticket({ booking }: { booking: BookingDetails }) {
             <div className="rounded-xl border border-border p-4">
               <div className="flex justify-between gap-3">
                 <p className="font-bold">
-                  {bus.offer.operator.name} · {bus.offer.serviceNumber}
+                  {bus.trip.operator.name} · {bus.trip.serviceNumber}
                 </p>
-                <p className="font-bold text-primary">PNR {bus.pnr}</p>
+                <p className="font-mono font-bold text-primary">PNR {bus.pnr}</p>
               </div>
               <p className="text-xs text-muted">
-                {localDay(bus.offer.departureAt, IST)} · {bus.offer.bus.name}
+                {localDay(bus.trip.departure, IST)} · {bus.trip.busType.label} · Operator helpline{' '}
+                {bus.trip.operator.phone}
               </p>
               <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-start gap-3">
                 <div>
@@ -106,24 +117,33 @@ function Ticket({ booking }: { booking: BookingDetails }) {
                     {localTime(bus.boardingPoint.time, IST)}
                   </p>
                   <p className="text-sm font-semibold">
-                    {bus.offer.from.name} · {bus.boardingPoint.name}
+                    {bus.trip.from.name} · {bus.boardingPoint.name}
                   </p>
+                  <p className="text-xs text-muted">{bus.boardingPoint.landmark}</p>
                   <p className="text-xs text-muted">{bus.boardingPoint.address}</p>
+                  <p className="mt-1 text-xs font-semibold">
+                    Reporting time{' '}
+                    {localTime(
+                      new Date(Date.parse(bus.boardingPoint.time) - 15 * 60_000).toISOString(),
+                      IST,
+                    )}{' '}
+                    (15 min before departure)
+                  </p>
                 </div>
                 <p className="pt-2 text-xs text-muted">
-                  {duration(bus.offer.durationMinutes)} · {bus.offer.distanceKm} km
+                  {duration(bus.trip.durationMin)} · {bus.trip.distanceKm} km
                 </p>
                 <div className="text-right">
                   <p className="text-2xl font-extrabold">
                     {localTime(bus.droppingPoint.time, IST)}
                   </p>
                   <p className="text-sm font-semibold">
-                    {bus.offer.to.name} · {bus.droppingPoint.name}
+                    {bus.trip.to.name} · {bus.droppingPoint.name}
                   </p>
                   <p className="text-xs text-muted">{bus.droppingPoint.address}</p>
                 </div>
               </div>
-              <p className="mt-3 text-sm font-bold">Seats: {bus.seatNumbers.join(', ')}</p>
+              <p className="mt-3 text-sm font-bold">Seats: {bus.seats.join(', ')}</p>
             </div>
           ) : (
             booking.flights.map((leg) => (
@@ -229,7 +249,7 @@ function Ticket({ booking }: { booking: BookingDetails }) {
                 </li>
                 <li>
                   Cancellation:{' '}
-                  {bus.offer.cancellationPolicy
+                  {bus.trip.cancellationPolicy
                     .map((r) =>
                       r.hoursBefore > 0
                         ? `${r.refundPercent}% refund more than ${r.hoursBefore}h before`

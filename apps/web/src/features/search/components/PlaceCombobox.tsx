@@ -15,6 +15,8 @@ interface PlaceComboboxProps {
   icon?: ReactNode;
   error?: string | undefined;
   className?: string;
+  /** data-testid of the text input (e.g. bus-search-from) */
+  testId?: string;
 }
 
 /**
@@ -30,6 +32,7 @@ export function PlaceCombobox({
   icon,
   error,
   className,
+  testId,
 }: PlaceComboboxProps) {
   const id = useId();
   const listId = `${id}-list`;
@@ -83,6 +86,7 @@ export function PlaceCombobox({
         ref={input}
         id={id}
         role="combobox"
+        data-testid={testId}
         aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"

@@ -1,5 +1,6 @@
 import type { BookingDetails, BookingListItem, PaymentOrder } from '@zproo/types';
 import { useQuery } from '@tanstack/react-query';
+import { syncServerClock } from '@/lib/clock';
 import { env } from '@/lib/env';
 import { apiGet, apiPost, http } from '@/services/http';
 
@@ -15,7 +16,11 @@ const awaitingTickets = (b: BookingDetails | undefined) =>
 export function useBooking(reference: string | null, options: { poll?: boolean } = {}) {
   return useQuery({
     queryKey: bookingKeys.booking(reference ?? ''),
-    queryFn: () => apiGet<BookingDetails>(`/bookings/${reference}`),
+    queryFn: async () => {
+      const booking = await apiGet<BookingDetails>(`/bookings/${reference}`);
+      syncServerClock(booking.serverNow);
+      return booking;
+    },
     enabled: Boolean(reference),
     // Tickets are issued just after payment: poll (for about a minute) until every PNR is in.
     refetchInterval: (query) =>
@@ -65,6 +70,9 @@ export const checkoutApi = {
   applyCoupon: (bookingRef: string, code: string) =>
     apiPost<BookingDetails>('/coupons/apply', { bookingRef, code }),
   removeCoupon: (bookingRef: string) => apiPost<BookingDetails>('/coupons/remove', { bookingRef }),
+  /** Gives up an unpaid hold so its seats are free again (best effort). */
+  releaseHold: (bookingRef: string) =>
+    apiPost<{ bookingRef: string; status: 'EXPIRED' }>(`/bookings/${bookingRef}/release`),
   /** Fetched with the access token (a plain link can't send it), then saved via a blob URL. */
   async downloadTicket(reference: string): Promise<void> {
     // Static mode has no PDF service: open the printable ticket (Print → Save as PDF).

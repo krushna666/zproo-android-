@@ -139,6 +139,8 @@ export interface BookingDetails {
   flights: FlightBookingLeg[];
   /** Bus journey (bus bookings; null otherwise) */
   bus: BusBookingInfo | null;
+  /** Booked against a development provider: simulated inventory and payment. */
+  demo: boolean;
 }
 
 export interface BookingListItem {

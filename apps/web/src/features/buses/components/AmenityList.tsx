@@ -1,7 +1,9 @@
+import { BUS_AMENITY_LABELS, type BusAmenity } from '@zproo/types';
+import { cn } from '@zproo/ui';
 import {
-  BatteryCharging,
   Bed,
   Cctv,
+  Cookie,
   Droplet,
   Lamp,
   MapPin,
@@ -10,24 +12,42 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-const ICONS: Record<string, LucideIcon> = {
-  'Wi-Fi': Wifi,
-  'Charging point': Plug,
-  Blanket: Bed,
-  'Water bottle': Droplet,
-  'Reading light': Lamp,
-  CCTV: Cctv,
-  'Live tracking': MapPin,
+const AMENITY_ICONS: Record<BusAmenity, LucideIcon> = {
+  wifi: Wifi,
+  charging: Plug,
+  water: Droplet,
+  blanket: Bed,
+  reading_light: Lamp,
+  cctv: Cctv,
+  tracking: MapPin,
+  snacks: Cookie,
 };
 
-export function AmenityList({ amenities }: { amenities: string[] }) {
+/** Amenities with labels; `compact` shows icons only (labels stay for screen readers). */
+export function AmenityList({
+  amenities,
+  compact = false,
+  className,
+}: {
+  amenities: readonly BusAmenity[];
+  compact?: boolean;
+  className?: string;
+}) {
   return (
-    <ul className="flex flex-wrap gap-x-4 gap-y-2" aria-label="Amenities">
+    <ul
+      className={cn('flex flex-wrap', compact ? 'gap-2' : 'gap-x-4 gap-y-2', className)}
+      aria-label="Amenities"
+    >
       {amenities.map((a) => {
-        const Icon = ICONS[a] ?? BatteryCharging;
+        const Icon = AMENITY_ICONS[a];
         return (
-          <li key={a} className="inline-flex items-center gap-1.5 text-sm">
-            <Icon aria-hidden className="size-4 text-primary" /> {a}
+          <li
+            key={a}
+            className="inline-flex items-center gap-1.5 text-sm"
+            title={compact ? BUS_AMENITY_LABELS[a] : undefined}
+          >
+            <Icon aria-hidden className="size-4 text-muted" />
+            <span className={compact ? 'sr-only' : undefined}>{BUS_AMENITY_LABELS[a]}</span>
           </li>
         );
       })}

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-label="Reclining seat with charging point">
+  <rect width="240" height="160" fill="#F8FAFC"/>
+  <path d="M86 30 h56 a10 10 0 0 1 10 10 v62 h-76 v-62 a10 10 0 0 1 10 -10 z" fill="#FFFFFF" stroke="#6B7280" stroke-width="2"/>
+  <rect x="70" y="100" width="100" height="22" rx="8" fill="#D9141E"/>
+  <rect x="96" y="20" width="36" height="14" rx="6" fill="#E5E7EB"/>
+  <rect x="112" y="122" width="16" height="22" fill="#111827"/>
+  <rect x="176" y="70" width="20" height="28" rx="4" fill="#E5E7EB" stroke="#6B7280" stroke-width="2"/>
+  <path d="M184 78 l-4 8 h6 l-4 8" stroke="#16A34A" stroke-width="2" fill="none"/>
+</svg>

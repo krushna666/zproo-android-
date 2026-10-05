@@ -691,7 +691,13 @@ export function searchCities(
     const name = c.name.toLowerCase();
     if (c.code.toLowerCase() === q) return 0;
     if (name.startsWith(q)) return 1;
-    if (c.aliases?.toLowerCase().split(/[\s,]+/).some((a) => a.startsWith(q))) return 2;
+    if (
+      c.aliases
+        ?.toLowerCase()
+        .split(/[\s,]+/)
+        .some((a) => a.startsWith(q))
+    )
+      return 2;
     if (name.includes(q)) return 3;
     return 9;
   };

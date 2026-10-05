@@ -1,84 +1,72 @@
-import { useMutation } from '@tanstack/react-query';
+import type { BookingDetails } from '@zproo/types';
 import { Button, Card, CardContent, CardHeader, CardTitle, FormAlert, Skeleton } from '@zproo/ui';
-import { ArrowRight, Lock, Mail, Phone } from 'lucide-react';
-import { Link, Navigate, useNavigate } from 'react-router';
-import { errorMessage } from '@/features/auth/errors';
-import { busesApi, useBusTrip, useSeatMap } from '@/features/buses/api';
+import { formatMoney } from '@zproo/utils';
+import { Lock, Mail, Phone } from 'lucide-react';
+import { useId, useState } from 'react';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
 import { BusTripSummary } from '@/features/buses/components/BusTripSummary';
-import { useBusDraft, type BusSelection } from '@/features/buses/draft';
-import { busPriceBreakdown } from '@/features/buses/price';
-import { CheckoutShell, NothingSelected } from '@/features/checkout/CheckoutShell';
+import { useBusDraft } from '@/features/buses/draft';
+import { policyRows } from '@/features/buses/format';
+import { useBooking } from '@/features/checkout/api';
+import { CheckoutShell } from '@/features/checkout/CheckoutShell';
+import { CouponBox } from '@/features/checkout/CouponBox';
 import { DemoBanner } from '@/features/checkout/DemoBanner';
+import { HoldExpired, HoldTimer } from '@/features/checkout/HoldTimer';
 import { paymentUrl } from '@/features/checkout/links';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
-import { inr } from '@/features/flights/format';
-import { ApiClientError } from '@/services/http';
+import { isAwaitingPayment } from '@/features/checkout/status';
+import { useCountdown } from '@/hooks/useCountdown';
+import { userMessage } from '@/lib/apiErrors';
 
 const GENDER = { MALE: 'Male', FEMALE: 'Female', OTHER: 'Other' } as const;
 
 export default function BusReviewPage() {
-  const draft = useBusDraft();
-  if (!draft.selection) return <NothingSelected service="bus" />;
-  if (!draft.passengers || !draft.contact) return <Navigate to="/buses/booking" replace />;
-  return <Review selection={draft.selection} />;
+  const [params] = useSearchParams();
+  const draftRef = useBusDraft((s) => s.reference);
+  const reference = params.get('ref') ?? draftRef;
+  const { data: booking, isPending, error, refetch } = useBooking(reference);
+
+  if (!reference) return <Navigate to="/buses" replace />;
+  if (isPending) {
+    return (
+      <CheckoutShell step={3} service="bus" title="Review your booking">
+        <Skeleton className="h-96 rounded-[14px]" />
+      </CheckoutShell>
+    );
+  }
+  if (error || !booking?.bus) {
+    return (
+      <CheckoutShell step={3} service="bus" title="Review your booking">
+        <div role="alert" className="space-y-3">
+          <FormAlert>{userMessage(error)}</FormAlert>
+          <Button variant="outline" onClick={() => void refetch()}>
+            Retry
+          </Button>
+        </div>
+      </CheckoutShell>
+    );
+  }
+  return <Review booking={booking} />;
 }
 
-function Review({ selection }: { selection: BusSelection }) {
+function Review({ booking }: { booking: BookingDetails }) {
   const navigate = useNavigate();
-  const draft = useBusDraft();
-  const passengers = draft.passengers ?? [];
-  const contact = draft.contact as NonNullable<typeof draft.contact>;
-  const trip = useBusTrip(selection.tripId);
-  const map = useSeatMap(selection.tripId);
+  const termsId = useId();
+  const [accepted, setAccepted] = useState(false);
+  const [termsError, setTermsError] = useState(false);
+  const bus = booking.bus as NonNullable<BookingDetails['bus']>;
+  const seatsUrl = `/buses/${encodeURIComponent(bus.trip.tripId)}/seats`;
+  const secondsLeft = useCountdown(booking.holdExpiresAt ? Date.parse(booking.holdExpiresAt) : 0);
+  const expired = !isAwaitingPayment(booking) || secondsLeft === 0;
 
-  // Re-check the chosen seats against the live seat map before booking.
-  const live = new Map(map.data?.decks.flatMap((d) => d.seats).map((s) => [s.number, s]) ?? []);
-  const taken = map.data
-    ? selection.seats.filter((s) => !live.get(s.number)?.available && !draft.reference)
-    : [];
-  const liveSeats = selection.seats.map((s) => ({
-    ...s,
-    pricePaise: live.get(s.number)?.pricePaise ?? s.pricePaise,
-  }));
-  const currentTotal = liveSeats.reduce((sum, s) => sum + s.pricePaise, 0);
-  const priceMoved = !draft.reference && currentTotal !== selection.expectedTotalPaise;
-
-  const book = useMutation({
-    mutationFn: () =>
-      busesApi.book(
-        {
-          tripId: selection.tripId,
-          boardingPointId: selection.boardingPointId,
-          droppingPointId: selection.droppingPointId,
-          passengers,
-          contact,
-          expectedTotalPaise: selection.expectedTotalPaise,
-        },
-        draft.idempotencyKey,
-      ),
-    onSuccess: (booking) => {
-      draft.setReference(booking.reference);
-      void navigate(paymentUrl('bus', booking.reference));
-    },
-    onError: (err) => {
-      if (
-        err instanceof ApiClientError &&
-        ['PRICE_CHANGED', 'SEAT_UNAVAILABLE'].includes(err.errorCode)
-      ) {
-        void map.refetch();
-      }
-    },
-  });
-
-  const continueToPayment = () => {
-    // Already booked from this draft (e.g. came back from payment): don't book again.
-    if (draft.reference) return void navigate(paymentUrl('bus', draft.reference));
-    book.mutate();
+  const proceed = () => {
+    if (!accepted) {
+      setTermsError(true);
+      document.getElementById(termsId)?.focus();
+      return;
+    }
+    void navigate(paymentUrl('bus', booking.reference));
   };
-  const seatError =
-    book.error instanceof ApiClientError && book.error.errorCode === 'PRICE_CHANGED'
-      ? null
-      : book.error;
 
   return (
     <CheckoutShell
@@ -88,113 +76,128 @@ function Review({ selection }: { selection: BusSelection }) {
       back={{ to: '/buses/booking', label: 'Edit travellers' }}
       aside={
         <>
-          <PriceSummary price={busPriceBreakdown({ seats: liveSeats })} />
-          {taken.length > 0 ? (
-            <div
-              role="alert"
-              className="space-y-3 rounded-2xl border border-danger/40 bg-danger/5 p-4 text-sm"
-            >
-              <p>
-                Seat{taken.length === 1 ? '' : 's'} {taken.map((s) => s.number).join(', ')}{' '}
-                {taken.length === 1 ? 'was' : 'were'} just booked by someone else.
-              </p>
-              <Button asChild className="w-full">
-                <Link to={selection.seatsUrl}>Choose other seats</Link>
+          <PriceSummary price={booking.price} />
+          {!expired && <CouponBox booking={booking} />}
+          {!expired && (
+            <div className="space-y-3">
+              <div>
+                <label className="flex min-h-11 cursor-pointer items-start gap-3 text-sm">
+                  <input
+                    id={termsId}
+                    type="checkbox"
+                    data-testid="checkout-terms"
+                    checked={accepted}
+                    aria-invalid={termsError || undefined}
+                    aria-describedby={termsError ? `${termsId}-error` : undefined}
+                    onChange={(e) => {
+                      setAccepted(e.target.checked);
+                      if (e.target.checked) setTermsError(false);
+                    }}
+                    className="mt-0.5 size-4 accent-primary"
+                  />
+                  <span>
+                    I agree to the operator's cancellation policy, the{' '}
+                    <Link to="/terms" className="font-semibold text-primary underline">
+                      Terms
+                    </Link>{' '}
+                    and the{' '}
+                    <Link to="/refund-policy" className="font-semibold text-primary underline">
+                      Refund Policy
+                    </Link>
+                    .
+                  </span>
+                </label>
+                {termsError && (
+                  <p
+                    id={`${termsId}-error`}
+                    data-testid="field-error-terms"
+                    className="text-xs font-semibold text-danger"
+                  >
+                    Please accept the terms to continue
+                  </p>
+                )}
+              </div>
+              <Button size="lg" className="w-full" data-testid="checkout-proceed" onClick={proceed}>
+                <Lock aria-hidden /> Proceed to pay {formatMoney(booking.price.totalPaise)}
               </Button>
             </div>
-          ) : priceMoved ? (
-            <div
-              role="alert"
-              className="space-y-3 rounded-2xl border border-warning/50 bg-warning/10 p-4 text-sm"
-            >
-              <p>
-                <strong>The fare has changed</strong> from {inr(selection.expectedTotalPaise)} to{' '}
-                {inr(currentTotal)}.
-              </p>
-              <Button
-                className="w-full"
-                onClick={() => {
-                  draft.acceptPrice(currentTotal);
-                  book.reset();
-                }}
-              >
-                Continue with {inr(currentTotal)}
-              </Button>
-            </div>
-          ) : (
-            <Button
-              size="lg"
-              className="w-full"
-              disabled={book.isPending || map.isPending}
-              onClick={continueToPayment}
-            >
-              <Lock aria-hidden />{' '}
-              {book.isPending ? 'Holding your seats...' : 'Continue to payment'}
-              {!book.isPending && <ArrowRight aria-hidden />}
-            </Button>
           )}
-          <p className="text-center text-xs text-muted">
-            By continuing you agree to the operator's cancellation policy, our{' '}
-            <Link to="/terms" className="underline">
-              Terms
-            </Link>{' '}
-            and{' '}
-            <Link to="/refund-policy" className="underline">
-              Refund Policy
-            </Link>
-            .
-          </p>
         </>
       }
     >
-      {trip.data?.provider === 'mock' && <DemoBanner service="bus" />}
-      {seatError && <FormAlert>{errorMessage(seatError)}</FormAlert>}
-      {trip.error && <FormAlert>{errorMessage(trip.error)}</FormAlert>}
+      {booking.demo && <DemoBanner service="bus" />}
+      {expired ? <HoldExpired searchHref="/buses" /> : <HoldTimer secondsLeft={secondsLeft} />}
 
       <section aria-labelledby="journey-heading" className="space-y-3">
-        <h2 id="journey-heading" className="text-lg font-bold">
-          Journey
-        </h2>
-        {trip.data ? (
-          <BusTripSummary
-            trip={trip.data}
-            boarding={trip.data.boardingPoints.find((p) => p.id === selection.boardingPointId)}
-            dropping={trip.data.droppingPoints.find((p) => p.id === selection.droppingPointId)}
-            seatNumbers={selection.seats.map((s) => s.number)}
-          />
-        ) : (
-          <Skeleton className="h-48 rounded-2xl" />
-        )}
+        <div className="flex items-center justify-between">
+          <h2 id="journey-heading" className="text-lg font-bold">
+            Journey
+          </h2>
+          {!expired && (
+            <Link to={seatsUrl} className="text-sm font-semibold text-primary hover:underline">
+              Change seats
+            </Link>
+          )}
+        </div>
+        <BusTripSummary
+          trip={bus.trip}
+          boarding={bus.boardingPoint}
+          dropping={bus.droppingPoint}
+          seats={bus.seats}
+        />
       </section>
 
       <Card>
         <CardHeader className="flex-row items-center justify-between pb-3">
           <CardTitle className="text-base">Travellers</CardTitle>
-          <Link to="/buses/booking" className="text-sm font-semibold text-primary hover:underline">
-            Edit
-          </Link>
+          {!expired && (
+            <Link
+              to="/buses/booking"
+              className="text-sm font-semibold text-primary hover:underline"
+            >
+              Edit
+            </Link>
+          )}
         </CardHeader>
         <CardContent>
           <ol className="divide-y divide-border text-sm">
-            {passengers.map((p) => (
-              <li key={p.seatNumber} className="flex justify-between gap-3 py-2">
+            {booking.passengers.map((p) => (
+              <li key={p.id} className="flex justify-between gap-3 py-2">
                 <span className="font-semibold">
                   {p.firstName} {p.lastName}
                 </span>
                 <span className="text-muted">
-                  {p.age} yrs · {GENDER[p.gender]} · Seat {p.seatNumber}
+                  {p.age} yrs · {p.gender ? GENDER[p.gender] : ''} · Seat {p.seatNumber}
                 </span>
               </li>
             ))}
           </ol>
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 border-t border-border pt-4 text-sm text-muted">
             <span className="inline-flex items-center gap-1.5">
-              <Mail aria-hidden className="size-4" /> {contact.email}
+              <Mail aria-hidden className="size-4" /> {booking.contact.email}
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <Phone aria-hidden className="size-4" /> +91 {contact.phone.replace(/^\+91/, '')}
+              <Phone aria-hidden className="size-4" /> {booking.contact.phone}
             </span>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Cancellation policy</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <table className="w-full text-sm">
+            <tbody className="divide-y divide-border">
+              {policyRows(bus.trip.cancellationPolicy).map((r) => (
+                <tr key={r.when}>
+                  <td className="py-2 text-muted">{r.when}</td>
+                  <td className="py-2 text-right font-semibold">{r.refund}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </CardContent>
       </Card>
     </CheckoutShell>

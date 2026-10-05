@@ -1,112 +1,189 @@
-import type { BusTripOffer } from '@zproo/types';
-import { Badge, Button, cn } from '@zproo/ui';
-import { BatteryCharging, ChevronDown, Snowflake, Star } from 'lucide-react';
+import type { BusTripSummary } from '@zproo/types';
+import { Badge, Button, cn, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger } from '@zproo/ui';
+import { formatMoney } from '@zproo/utils';
+import { ChevronDown, MapPinned, Star } from 'lucide-react';
 import { useId, useState } from 'react';
 import { Link, useLocation } from 'react-router';
-import { dayShift, duration, inr } from '@/features/flights/format';
-import { busTypeLabel, IST, istTime } from '../format';
+import { useBusTrip } from '../api';
+import { busDayShift, busDuration, istTime, policyRows, ratingVariant } from '../format';
+import { busSeatsUrl } from '../links';
 import { AmenityList } from './AmenityList';
 
-interface BusCardProps {
-  trip: BusTripOffer;
-  seatsHref: string;
-  detailsHref: string;
+const TABS = [
+  ['photos', 'Photos'],
+  ['amenities', 'Amenities'],
+  ['points', 'Boarding & dropping'],
+  ['policy', 'Cancellation policy'],
+  ['reviews', 'Reviews'],
+] as const;
+
+/** Details tabs, fetched only when the card is expanded. */
+function CardDetails({ trip }: { trip: BusTripSummary }) {
+  const { data, isPending, error } = useBusTrip(trip.tripId);
+  if (isPending) return <Skeleton className="h-32 rounded-xl" />;
+  if (error || !data)
+    return <p className="text-sm text-muted">Details aren't available right now.</p>;
+  return (
+    <Tabs defaultValue="photos">
+      <TabsList className="-mx-1 gap-1 overflow-x-auto pb-1" aria-label="Bus details">
+        {TABS.map(([id, label]) => (
+          <TabsTrigger
+            key={id}
+            value={id}
+            className="min-h-11 shrink-0 rounded-full px-3 text-sm data-[state=active]:bg-primary-light data-[state=active]:text-primary"
+          >
+            {label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      <TabsContent value="photos" className="pt-3">
+        <ul className="flex gap-3 overflow-x-auto pb-1">
+          {data.photos.map((p) => (
+            <li key={p.url} className="shrink-0">
+              <img
+                src={p.url}
+                alt={p.alt}
+                loading="lazy"
+                width={192}
+                height={128}
+                className="h-32 w-48 rounded-xl border border-border bg-background object-cover"
+              />
+            </li>
+          ))}
+        </ul>
+      </TabsContent>
+      <TabsContent value="amenities" className="pt-3">
+        <AmenityList amenities={data.amenities} />
+      </TabsContent>
+      <TabsContent value="points" className="grid gap-4 pt-3 sm:grid-cols-2">
+        {(
+          [
+            ['Boarding', data.boardingPoints],
+            ['Dropping', data.droppingPoints],
+          ] as const
+        ).map(([title, points]) => (
+          <div key={title}>
+            <h4 className="mb-2 text-sm font-bold">{title}</h4>
+            <ol className="space-y-2 text-sm">
+              {points.map((p) => (
+                <li key={p.id} className="flex gap-3">
+                  <span className="w-12 shrink-0 font-bold tabular-nums">{istTime(p.time)}</span>
+                  <span>
+                    <span className="block font-semibold">{p.name}</span>
+                    <span className="block text-xs text-muted">{p.landmark}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ))}
+      </TabsContent>
+      <TabsContent value="policy" className="pt-3">
+        <table className="w-full text-sm">
+          <tbody className="divide-y divide-border">
+            {policyRows(data.cancellationPolicy).map((r) => (
+              <tr key={r.when}>
+                <td className="py-2 text-muted">{r.when}</td>
+                <td className="py-2 text-right font-semibold">{r.refund}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TabsContent>
+      <TabsContent value="reviews" className="pt-3 text-sm">
+        <p>
+          <strong>{data.operator.rating.toFixed(1)} / 5</strong> from{' '}
+          {data.operator.ratingCount.toLocaleString('en-IN')} traveller ratings for{' '}
+          {data.operator.name}.
+        </p>
+        <p className="mt-1 text-muted">Written reviews are coming soon.</p>
+      </TabsContent>
+    </Tabs>
+  );
 }
 
-export function BusCard({ trip, seatsHref, detailsHref }: BusCardProps) {
+/** One search result. Carries data-* attributes the end-to-end tests read. */
+export function BusCard({ trip }: { trip: BusTripSummary }) {
   const location = useLocation();
-  // Lets the seat and details pages link back to these exact results.
+  // Lets the seat page link back to these exact results (with filters).
   const from = { from: location.pathname + location.search };
   const [open, setOpen] = useState(false);
   const panelId = useId();
-  const shift = dayShift(trip.departureAt, IST, trip.arrivalAt, IST);
-  const boarding = trip.boardingPoints[0];
-  const dropping = trip.droppingPoints.at(-1);
+  const shift = busDayShift(trip.departure, trip.arrival);
   const rating = trip.operator.rating;
   return (
     <article
-      aria-label={`${trip.operator.name}, ${busTypeLabel(trip.bus)}, departs ${istTime(trip.departureAt)}, from ${inr(trip.fromPaise)}`}
-      className="rounded-2xl border border-border bg-card p-4 shadow-card sm:p-5"
+      data-testid={`bus-result-card-${trip.tripId}`}
+      data-price={trip.fromPrice}
+      data-duration={trip.durationMin}
+      data-departure={trip.departure}
+      aria-label={`${trip.operator.name}, ${trip.busType.label}, departs ${istTime(trip.departure)}, from ${formatMoney(trip.fromPrice)}`}
+      className="rounded-[14px] border border-border bg-card p-4 shadow-card sm:p-5"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-bold">{trip.operator.name}</p>
+          <h3 className="truncate text-lg font-bold">{trip.operator.name}</h3>
           <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
-            <span>{busTypeLabel(trip.bus)}</span>
+            <span>{trip.busType.label}</span>
             <span aria-hidden>·</span>
             <span>{trip.serviceNumber}</span>
           </p>
         </div>
-        <span
-          className={cn(
-            'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-white',
-            rating >= 4.3 ? 'bg-success' : rating >= 4 ? 'bg-emerald-600' : 'bg-amber-600',
-          )}
+        <Badge
+          variant={ratingVariant(rating)}
           title={`${trip.operator.ratingCount.toLocaleString('en-IN')} ratings`}
+          aria-label={`Rated ${rating.toFixed(1)} out of 5`}
         >
           <Star aria-hidden className="size-3 fill-current" /> {rating.toFixed(1)}
-        </span>
+        </Badge>
       </div>
 
       <div className="mt-4 grid grid-cols-[auto_1fr_auto] items-center gap-3">
-        <div className="min-w-0">
-          <p className="text-lg font-extrabold tabular-nums">{istTime(trip.departureAt)}</p>
-          <p className="max-w-[9rem] truncate text-xs text-muted sm:max-w-[12rem]">
-            {boarding?.name}
-          </p>
-        </div>
+        <p className="text-lg font-extrabold tabular-nums">{istTime(trip.departure)}</p>
         <div className="whitespace-nowrap text-center text-xs text-muted">
-          <p>{duration(trip.durationMinutes)}</p>
+          <p>{busDuration(trip.durationMin)}</p>
           <div className="my-1 h-px bg-border" />
-          <p>{trip.distanceKm} km</p>
-        </div>
-        <div className="min-w-0 text-right">
-          <p className="text-lg font-extrabold tabular-nums">
-            {istTime(trip.arrivalAt)}
-            {shift > 0 && (
-              <sup
-                className="ml-0.5 text-[10px] font-bold text-primary"
-                title={`Arrives ${shift} day later`}
-              >
-                +{shift}
-              </sup>
-            )}
-          </p>
-          <p className="ml-auto max-w-[9rem] truncate text-xs text-muted sm:max-w-[12rem]">
-            {dropping?.name}
+          <p>
+            {trip.boardingCount} boarding · {trip.droppingCount} dropping
           </p>
         </div>
+        <p className="text-right text-lg font-extrabold tabular-nums">
+          {istTime(trip.arrival)}
+          {shift > 0 && (
+            <sup
+              className="ml-0.5 text-[10px] font-bold text-primary"
+              title={`Arrives ${shift} day${shift === 1 ? '' : 's'} later`}
+            >
+              +{shift}
+            </sup>
+          )}
+        </p>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-        <div className="flex flex-wrap items-center gap-2">
-          {trip.bus.ac && (
-            <Badge variant="outline">
-              <Snowflake aria-hidden className="size-3" /> A/C
-            </Badge>
+        <div className="flex flex-wrap items-center gap-3">
+          <AmenityList amenities={trip.amenities} compact />
+          {trip.liveTracking && (
+            <span className="inline-flex items-center gap-1 text-xs text-muted">
+              <MapPinned aria-hidden className="size-3.5" /> Live tracking
+            </span>
           )}
-          {trip.bus.electric && (
-            <Badge variant="success">
-              <BatteryCharging aria-hidden className="size-3" /> Electric
+          {trip.seatsLeft < 5 ? (
+            <Badge variant="warning">
+              Only {trip.seatsLeft} seat{trip.seatsLeft === 1 ? '' : 's'} left
             </Badge>
+          ) : (
+            <span className="text-xs font-semibold text-muted">{trip.seatsLeft} seats left</span>
           )}
-          <span
-            className={cn(
-              'text-xs font-semibold',
-              trip.seatsAvailable <= 5 ? 'text-danger' : 'text-muted',
-            )}
-          >
-            {trip.seatsAvailable} seat{trip.seatsAvailable === 1 ? '' : 's'} left
-          </span>
         </div>
         <div className="flex items-center gap-3">
           <div className="text-right">
             <p className="text-xs text-muted">from</p>
-            <p className="text-xl font-extrabold tabular-nums">{inr(trip.fromPaise)}</p>
+            <p className="text-xl font-extrabold tabular-nums">{formatMoney(trip.fromPrice)}</p>
           </div>
-          <Button asChild size="sm">
-            <Link to={seatsHref} state={from}>
-              Select seats
+          <Button asChild data-testid={`bus-view-seats-${trip.tripId}`}>
+            <Link to={busSeatsUrl(trip.tripId)} state={from}>
+              View seats
             </Link>
           </Button>
         </div>
@@ -114,32 +191,20 @@ export function BusCard({ trip, seatsHref, detailsHref }: BusCardProps) {
 
       <button
         type="button"
-        className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline"
+        className="mt-2 inline-flex min-h-11 items-center gap-1 text-sm font-semibold text-primary hover:underline"
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((v) => !v)}
       >
-        Amenities, points & policy
+        Photos, amenities, points & policy
         <ChevronDown
           aria-hidden
           className={cn('size-4 transition-transform', open && 'rotate-180')}
         />
       </button>
       {open && (
-        <div id={panelId} className="mt-3 space-y-3 border-t border-border pt-3 text-sm">
-          <AmenityList amenities={trip.amenities} />
-          <p className="text-muted">
-            Boarding: {trip.boardingPoints.map((p) => `${p.name} ${istTime(p.time)}`).join(' · ')}
-          </p>
-          <p className="text-muted">
-            Dropping: {trip.droppingPoints.map((p) => `${p.name} ${istTime(p.time)}`).join(' · ')}
-          </p>
-          <Link
-            to={detailsHref}
-            className="inline-block font-semibold text-primary hover:underline"
-          >
-            Full details and cancellation policy
-          </Link>
+        <div id={panelId} className="mt-2 border-t border-border pt-3">
+          <CardDetails trip={trip} />
         </div>
       )}
     </article>

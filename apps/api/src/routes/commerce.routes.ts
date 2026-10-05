@@ -105,6 +105,12 @@ export function bookingRoutes(
   router.get('/:reference', validate({ params: referenceParams }), c.get);
   router.get('/:reference/ticket.pdf', validate({ params: referenceParams }), c.ticket);
   router.get('/:reference/cancellation', validate({ params: referenceParams }), c.cancellation);
+  router.post(
+    '/:reference/release',
+    authorize(rbac, Permission.BOOKING_CANCEL_OWN),
+    validate({ params: referenceParams }),
+    c.release,
+  );
   return router;
 }
 

@@ -3,7 +3,7 @@ import {
   addDays,
   busSearchInputFromParams,
   busSearchSchema,
-  todayIso,
+  todayInIst,
   type BusSearch,
 } from '@zproo/validation';
 import {
@@ -13,71 +13,117 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  EmptyState,
   FormAlert,
   Sheet,
   SheetContent,
   Skeleton,
 } from '@zproo/ui';
-import { Bus, ChevronLeft, ChevronRight, Pencil, SlidersHorizontal } from 'lucide-react';
+import { Bus, Pencil, SearchX, SlidersHorizontal, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { Seo } from '@/components/seo/Seo';
-import { errorMessage } from '@/features/auth/errors';
 import { useBusSearch } from '@/features/buses/api';
 import { BusCard } from '@/features/buses/components/BusCard';
 import { BusFiltersPanel } from '@/features/buses/components/BusFiltersPanel';
+import { DateStrip } from '@/features/buses/components/DateStrip';
 import {
   activeBusFilterCount,
+  activeChips,
   applyBusFilters,
   BUS_SORTS,
   busFacets,
   EMPTY_BUS_FILTERS,
+  readBusFilters,
   sortBuses,
+  writeBusFilters,
   type BusFilters,
   type BusSortId,
 } from '@/features/buses/filters';
-import { busSeatsUrl, busTripUrl } from '@/features/buses/links';
+import { shortDate } from '@/features/buses/format';
 import { DemoBanner } from '@/features/checkout/DemoBanner';
-import { travelDate } from '@/features/flights/format';
 import { BusSearchForm } from '@/features/search/forms/BusSearchForm';
 import { busesUrl } from '@/features/search/url';
+import { userMessage } from '@/lib/apiErrors';
 
 const cityName = (code: string) => findCity(code)?.name ?? code;
 
 export default function BusResultsPage() {
   const [params] = useSearchParams();
-  const parsed = useMemo(
-    () => busSearchSchema.safeParse(busSearchInputFromParams(params)),
-    [params],
-  );
-  // Remount per search so filters start fresh.
-  return parsed.success ? (
-    <Results key={params.toString()} search={parsed.data} />
-  ) : (
-    <InvalidSearch />
-  );
+  const input = busSearchInputFromParams(params);
+  // Re-validated on every visit: a date that became "past" at midnight IST is caught here.
+  const parsed = busSearchSchema.safeParse(input);
+  if (!parsed.success) return <InvalidSearch input={input} issues={parsed.error.issues} />;
+  const s = parsed.data;
+  // Remount per route and date (filters live in the URL, so they survive).
+  return <Results key={`${s.from}-${s.to}-${s.date}`} search={s} />;
 }
 
-function InvalidSearch() {
+/** A bad deep link: explain, and pre-fill the widget with whatever was valid. */
+function InvalidSearch({
+  input,
+  issues,
+}: {
+  input: { from: string; to: string; date: string };
+  issues: { path: PropertyKey[]; message: string }[];
+}) {
+  const valid = (key: 'from' | 'to' | 'date') => !issues.some((i) => i.path[0] === key);
+  const fromCity = findCity(input.from)?.code;
+  const toCity = findCity(input.to)?.code;
+  const messages = [...new Set(issues.map((i) => i.message))];
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-6">
-      <Seo title="Bus results" noIndex />
-      <h1 className="text-2xl font-extrabold tracking-tight">Search buses</h1>
-      <FormAlert>That search isn't complete. Choose where you're travelling from and to.</FormAlert>
+    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-6" data-testid="bus-results-error">
+      <Seo title="Search buses" noIndex />
+      <h1 className="text-[28px] font-extrabold tracking-tight">Search buses</h1>
+      <FormAlert>That search can't be shown. {messages.join('. ')}.</FormAlert>
       <div className="rounded-[1.75rem] border border-border bg-card p-4 shadow-card">
-        <BusSearchForm />
+        <BusSearchForm
+          initial={{
+            ...(valid('from') && fromCity ? { from: fromCity } : {}),
+            ...(valid('to') && toCity ? { to: toCity } : {}),
+            ...(valid('date') ? { date: input.date } : {}),
+          }}
+        />
       </div>
     </div>
   );
 }
 
+function SortChips({ sort, onChange }: { sort: BusSortId; onChange: (s: BusSortId) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Sort buses" className="flex gap-2 overflow-x-auto pb-1">
+      {BUS_SORTS.map((s) => (
+        <button
+          key={s.id}
+          type="button"
+          role="radio"
+          aria-checked={sort === s.id}
+          data-testid={`bus-sort-${s.id}`}
+          onClick={() => onChange(s.id)}
+          className={cn(
+            'min-h-11 shrink-0 rounded-full border px-4 text-sm font-semibold transition-colors',
+            sort === s.id
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-border bg-card hover:border-foreground/30',
+          )}
+        >
+          {s.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Results({ search }: { search: BusSearch }) {
-  const navigate = useNavigate();
-  const { data, isPending, error, refetch } = useBusSearch(search);
-  const [filters, setFilters] = useState<BusFilters>(EMPTY_BUS_FILTERS);
-  const [sort, setSort] = useState<BusSortId>('DEPARTURE');
+  const [params, setParams] = useSearchParams();
+  const { data, isPending, error, refetch, isFetching } = useBusSearch(search);
+  const { filters, sort } = useMemo(() => readBusFilters(params), [params]);
   const [editing, setEditing] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetFilters, setSheetFilters] = useState<BusFilters>(filters);
+
+  const update = (next: BusFilters, nextSort: BusSortId = sort) =>
+    setParams(writeBusFilters(params, next, nextSort), { replace: true, preventScrollReset: true });
 
   const trips = useMemo(() => data?.trips ?? [], [data]);
   const facets = useMemo(() => busFacets(trips), [trips]);
@@ -87,31 +133,30 @@ function Results({ search }: { search: BusSearch }) {
   );
   const from = cityName(search.from);
   const to = cityName(search.to);
-  const shiftDate = (days: number) =>
-    void navigate(busesUrl({ ...search, date: addDays(search.date, days) }));
-  const panel = (
-    <BusFiltersPanel
-      facets={facets}
-      value={filters}
-      onChange={setFilters}
-      fromCity={from}
-      toCity={to}
-    />
-  );
+  const operatorName = (code: string) =>
+    facets.operators.find((o) => o.code === code)?.name ?? code;
+  const chips = activeChips(filters, operatorName);
+  // Other dates keep the filters and sort.
+  const extra = writeBusFilters(new URLSearchParams(), filters, sort).toString();
+  const hrefFor = (date: string) => busesUrl({ ...search, date }, extra);
+  const today = todayInIst();
+  const otherDates = [1, 2, 3]
+    .map((n) => addDays(search.date, n))
+    .concat(search.date > today ? [addDays(search.date, -1)] : []);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-      <Seo title={`Buses: ${from} to ${to}`} noIndex />
+      <Seo title={`Buses from ${from} to ${to}`} noIndex />
 
-      <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4 shadow-card">
+      <header className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-border bg-card p-4 shadow-card">
         <div className="min-w-0">
-          <h1 className="truncate text-lg font-extrabold tracking-tight sm:text-xl">
+          <h1 className="truncate text-xl font-extrabold tracking-tight sm:text-[28px]">
             {from} → {to}
           </h1>
-          <p className="text-sm text-muted">{travelDate(search.date)}</p>
+          <p className="text-sm text-muted">{shortDate(search.date)}</p>
         </div>
         <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-          <Pencil aria-hidden /> Modify search
+          <Pencil aria-hidden /> Modify
         </Button>
       </header>
 
@@ -122,6 +167,14 @@ function Results({ search }: { search: BusSearch }) {
         </DialogContent>
       </Dialog>
 
+      <div className="mt-4">
+        <DateStrip
+          date={search.date}
+          hrefFor={hrefFor}
+          prices={data && trips.length > 0 ? { [search.date]: data.filters.priceMin } : {}}
+        />
+      </div>
+
       {data?.demo && (
         <div className="mt-4">
           <DemoBanner service="bus" />
@@ -129,40 +182,83 @@ function Results({ search }: { search: BusSearch }) {
       )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[17rem_1fr]">
-        <aside className="hidden lg:block">
-          <div className="sticky top-[calc(var(--header-height)+1rem)] max-h-[calc(100vh-var(--header-height)-2rem)] overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-card">
-            {trips.length > 0 && panel}
+        <aside className="hidden lg:block" aria-label="Filters">
+          <div className="sticky top-[calc(var(--header-height)+1rem)] max-h-[calc(100vh-var(--header-height)-2rem)] overflow-y-auto rounded-[14px] border border-border bg-card p-5 shadow-card">
+            {trips.length > 0 ? (
+              <BusFiltersPanel
+                facets={facets}
+                value={filters}
+                onChange={(next) => update(next)}
+                fromCity={from}
+                toCity={to}
+              />
+            ) : (
+              <Skeleton className="h-64 rounded-xl" />
+            )}
           </div>
         </aside>
 
-        <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+        <Sheet
+          open={sheetOpen}
+          onOpenChange={(open) => {
+            setSheetOpen(open);
+            if (open) setSheetFilters(filters);
+          }}
+        >
           <SheetContent aria-describedby={undefined} className="p-5">
             <DialogTitle className="sr-only">Filters</DialogTitle>
-            {panel}
-            <Button className="mt-6 w-full" onClick={() => setFiltersOpen(false)}>
-              Show {visible.length} bus{visible.length === 1 ? '' : 'es'}
-            </Button>
+            <BusFiltersPanel
+              facets={facets}
+              value={sheetFilters}
+              onChange={setSheetFilters}
+              fromCity={from}
+              toCity={to}
+            />
+            <div className="sticky bottom-0 mt-6 flex gap-3 bg-card pt-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setSheetFilters(EMPTY_BUS_FILTERS)}
+              >
+                Clear all
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  update(sheetFilters);
+                  setSheetOpen(false);
+                }}
+              >
+                Apply
+              </Button>
+            </div>
           </SheetContent>
         </Sheet>
 
         <section
           aria-labelledby="results-heading"
-          aria-busy={isPending}
+          aria-busy={isPending || isFetching}
           className="min-w-0 space-y-4"
         >
           <div className="flex flex-wrap items-center gap-2">
             <h2
               id="results-heading"
+              data-testid="bus-results-count"
               className="mr-auto text-sm font-semibold text-muted"
               aria-live="polite"
             >
-              {isPending ? 'Searching...' : `${visible.length} of ${trips.length} buses`}
+              {isPending
+                ? 'Searching...'
+                : `${visible.length} bus${visible.length === 1 ? '' : 'es'} found`}
             </h2>
             <Button
               variant="outline"
               size="sm"
               className="lg:hidden"
-              onClick={() => setFiltersOpen(true)}
+              onClick={() => {
+                setSheetFilters(filters);
+                setSheetOpen(true);
+              }}
             >
               <SlidersHorizontal aria-hidden /> Filters
               {activeBusFilterCount(filters) > 0 && (
@@ -171,94 +267,80 @@ function Results({ search }: { search: BusSearch }) {
             </Button>
           </div>
 
-          <div
-            role="radiogroup"
-            aria-label="Sort buses"
-            className="flex gap-2 overflow-x-auto pb-1"
-          >
-            {BUS_SORTS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                role="radio"
-                aria-checked={sort === s.id}
-                onClick={() => setSort(s.id)}
-                className={cn(
-                  'shrink-0 rounded-full border px-4 py-1.5 text-sm font-semibold transition-colors',
-                  sort === s.id
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-card hover:border-foreground/30',
-                )}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
+          <SortChips sort={sort} onChange={(s) => update(filters, s)} />
 
-          <div className="flex items-center justify-between gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={search.date <= todayIso()}
-              onClick={() => shiftDate(-1)}
-            >
-              <ChevronLeft aria-hidden /> Previous day
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => shiftDate(1)}>
-              Next day <ChevronRight aria-hidden />
-            </Button>
-          </div>
-
-          {error ? (
-            <div className="space-y-3">
-              <FormAlert>{errorMessage(error)}</FormAlert>
-              <Button variant="outline" onClick={() => void refetch()}>
-                Try again
-              </Button>
-            </div>
-          ) : isPending ? (
-            <ul className="space-y-4" aria-hidden>
-              {[0, 1, 2, 3].map((i) => (
-                <li key={i}>
-                  <Skeleton className="h-44 rounded-2xl" />
+          {chips.length > 0 && (
+            <ul className="flex flex-wrap gap-2" aria-label="Active filters">
+              {chips.map((c) => (
+                <li key={c.key}>
+                  <button
+                    type="button"
+                    onClick={() => update(c.without)}
+                    aria-label={`Remove filter ${c.label}`}
+                    className="inline-flex min-h-9 items-center gap-1 rounded-full bg-primary-light px-3 text-xs font-semibold text-primary"
+                  >
+                    {c.label} <X aria-hidden className="size-3.5" />
+                  </button>
                 </li>
               ))}
             </ul>
-          ) : visible.length === 0 ? (
-            <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
-              <span className="grid size-12 place-items-center rounded-2xl bg-primary-light text-primary">
-                <Bus aria-hidden className="size-6" />
-              </span>
-              {trips.length > 0 ? (
-                <>
-                  <h3 className="mt-4 text-lg font-bold">No buses match these filters</h3>
-                  <Button
-                    variant="outline"
-                    className="mt-5"
-                    onClick={() => setFilters(EMPTY_BUS_FILTERS)}
-                  >
-                    Clear filters
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <h3 className="mt-4 text-lg font-bold">No buses on this date</h3>
-                  <p className="mt-1 text-sm text-muted">Try another date, or a nearby city.</p>
-                  <Button asChild variant="outline" className="mt-5">
-                    <Link to="/buses">New search</Link>
-                  </Button>
-                </>
-              )}
+          )}
+
+          {error ? (
+            <div
+              data-testid="bus-results-error"
+              role="alert"
+              className="space-y-3 rounded-[14px] border border-danger/30 bg-card p-5"
+            >
+              <p className="text-sm font-semibold text-danger">{userMessage(error)}</p>
+              <Button variant="outline" onClick={() => void refetch()}>
+                Retry
+              </Button>
             </div>
+          ) : isPending ? (
+            <ul className="space-y-4" data-testid="bus-results-loading" aria-label="Loading buses">
+              {[0, 1, 2, 3].map((i) => (
+                <li key={i}>
+                  <Skeleton className="h-44 rounded-[14px]" />
+                </li>
+              ))}
+            </ul>
+          ) : trips.length === 0 ? (
+            <EmptyState
+              data-testid="bus-results-empty"
+              icon={Bus}
+              title="No buses found for this date"
+              description="Try another date:"
+              actions={otherDates.map((d) => (
+                <Button key={d} asChild variant="outline" size="sm">
+                  <Link to={hrefFor(d)}>{shortDate(d)}</Link>
+                </Button>
+              ))}
+            />
+          ) : visible.length === 0 ? (
+            <EmptyState
+              data-testid="bus-results-empty"
+              icon={SearchX}
+              title="No buses match your filters"
+              actions={
+                <Button variant="outline" onClick={() => update(EMPTY_BUS_FILTERS)}>
+                  Clear filters
+                </Button>
+              }
+            />
           ) : (
             <ul className="space-y-4">
               {visible.map((trip) => (
-                <li key={trip.id}>
-                  <BusCard
-                    trip={trip}
-                    seatsHref={busSeatsUrl(trip.id)}
-                    detailsHref={busTripUrl(trip.id)}
-                  />
+                // content-visibility skips rendering off-screen cards in long lists.
+                <li
+                  key={trip.tripId}
+                  className={
+                    visible.length > 30
+                      ? '[contain-intrinsic-size:auto_14rem] [content-visibility:auto]'
+                      : undefined
+                  }
+                >
+                  <BusCard trip={trip} />
                 </li>
               ))}
             </ul>

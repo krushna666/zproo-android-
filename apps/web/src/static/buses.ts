@@ -1,29 +1,25 @@
-import { findCity } from '@zproo/config';
+import { searchCities } from '@zproo/config';
 import {
-  BUS_CANCELLATION_POLICY,
-  BUS_ROUTES,
-  buildBusTimetable,
-  busSeatFare,
-  COACH_TEMPLATES,
-  isoWeekday,
-  localDate,
-  MOCK_BUS_OPERATORS,
-  pointsFor,
-  unitHash,
-  zonedTimeToUtc,
-  type BusServicePlan,
-  type CoachTemplate,
-  type SeatSpec,
+  BUS_CITY_CODES,
+  busFareBreakdown,
+  busSearchFilters,
+  busSeatsFor,
+  busTripDetails,
+  busTripPlan,
+  busTripPlans,
+  busTripSummary,
+  type LiveHold,
 } from '@zproo/catalog';
 import type {
-  BusPoint,
-  BusSearchResult,
-  BusSeatInfo,
+  BookingPassengerInfo,
+  BusBookResponse,
+  BusCity,
+  BusSearchResponse,
   BusSeatMap,
-  BusTripOffer,
 } from '@zproo/types';
 import { generateBookingReference } from '@zproo/utils';
 import {
+  BUS_MESSAGES,
   bookBusSchema,
   busSearchInputFromParams,
   busSearchSchema,
@@ -34,173 +30,77 @@ import {
   currentUser,
   db,
   invalid,
-  priceChanged,
-  seatUnavailable,
   parse,
+  priceChanged,
   save,
+  seatUnavailable,
   StaticError,
   type StaticRequest,
   type StaticResult,
 } from './core';
 import { idempotencyKey } from './flights';
 
-const IST = 'Asia/Kolkata';
-const TRIP_ID = /^bs_(b\d+)_(\d{4})(\d{2})(\d{2})$/;
-const CUTOFF_MS = 30 * 60 * 1000;
 const GONE = 'This bus is no longer available. Please search again.';
+const TRIP_PATH = /^trp_[A-Z]{3}_[A-Z]{3}_\d{8}_\d{2}$/;
 
-interface Schedule {
-  id: string;
-  plan: BusServicePlan;
-  coach: CoachTemplate;
-  seats: SeatSpec[];
-  distanceKm: number;
+/** Seats held or booked in this browser for a trip (the static mode's bus_seat_holds). */
+function holdsFor(tripId: string): LiveHold[] {
+  return activeHolds().flatMap((h) => (h.kind === 'bus' && h.tripId === tripId ? h.seats : []));
 }
 
-let schedules: Schedule[] | null = null;
-function network(): Schedule[] {
-  if (schedules) return schedules;
-  const distance = new Map(
-    BUS_ROUTES.flatMap(
-      ([a, b, km]) =>
-        [
-          [`${a}-${b}`, km],
-          [`${b}-${a}`, km],
-        ] as const,
-    ),
-  );
-  schedules = buildBusTimetable().map((plan, i) => {
-    const coach = COACH_TEMPLATES.find((c) => c.key === plan.template) as CoachTemplate;
-    return {
-      id: `b${i + 1}`,
-      plan,
-      coach,
-      seats: coach.seats(),
-      distanceKm: distance.get(`${plan.from}-${plan.to}`) ?? 0,
-    };
-  });
-  return schedules;
+function planOf(tripId: string) {
+  return TRIP_PATH.test(tripId) ? busTripPlan(tripId) : null;
 }
 
-const cityName = (code: string) => findCity(code)?.name ?? code;
-const tripId = (s: Schedule, date: string) => `bs_${s.id}_${date.replaceAll('-', '')}`;
-
-function taken(id: string): Set<string> {
-  return new Set(
-    activeHolds().flatMap((h) => (h.kind === 'bus' && h.tripId === id ? h.seats : [])),
-  );
-}
-
-/** Seats treated as sold before this browser's first booking: 20–70% of the coach. */
-function presold(s: Schedule, date: string, seat: string): boolean {
-  const load = 0.2 + unitHash(`bus-load:${s.id}:${date}`) * 0.5;
-  return unitHash(`bus-seat:${s.id}:${date}:${seat}`) < load;
-}
-
-function seatInfo(s: Schedule, date: string): BusSeatInfo[] {
-  const today = localDate(new Date(), IST);
-  const held = taken(tripId(s, date));
-  return s.seats.map((seat) => {
-    const fare = busSeatFare({
-      baseFarePaise: s.plan.baseFarePaise,
-      seatFarePercent: seat.farePercent,
-      date,
-      today,
-      ac: s.coach.ac,
-    });
-    return {
-      number: seat.number,
-      deck: seat.deck,
-      row: seat.row,
-      column: seat.column,
-      kind: seat.kind,
-      available: !held.has(seat.number) && !presold(s, date, seat.number),
-      ladiesOnly: seat.ladiesOnly,
-      ...fare,
-    };
-  });
-}
-
-function buildTrip(s: Schedule, date: string): BusTripOffer | null {
-  const departure = zonedTimeToUtc(date, s.plan.departureTime, IST);
-  if (departure.getTime() - Date.now() < CUTOFF_MS) return null;
-  const arrival = new Date(departure.getTime() + s.plan.durationMinutes * 60_000);
-  const seats = seatInfo(s, date);
-  const open = seats.filter((x) => x.available);
-  const boarding = pointsFor(s.plan.from).slice(0, 4);
-  const dropping = [...pointsFor(s.plan.to)].reverse().slice(0, 4);
-  const operator = MOCK_BUS_OPERATORS.find((o) => o.code === s.plan.operatorCode);
-  const point = (
-    kind: 'b' | 'd',
-    [name, address]: [string, string],
-    i: number,
-    n: number,
-  ): BusPoint => ({
-    id: `${kind}${i + 1}`,
-    name,
-    address,
-    time: new Date(
-      kind === 'b'
-        ? departure.getTime() + i * 15 * 60_000
-        : arrival.getTime() - (n - 1 - i) * 15 * 60_000,
-    ).toISOString(),
-  });
+function seatMap(tripId: string): BusSeatMap | null {
+  const plan = planOf(tripId);
+  if (!plan) return null;
+  const now = new Date();
+  const { layout, decks } = busSeatsFor(plan, now, holdsFor(tripId));
   return {
-    id: tripId(s, date),
-    provider: 'mock',
-    serviceNumber: s.plan.serviceNumber,
-    operator: {
-      code: s.plan.operatorCode,
-      name: operator?.name ?? s.plan.operatorCode,
-      rating: operator?.rating ?? 4,
-      ratingCount: operator?.ratingCount ?? 0,
-    },
-    bus: { name: s.coach.name, type: s.coach.type, ac: s.coach.ac, electric: s.coach.electric },
-    from: { code: s.plan.from, name: cityName(s.plan.from) },
-    to: { code: s.plan.to, name: cityName(s.plan.to) },
-    date,
-    departureAt: departure.toISOString(),
-    arrivalAt: arrival.toISOString(),
-    durationMinutes: s.plan.durationMinutes,
-    distanceKm: s.distanceKm,
-    amenities: s.coach.amenities,
-    fromPaise: open.length > 0 ? Math.min(...open.map((x) => x.pricePaise)) : 0,
-    seatsAvailable: open.length,
-    totalSeats: seats.length,
-    boardingPoints: boarding.map((p, i) => point('b', p, i, boarding.length)),
-    droppingPoints: dropping.map((p, i) => point('d', p, i, dropping.length)),
-    cancellationPolicy: BUS_CANCELLATION_POLICY,
+    tripId,
+    serverNow: now.toISOString(),
+    layout,
+    decks,
+    maxSelectable: MAX_BUS_SEATS,
+    bookable: busTripDetails(plan, now).bookable,
+    demo: true,
   };
 }
 
-function load(id: string): { schedule: Schedule; date: string } | null {
-  const m = TRIP_ID.exec(id);
-  const schedule = m && network().find((s) => s.id === m[1]);
-  if (!m || !schedule) return null;
-  const date = `${m[2]}-${m[3]}-${m[4]}`;
-  return schedule.plan.daysOfWeek.includes(isoWeekday(date)) ? { schedule, date } : null;
-}
+const busTitle = (gender: string, age: number): BookingPassengerInfo['title'] =>
+  gender === 'MALE'
+    ? age < 12
+      ? 'MSTR'
+      : 'MR'
+    : gender === 'FEMALE'
+      ? age < 12
+        ? 'MISS'
+        : 'MS'
+      : 'MX';
 
-function seatMap(id: string): BusSeatMap | null {
-  const found = load(id);
-  if (!found || !buildTrip(found.schedule, found.date)) return null;
-  const seats = seatInfo(found.schedule, found.date);
-  const decks = (['LOWER', 'UPPER'] as const)
-    .map((deck) => {
-      const list = seats.filter((x) => x.deck === deck);
-      return {
-        deck,
-        rows: Math.max(0, ...list.map((x) => x.row)),
-        columns: Math.max(0, ...list.map((x) => x.column)) + 1,
-        seats: list,
-      };
-    })
-    .filter((d) => d.seats.length > 0);
-  return { tripId: id, decks, maxSeats: MAX_BUS_SEATS };
+function splitName(name: string) {
+  const parts = name.trim().split(/\s+/);
+  return parts.length > 1
+    ? { firstName: parts.slice(0, -1).join(' '), lastName: parts.at(-1) as string }
+    : { firstName: parts[0] ?? name, lastName: '' };
 }
 
 export function busRoutes(req: StaticRequest): StaticResult | null {
   const { method, path, params } = req;
+
+  if (method === 'GET' && path === '/buses/cities') {
+    const q = (params.q ?? '').trim();
+    if (!/^[A-Za-z ]{1,40}$/.test(q))
+      throw invalid([{ path: 'query.q', message: 'Type a city name' }]);
+    const cities: BusCity[] = searchCities(q, { only: BUS_CITY_CODES, limit: 10 }).map((c) => ({
+      code: c.code,
+      name: c.name,
+      state: c.state,
+      popular: Boolean(c.popular),
+    }));
+    return { data: cities };
+  }
 
   if (method === 'GET' && path === '/buses/search') {
     const search = parse(
@@ -208,21 +108,18 @@ export function busRoutes(req: StaticRequest): StaticResult | null {
       busSearchInputFromParams({ get: (n) => params[n] ?? null }),
       'query',
     );
-    const trips = network()
-      .filter(
-        (s) =>
-          s.plan.from === search.from &&
-          s.plan.to === search.to &&
-          s.plan.daysOfWeek.includes(isoWeekday(search.date)),
-      )
-      .map((s) => buildTrip(s, search.date))
-      .filter((t): t is BusTripOffer => t !== null && t.seatsAvailable > 0)
-      .sort((a, b) => Date.parse(a.departureAt) - Date.parse(b.departureAt));
-    const result: BusSearchResult = {
+    const now = new Date();
+    const trips = busTripPlans(search.from, search.to, search.date, now)
+      .map((p) => busTripSummary(p, now, holdsFor(p.tripId)))
+      .filter((t) => t.seatsLeft > 0);
+    const result: BusSearchResponse = {
+      searchId: `srch_static_${search.from}_${search.to}_${search.date.replaceAll('-', '')}`,
+      serverNow: now.toISOString(),
       from: search.from,
       to: search.to,
       date: search.date,
       trips,
+      filters: busSearchFilters(trips),
       demo: true,
     };
     return { data: result };
@@ -233,89 +130,81 @@ export function busRoutes(req: StaticRequest): StaticResult | null {
     const key = idempotencyKey(req);
     const input = parse(bookBusSchema, req.body, 'body');
     const existing = db().bookings.find((b) => b.userId === user.id && b.idempotencyKey === key);
-    if (existing) return { status: 201, data: existing.details };
+    if (existing) {
+      const d = existing.details;
+      const replay: BusBookResponse = {
+        bookingRef: d.reference,
+        status: 'HELD',
+        holdExpiresAt: d.holdExpiresAt ?? new Date().toISOString(),
+        serverNow: new Date().toISOString(),
+        priceBreakdown: d.price,
+      };
+      return { status: 201, data: replay };
+    }
 
-    const found = load(input.tripId);
-    const trip = found && buildTrip(found.schedule, found.date);
-    const map = trip && seatMap(input.tripId);
-    if (!found || !trip || !map) throw new StaticError(404, 'NOT_FOUND', GONE);
+    const plan = planOf(input.tripId);
+    const now = new Date();
+    const trip = plan && busTripDetails(plan, now, holdsFor(input.tripId));
+    const map = seatMap(input.tripId);
+    if (!plan || !trip || !map) throw new StaticError(404, 'NOT_FOUND', GONE);
+    if (!trip.bookable) throw new StaticError(409, 'BOOKING_CLOSED', BUS_MESSAGES.closed);
 
     const boarding = trip.boardingPoints.find((p) => p.id === input.boardingPointId);
     const dropping = trip.droppingPoints.find((p) => p.id === input.droppingPointId);
     const issues: { path: string; message: string }[] = [];
     if (!boarding)
-      issues.push({ path: 'body.boardingPointId', message: 'Choose a boarding point' });
+      issues.push({ path: 'body.boardingPointId', message: BUS_MESSAGES.boardingPoint });
     if (!dropping)
-      issues.push({ path: 'body.droppingPointId', message: 'Choose a dropping point' });
-    const byNumber = new Map(map.decks.flatMap((d) => d.seats).map((x) => [x.number, x]));
-    const seats = input.passengers.map((p, i) => {
-      const seat = byNumber.get(p.seatNumber);
-      if (!seat)
-        issues.push({
-          path: `body.passengers.${i}.seatNumber`,
-          message: `Seat ${p.seatNumber} does not exist on this bus`,
-        });
-      else if (seat.ladiesOnly && p.gender !== 'FEMALE') {
-        issues.push({
-          path: `body.passengers.${i}.gender`,
-          message: `Seat ${p.seatNumber} is reserved for women`,
-        });
-      }
-      return seat;
+      issues.push({ path: 'body.droppingPointId', message: BUS_MESSAGES.droppingPoint });
+    if (boarding && dropping && Date.parse(boarding.time) >= Date.parse(dropping.time))
+      issues.push({
+        path: 'body.droppingPointId',
+        message: 'Choose a dropping point after your boarding point',
+      });
+    const bySeat = new Map(map.decks.flatMap((d) => d.seats).map((s) => [s.seatNo, s]));
+    input.seats.forEach((seatNo, i) => {
+      if (!bySeat.has(seatNo))
+        issues.push({ path: `body.seats.${i}`, message: `Seat ${seatNo} isn't on this bus` });
+    });
+    input.travellers.forEach((t, i) => {
+      if (bySeat.get(t.seatNo)?.ladiesOnly && t.gender !== 'FEMALE')
+        issues.push({ path: `body.travellers.${i}.gender`, message: BUS_MESSAGES.ladiesSeat });
     });
     if (issues.length > 0) throw invalid(issues);
-    const taken = input.passengers.filter((_, i) => !seats[i]?.available).map((p) => p.seatNumber);
+
+    const taken = input.seats.filter((n) => bySeat.get(n)?.status !== 'AVAILABLE');
     if (taken.length > 0) throw seatUnavailable(taken);
-    const basePaise = seats.reduce((sum, x) => sum + (x?.basePaise ?? 0), 0);
-    const taxPaise = seats.reduce((sum, x) => sum + (x?.taxPaise ?? 0), 0);
-    const totalPaise = basePaise + taxPaise;
-    if (totalPaise !== input.expectedTotalPaise)
-      throw priceChanged(input.expectedTotalPaise, totalPaise);
-    const n = seats.length;
-    const seatNumbers = input.passengers.map((p) => p.seatNumber);
+
+    const price = busFareBreakdown(
+      input.seats.map((seatNo) => ({ seatNo, price: bySeat.get(seatNo)?.price ?? 0 })),
+      trip.busType.ac,
+    );
+    if (price.totalPaise !== input.expectedTotal)
+      throw priceChanged(input.expectedTotal, price.totalPaise);
+
+    const gender = new Map(input.travellers.map((t) => [t.seatNo, t.gender]));
     const details = newBooking({
       reference: generateBookingReference('BUS'),
       serviceType: 'BUS',
-      price: {
-        lines: [
-          { label: `Base fare — ${n} seat${n === 1 ? '' : 's'}`, amountPaise: basePaise },
-          ...(taxPaise > 0 ? [{ label: 'GST', amountPaise: taxPaise }] : []),
-        ],
-        basePaise,
-        taxesPaise: taxPaise,
-        feesPaise: 0,
-        discountPaise: 0,
-        totalPaise,
-        currency: 'INR',
-      },
+      price,
       travelDate: trip.date,
-      contact: input.contact,
-      passengers: input.passengers.map((p, i) => ({
+      contact: { email: input.contact.email, phone: input.contact.mobile },
+      passengers: input.travellers.map((t, i) => ({
         id: `p${i + 1}`,
-        type: p.age < 12 ? 'CHILD' : 'ADULT',
-        title:
-          p.gender === 'MALE'
-            ? p.age < 12
-              ? 'MSTR'
-              : 'MR'
-            : p.gender === 'FEMALE'
-              ? p.age < 12
-                ? 'MISS'
-                : 'MS'
-              : 'MX',
-        firstName: p.firstName,
-        lastName: p.lastName,
+        type: t.age < 12 ? 'CHILD' : 'ADULT',
+        title: busTitle(t.gender, t.age),
+        ...splitName(t.name),
         dateOfBirth: null,
-        age: p.age,
-        gender: p.gender,
-        seatNumber: p.seatNumber,
+        age: t.age,
+        gender: t.gender,
+        seatNumber: t.seatNo,
       })),
       flights: [],
       bus: {
-        offer: trip,
-        seatNumbers,
-        boardingPoint: boarding as BusPoint,
-        droppingPoint: dropping as BusPoint,
+        trip,
+        seats: input.seats,
+        boardingPoint: boarding as NonNullable<typeof boarding>,
+        droppingPoint: dropping as NonNullable<typeof dropping>,
         pnr: null,
       },
     });
@@ -323,10 +212,23 @@ export function busRoutes(req: StaticRequest): StaticResult | null {
       userId: user.id,
       idempotencyKey: key,
       details,
-      holds: [{ kind: 'bus', tripId: trip.id, seats: seatNumbers }],
+      holds: [
+        {
+          kind: 'bus',
+          tripId: trip.tripId,
+          seats: input.seats.map((seatNo) => ({ seatNo, female: gender.get(seatNo) === 'FEMALE' })),
+        },
+      ],
     });
     save();
-    return { status: 201, data: details, message: 'Seats held. Complete payment to confirm.' };
+    const result: BusBookResponse = {
+      bookingRef: details.reference,
+      status: 'HELD',
+      holdExpiresAt: details.holdExpiresAt ?? now.toISOString(),
+      serverNow: now.toISOString(),
+      priceBreakdown: details.price,
+    };
+    return { status: 201, data: result, message: 'Seats held. Complete payment to confirm.' };
   }
 
   const seatsMatch = /^\/buses\/([^/]+)\/seats$/.exec(path);
@@ -338,10 +240,10 @@ export function busRoutes(req: StaticRequest): StaticResult | null {
 
   const tripMatch = /^\/buses\/([^/]+)$/.exec(path);
   if (method === 'GET' && tripMatch) {
-    const found = load(decodeURIComponent(tripMatch[1] as string));
-    const trip = found && buildTrip(found.schedule, found.date);
-    if (!trip) throw new StaticError(404, 'NOT_FOUND', GONE);
-    return { data: trip };
+    const id = decodeURIComponent(tripMatch[1] as string);
+    const plan = planOf(id);
+    if (!plan) throw new StaticError(404, 'NOT_FOUND', GONE);
+    return { data: busTripDetails(plan, new Date(), holdsFor(id)) };
   }
   return null;
 }

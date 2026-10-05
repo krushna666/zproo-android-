@@ -39,7 +39,7 @@ describe('filterPlaces', () => {
   it('finds places by state and by former names', () => {
     expect(filterPlaces(AIRPORT_OPTIONS, 'aurangabad').map((o) => o.value)).toEqual(['IXU']);
     expect(filterPlaces(AIRPORT_OPTIONS, 'bombay')[0]?.value).toBe('BOM');
-    expect(filterPlaces(CITY_OPTIONS, 'ahmednagar').map((o) => o.value)).toEqual(['ahilyanagar']);
+    expect(filterPlaces(CITY_OPTIONS, 'ahmednagar').map((o) => o.value)).toEqual(['AHL']);
     const maharashtra = filterPlaces(CITY_OPTIONS, 'maharashtra');
     expect(maharashtra.length).toBeGreaterThan(40);
     expect(maharashtra.every((o) => o.group === 'Maharashtra')).toBe(true);

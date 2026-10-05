@@ -23,7 +23,12 @@ describe('busSeatPrice', () => {
   it('ends in 9 rupees and stays within ₹599–₹2,899', () => {
     for (const fare of [10_000, 45_000, 85_000, 190_000, 900_000]) {
       for (const pct of [100, 108, 115]) {
-        const price = busSeatPrice({ ...base, baseFarePaise: fare, seatFarePercent: pct, date: '2026-10-09' });
+        const price = busSeatPrice({
+          ...base,
+          baseFarePaise: fare,
+          seatFarePercent: pct,
+          date: '2026-10-09',
+        });
         expect(price % 1000).toBe(900);
         expect(price).toBeGreaterThanOrEqual(59_900);
         expect(price).toBeLessThanOrEqual(289_900);

@@ -19,6 +19,7 @@ import type {
   BusPoint,
   BusRestStop,
   BusSeat,
+  BusSearchResponse,
   BusSeatType,
   BusTripDetails,
   BusTripSummary,
@@ -776,3 +777,17 @@ export function busSeatsFor(plan: TripPlan, now: Date, taken: readonly LiveHold[
 /** Exposed for tests: plan an arbitrary trip index (may be beyond the day's count). */
 export const _planTrip = planTrip;
 export type BusTripPlan = TripPlan;
+
+/** The filter facets of a search result: operators with trip counts, and the price range. */
+export function busSearchFilters(trips: readonly BusTripSummary[]): BusSearchResponse['filters'] {
+  const operators = new Map<string, number>();
+  for (const t of trips) operators.set(t.operator.name, (operators.get(t.operator.name) ?? 0) + 1);
+  const prices = trips.map((t) => t.fromPrice);
+  return {
+    operators: [...operators]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    priceMin: prices.length > 0 ? Math.min(...prices) : 0,
+    priceMax: prices.length > 0 ? Math.max(...prices) : 0,
+  };
+}

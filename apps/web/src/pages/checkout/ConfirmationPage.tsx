@@ -10,7 +10,7 @@ import {
   FormAlert,
   Skeleton,
 } from '@zproo/ui';
-import { CircleCheck, Download, Home, Mail } from 'lucide-react';
+import { CircleCheck, Download, Home, Mail, Ticket } from 'lucide-react';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router';
 import { errorMessage } from '@/features/auth/errors';
 import { checkoutApi, useBooking } from '@/features/checkout/api';
@@ -63,9 +63,7 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
   const ticketsIssued = booking.bus
     ? Boolean(booking.bus.pnr)
     : booking.flights.every((f) => f.pnr);
-  const demo = booking.bus
-    ? booking.bus.offer.provider === 'mock'
-    : booking.flights.some((f) => f.offer.provider === 'mock');
+  const demo = booking.demo;
 
   if (!confirmed) {
     return (
@@ -102,7 +100,10 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
         <div className="min-w-0 space-y-1">
           <p className="text-lg font-bold">Your trip is booked!</p>
           <p className="text-sm">
-            Booking reference <strong className="tracking-wide">{booking.reference}</strong>
+            Booking reference{' '}
+            <strong className="font-mono tracking-wide" data-testid="confirm-booking-ref">
+              {booking.reference}
+            </strong>
           </p>
           <p className="flex items-center gap-1.5 text-sm text-muted">
             <Mail aria-hidden className="size-4" /> Details are saved in your account and linked to{' '}
@@ -113,12 +114,21 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
       {demo && <DemoBanner service={service} />}
 
       <div className="flex flex-wrap items-center gap-3">
+        <Button asChild size="lg" variant="outline" aria-disabled={!ticketsIssued}>
+          <Link to={`/tickets/${encodeURIComponent(booking.reference)}`}>
+            <Ticket aria-hidden /> View e-ticket
+          </Link>
+        </Button>
         <Button
           size="lg"
+          data-testid="confirm-download-pdf"
           disabled={!ticketsIssued || download.isPending}
           onClick={() => download.mutate()}
         >
-          <Download aria-hidden /> {download.isPending ? 'Preparing...' : 'Download e-ticket'}
+          <Download aria-hidden /> {download.isPending ? 'Preparing...' : 'Download PDF'}
+        </Button>
+        <Button asChild size="lg" variant="ghost">
+          <Link to="/bookings">Go to My bookings</Link>
         </Button>
         {!ticketsIssued && (
           <span className="text-sm text-muted">
@@ -138,9 +148,9 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
           {booking.bus ? (
             <div className="rounded-xl border border-border px-4 py-2">
               <p className="text-xs text-muted">
-                {booking.bus.offer.operator.name} · {booking.bus.offer.serviceNumber}
+                {booking.bus.trip.operator.name} · {booking.bus.trip.serviceNumber}
               </p>
-              <p className="font-mono text-lg font-bold tracking-widest">
+              <p className="font-mono text-lg font-bold tracking-widest" data-testid="confirm-pnr">
                 {booking.bus.pnr ?? '·········'}
               </p>
             </div>
@@ -150,7 +160,12 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
                 <p className="text-xs text-muted">
                   {f.offer.from.code} → {f.offer.to.code} · {f.offer.flightNumber}
                 </p>
-                <p className="font-mono text-lg font-bold tracking-widest">{f.pnr ?? '······'}</p>
+                <p
+                  className="font-mono text-lg font-bold tracking-widest"
+                  data-testid={f.sequence === 1 ? 'confirm-pnr' : `confirm-pnr-${f.sequence}`}
+                >
+                  {f.pnr ?? '······'}
+                </p>
               </div>
             ))
           )}

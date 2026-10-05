@@ -1,16 +1,26 @@
-import { Button, cn } from '@zproo/ui';
-import { Star } from 'lucide-react';
-import { useId } from 'react';
-import { Check, Group, TimeGroup } from '@/components/filters/FilterControls';
-import { inr } from '@/features/flights/format';
+import { BUS_AMENITY_LABELS } from '@zproo/types';
+import { Button, cn, Input } from '@zproo/ui';
+import { formatMoney } from '@zproo/utils';
+import { Moon, Sun, Sunrise, Sunset } from 'lucide-react';
+import { useId, useState, type ReactNode } from 'react';
+import { Check, Group } from '@/components/filters/FilterControls';
 import { toggle } from '@/lib/list';
 import {
   activeBusFilterCount,
-  BUS_KINDS,
+  BUS_TYPES,
   EMPTY_BUS_FILTERS,
+  TIME_SLOTS,
   type BusFacets,
   type BusFilters,
+  type TimeSlot,
 } from '../filters';
+
+const SLOT_ICONS: Record<TimeSlot, typeof Sun> = {
+  early: Sunrise,
+  morning: Sun,
+  afternoon: Sunset,
+  night: Moon,
+};
 
 interface BusFiltersPanelProps {
   facets: BusFacets;
@@ -20,6 +30,77 @@ interface BusFiltersPanelProps {
   toCity: string;
 }
 
+function Chip({
+  on,
+  onClick,
+  testId,
+  children,
+}: {
+  on: boolean;
+  onClick: () => void;
+  testId: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      data-testid={testId}
+      onClick={onClick}
+      className={cn(
+        'min-h-11 rounded-full border px-3 text-sm font-medium transition-colors',
+        on
+          ? 'border-primary bg-primary-light text-primary'
+          : 'border-border hover:border-foreground/30',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SlotGroup({
+  title,
+  prefix,
+  selected,
+  onToggle,
+}: {
+  title: string;
+  prefix: 'dep' | 'arr';
+  selected: TimeSlot[];
+  onToggle: (slot: TimeSlot) => void;
+}) {
+  return (
+    <Group title={title}>
+      <div className="grid grid-cols-2 gap-2">
+        {TIME_SLOTS.map((slot) => {
+          const Icon = SLOT_ICONS[slot.id];
+          const on = selected.includes(slot.id);
+          return (
+            <button
+              key={slot.id}
+              type="button"
+              aria-pressed={on}
+              data-testid={`bus-filter-${prefix}-${slot.id}`}
+              onClick={() => onToggle(slot.id)}
+              className={cn(
+                'flex min-h-11 flex-col items-center gap-1 rounded-xl border px-2 py-2 text-xs font-medium transition-colors',
+                on
+                  ? 'border-primary bg-primary-light text-primary'
+                  : 'border-border hover:border-foreground/30',
+              )}
+            >
+              <Icon aria-hidden className="size-4" />
+              {slot.label}
+            </button>
+          );
+        })}
+      </div>
+    </Group>
+  );
+}
+
+/** Results filters: bus type, times, price, operators (searchable), amenities, rating, tracking. */
 export function BusFiltersPanel({
   facets,
   value,
@@ -28,18 +109,27 @@ export function BusFiltersPanel({
   toCity,
 }: BusFiltersPanelProps) {
   const priceId = useId();
+  const [operatorQuery, setOperatorQuery] = useState('');
   const set = (patch: Partial<BusFilters>) => onChange({ ...value, ...patch });
   const step = 5_000; // ₹50
-  const sliderMin = Math.floor(facets.minPricePaise / step) * step;
-  const sliderMax = Math.ceil(facets.maxPricePaise / step) * step;
-  const maxPrice = Math.min(value.maxPricePaise ?? sliderMax, sliderMax);
+  const sliderMin = Math.floor(facets.priceMin / step) * step;
+  const sliderMax = Math.ceil(facets.priceMax / step) * step;
+  const maxPrice = Math.min(value.maxPrice ?? sliderMax, sliderMax);
+  const operators = facets.operators.filter((o) =>
+    o.name.toLowerCase().includes(operatorQuery.trim().toLowerCase()),
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold">Filters</h2>
         {activeBusFilterCount(value) > 0 && (
-          <Button variant="ghost" size="sm" onClick={() => onChange(EMPTY_BUS_FILTERS)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="bus-filter-clear"
+            onClick={() => onChange(EMPTY_BUS_FILTERS)}
+          >
             Clear all
           </Button>
         )}
@@ -47,120 +137,114 @@ export function BusFiltersPanel({
 
       <Group title="Bus type">
         <div className="flex flex-wrap gap-2">
-          {BUS_KINDS.filter((k) => facets.kinds.includes(k.id)).map((k) => {
-            const on = value.kinds.includes(k.id);
-            return (
-              <button
-                key={k.id}
-                type="button"
-                aria-pressed={on}
-                onClick={() => set({ kinds: toggle(value.kinds, k.id) })}
-                className={cn(
-                  'rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
-                  on
-                    ? 'border-primary bg-primary-light text-primary'
-                    : 'border-border hover:border-foreground/30',
-                )}
-              >
-                {k.label}
-              </button>
-            );
-          })}
+          {BUS_TYPES.filter((t) => facets.types.includes(t.id)).map((t) => (
+            <Chip
+              key={t.id}
+              testId={`bus-filter-${t.id}`}
+              on={value.types.includes(t.id)}
+              onClick={() => set({ types: toggle(value.types, t.id) })}
+            >
+              {t.label}
+            </Chip>
+          ))}
         </div>
       </Group>
 
-      <TimeGroup
+      <SlotGroup
         title={`Departure from ${fromCity}`}
+        prefix="dep"
         selected={value.departure}
-        onToggle={(b) => set({ departure: toggle(value.departure, b) })}
+        onToggle={(s) => set({ departure: toggle(value.departure, s) })}
       />
-      <TimeGroup
+      <SlotGroup
         title={`Arrival at ${toCity}`}
+        prefix="arr"
         selected={value.arrival}
-        onToggle={(b) => set({ arrival: toggle(value.arrival, b) })}
+        onToggle={(s) => set({ arrival: toggle(value.arrival, s) })}
       />
 
-      {facets.maxPricePaise > facets.minPricePaise && (
-        <Group title="Price per seat">
+      {sliderMax > sliderMin && (
+        <Group title="Price">
           <label htmlFor={priceId} className="flex justify-between text-sm">
             <span className="text-muted">Up to</span>
-            <span className="font-semibold tabular-nums">{inr(maxPrice)}</span>
+            <span className="font-semibold tabular-nums">{formatMoney(maxPrice)}</span>
           </label>
           <input
             id={priceId}
             type="range"
+            data-testid="bus-filter-price"
             min={sliderMin}
             max={sliderMax}
             step={step}
             value={maxPrice}
+            aria-valuetext={`Up to ${formatMoney(maxPrice)}`}
             onChange={(e) => {
-              const v = Number(e.target.value);
-              set({ maxPricePaise: v >= sliderMax ? null : v });
+              const next = Number(e.target.value);
+              set({ maxPrice: next >= sliderMax ? null : next });
             }}
             className="w-full accent-primary"
           />
+          <div className="flex justify-between text-xs text-muted tabular-nums">
+            <span>{formatMoney(sliderMin)}</span>
+            <span>{formatMoney(sliderMax)}</span>
+          </div>
         </Group>
       )}
 
-      <Group title="Operator rating">
-        <div className="flex gap-2">
-          {[4.5, 4, 3.5].map((r) => {
-            const on = value.minRating === r;
-            return (
-              <button
-                key={r}
-                type="button"
-                aria-pressed={on}
-                onClick={() => set({ minRating: on ? null : r })}
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-sm font-medium',
-                  on
-                    ? 'border-primary bg-primary-light text-primary'
-                    : 'border-border hover:border-foreground/30',
-                )}
-              >
-                <Star aria-hidden className="size-3.5" /> {r}+
-              </button>
-            );
-          })}
-        </div>
-      </Group>
-
-      <Group title={`Boarding points in ${fromCity}`}>
-        {facets.boardingPoints.map((p) => (
+      <Group title="Operators">
+        {facets.operators.length > 6 && (
+          <Input
+            aria-label="Search operators"
+            placeholder="Search operators"
+            data-testid="bus-filter-operator-search"
+            value={operatorQuery}
+            onChange={(e) => setOperatorQuery(e.target.value)}
+            className="mb-2"
+          />
+        )}
+        {operators.map((o) => (
           <Check
-            key={p}
-            label={p}
-            checked={value.boardingPoints.includes(p)}
-            onChange={() => set({ boardingPoints: toggle(value.boardingPoints, p) })}
+            key={o.code}
+            testId={`bus-filter-op-${o.code}`}
+            label={o.name}
+            hint={`★ ${o.rating.toFixed(1)} · ${o.count}`}
+            checked={value.operators.includes(o.code)}
+            onChange={() => set({ operators: toggle(value.operators, o.code) })}
           />
         ))}
+        {operators.length === 0 && <p className="text-sm text-muted">No operators match</p>}
       </Group>
 
-      <Group title={`Dropping points in ${toCity}`}>
-        {facets.droppingPoints.map((p) => (
-          <Check
-            key={p}
-            label={p}
-            checked={value.droppingPoints.includes(p)}
-            onChange={() => set({ droppingPoints: toggle(value.droppingPoints, p) })}
-          />
-        ))}
-      </Group>
-
-      {facets.operators.length > 1 && (
-        <Group title="Operators">
-          {facets.operators.map((o) => (
+      {facets.amenities.length > 0 && (
+        <Group title="Amenities">
+          {facets.amenities.map((a) => (
             <Check
-              key={o.code}
-              label={o.name}
-              hint={`★ ${o.rating.toFixed(1)}`}
-              checked={value.operators.includes(o.code)}
-              onChange={() => set({ operators: toggle(value.operators, o.code) })}
+              key={a}
+              testId={`bus-filter-amen-${a}`}
+              label={BUS_AMENITY_LABELS[a]}
+              checked={value.amenities.includes(a)}
+              onChange={() => set({ amenities: toggle(value.amenities, a) })}
             />
           ))}
         </Group>
       )}
+
+      <Group title="More">
+        <Check
+          testId="bus-filter-rating4"
+          label="Rating 4+"
+          checked={value.rating4}
+          onChange={() => set({ rating4: !value.rating4 })}
+        />
+        {facets.tracking && (
+          <Check
+            testId="bus-filter-tracking"
+            label="Live tracking"
+            checked={value.tracking}
+            onChange={() => set({ tracking: !value.tracking })}
+          />
+        )}
+      </Group>
     </div>
   );
 }

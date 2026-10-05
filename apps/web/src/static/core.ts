@@ -120,7 +120,7 @@ export interface StoredBooking {
   /** Inventory held by the booking (flight seats per offer, or bus seats) */
   holds:
     | { kind: 'flight'; offerId: string; seats: number }[]
-    | { kind: 'bus'; tripId: string; seats: string[] }[];
+    | { kind: 'bus'; tripId: string; seats: { seatNo: string; female: boolean }[] }[];
 }
 
 export interface StoredPayment {
@@ -129,7 +129,14 @@ export interface StoredPayment {
   userId: string;
   orderId: string;
   amountPaise: number;
-  status: 'CREATED' | 'CAPTURED' | 'FAILED' | 'CANCELLED' | 'REFUND_DUE';
+  status:
+    | 'CREATED'
+    | 'CAPTURED'
+    | 'FAILED'
+    | 'CANCELLED'
+    | 'REFUND_DUE'
+    | 'REFUNDED'
+    | 'PARTIALLY_REFUNDED';
   /** Set by the demo gateway's checkout; verify must present the same values. */
   gatewayPaymentId?: string;
   signature?: string;
@@ -144,8 +151,8 @@ export interface Db {
   payments: StoredPayment[];
 }
 
-/** v2: booking lifecycle statuses (HELD, PAYMENT_PENDING, EXPIRED…) and ZB/ZF references. */
-const KEY = 'zproo-go-static-db-v2';
+/** v3: generated bus trips (trp_ ids), seat holds with the traveller's gender, cancellations. */
+const KEY = 'zproo-go-static-db-v3';
 const empty = (): Db => ({
   users: [],
   sessionUserId: null,

@@ -19,6 +19,7 @@ import {
   AuthorizationError,
   BookingClosedError,
   FareUnavailableError,
+  InvalidStateError,
   NotFoundError,
   PriceChangedError,
   SeatUnavailableError,
@@ -343,6 +344,39 @@ export class BookingService {
     viewer: { userId: string; canReadAny: boolean },
   ): Promise<BookingDetails> {
     return toBookingDetails(await this.get(reference, viewer));
+  }
+
+  /**
+   * The customer gives up an unpaid hold (changed seats or travellers): HELD/PAYMENT_PENDING →
+   * EXPIRED and the inventory is released at once instead of when the timer runs out. A paid
+   * booking is never released this way.
+   */
+  async release(
+    userId: string,
+    reference: string,
+  ): Promise<{ bookingRef: string; status: 'EXPIRED' }> {
+    const booking = await this.get(reference, { userId, canReadAny: false });
+    if (booking.paymentStatus === 'CAPTURED' || !OPEN_HOLD_STATUSES.includes(booking.status))
+      throw new InvalidStateError('This booking is not on hold');
+    const done = await this.deps.prisma.$transaction(async (tx) => {
+      const moved = await new BookingRepository(tx).move(
+        booking.id,
+        OPEN_HOLD_STATUSES,
+        'EXPIRED',
+        {
+          actor: `user:${userId}`,
+          reason: 'Hold released by customer',
+          data: { paymentStatus: 'CANCELLED' },
+          where: { paymentStatus: { not: 'CAPTURED' } },
+        },
+      );
+      if (!moved) return false;
+      await this.releaseInventory(booking, tx);
+      await new PaymentRepository(tx).cancelOpenForBooking(booking.id);
+      return true;
+    });
+    if (!done) throw new InvalidStateError('This booking was already changed. Please refresh.');
+    return { bookingRef: booking.reference, status: 'EXPIRED' };
   }
 
   async list(userId: string): Promise<BookingListItem[]> {

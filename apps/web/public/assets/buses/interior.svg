@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-label="Aisle and seating inside the coach">
+  <rect width="240" height="160" fill="#F8FAFC"/>
+  <polygon points="100,40 140,40 200,160 40,160" fill="#E5E7EB"/>
+  <g fill="#FFFFFF" stroke="#6B7280" stroke-width="2">
+    <rect x="20" y="70" width="44" height="60" rx="8"/>
+    <rect x="44" y="52" width="34" height="40" rx="7"/>
+    <rect x="176" y="70" width="44" height="60" rx="8"/>
+    <rect x="162" y="52" width="34" height="40" rx="7"/>
+  </g>
+  <g fill="#D9141E"><rect x="20" y="70" width="44" height="8" rx="4"/><rect x="176" y="70" width="44" height="8" rx="4"/></g>
+  <rect x="96" y="14" width="48" height="10" rx="5" fill="#111827"/>
+</svg>

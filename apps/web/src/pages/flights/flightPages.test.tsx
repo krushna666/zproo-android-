@@ -45,6 +45,7 @@ function booking(overrides: Partial<BookingDetails> = {}): BookingDetails {
     holdExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
     serverNow: new Date().toISOString(),
     coupon: null,
+    demo: true,
     confirmedAt: null,
     cancelledAt: null,
     travelDate: '2026-10-25',
@@ -195,7 +196,9 @@ describe('flight checkout', () => {
       },
       { headers: { 'Idempotency-Key': key } },
     );
-    expect(await screen.findByRole('timer')).toHaveTextContent(/seats held for/i);
+    expect(await screen.findByTestId('checkout-hold-timer')).toHaveTextContent(
+      /complete payment in/i,
+    );
     expect(await screen.findByRole('button', { name: 'Pay ₹4,800' })).toBeInTheDocument();
   });
 
@@ -241,6 +244,7 @@ describe('flight checkout', () => {
     expect(await screen.findByText('Your trip is booked!')).toBeInTheDocument();
     expect(screen.getByText('Q7X2KD')).toBeInTheDocument();
     expect(screen.getByText('0981234567890')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /download e-ticket/i })).toBeEnabled();
+    expect(screen.getByTestId('confirm-download-pdf')).toBeEnabled();
+    expect(screen.getByTestId('confirm-pnr')).toHaveTextContent('Q7X2KD');
   });
 });

@@ -62,8 +62,11 @@ describe('date-free deal links', () => {
 
 describe('other URLs', () => {
   it('omits defaults', () => {
-    expect(busesUrl({ from: 'pune', to: 'mumbai', date: '2026-12-01' })).toBe(
-      '/buses/results?from=pune&to=mumbai&date=2026-12-01',
+    expect(busesUrl({ from: 'PNQ', to: 'BOM', date: '2026-12-01' })).toBe(
+      '/buses/search?from=PNQ&to=BOM&date=2026-12-01',
+    );
+    expect(busesUrl({ from: 'PNQ', to: 'BOM', date: '2026-12-01' }, 'sort=cheapest')).toBe(
+      '/buses/search?from=PNQ&to=BOM&date=2026-12-01&sort=cheapest',
     );
     expect(trainsUrl({ from: 'PUNE', to: 'NDLS', date: '2026-12-01', travelClass: 'ALL' })).toBe(
       '/trains/results?from=PUNE&to=NDLS&date=2026-12-01',

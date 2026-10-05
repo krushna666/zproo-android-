@@ -1,6 +1,7 @@
 import type { BookingListItem, BookingStatus } from '@zproo/types';
 import { Badge, Button, FormAlert, Skeleton } from '@zproo/ui';
 import { formatMoney } from '@zproo/utils';
+import { todayInIst } from '@zproo/validation';
 import { Bus, ChevronRight, Plane, Ticket } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
@@ -8,6 +9,7 @@ import { Seo } from '@/components/seo/Seo';
 import { errorMessage } from '@/features/auth/errors';
 import { useMyBookings } from '@/features/checkout/api';
 import { BOOKING_STATUS_LABEL, isAwaitingPayment } from '@/features/checkout/status';
+import { CancelBooking } from '@/features/checkout/CancelBookingDialog';
 import { confirmationUrl, paymentUrl } from '@/features/checkout/links';
 import { travelDate } from '@/features/flights/format';
 
@@ -20,7 +22,7 @@ const TABS = [
 ] as const;
 type Tab = (typeof TABS)[number]['id'];
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayInIst();
 
 const CLOSED: readonly BookingStatus[] = [
   'CANCELLED',
@@ -54,6 +56,7 @@ export default function MyBookingsPage() {
             key={t.id}
             type="button"
             role="tab"
+            data-testid={`bookings-tab-${t.id}`}
             aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
             className={
@@ -100,7 +103,7 @@ export default function MyBookingsPage() {
               ? paymentUrl(serviceOf(b), b.reference)
               : confirmationUrl(serviceOf(b), b.reference);
             return (
-              <li key={b.reference}>
+              <li key={b.reference} className="space-y-2">
                 <Link
                   to={href}
                   className="flex items-center gap-4 rounded-2xl border border-border bg-card p-4 shadow-card transition-colors hover:border-primary/40"
@@ -125,6 +128,11 @@ export default function MyBookingsPage() {
                     <ChevronRight aria-hidden className="ml-auto size-4 text-muted" />
                   </span>
                 </Link>
+                {b.serviceType === 'BUS' && b.status === 'CONFIRMED' && tab === 'upcoming' && (
+                  <div className="flex justify-end">
+                    <CancelBooking booking={b} />
+                  </div>
+                )}
               </li>
             );
           })}

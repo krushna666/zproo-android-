@@ -57,8 +57,8 @@ export {
 
 // ───────── Other services ─────────
 
-export const busesUrl = (s: BusSearch) =>
-  `/buses/results?${qs({ from: s.from, to: s.to, date: s.date })}`;
+export const busesUrl = (s: Pick<BusSearch, 'from' | 'to' | 'date'>, extra = '') =>
+  `/buses/search?${qs({ from: s.from, to: s.to, date: s.date })}${extra ? `&${extra}` : ''}`;
 
 export const trainsUrl = (s: TrainSearch) =>
   `/trains/results?${qs({ from: s.from, to: s.to, date: s.date, class: s.travelClass === 'ALL' ? undefined : s.travelClass })}`;
@@ -88,7 +88,7 @@ export const parcelUrl = (s: ParcelQuote) =>
 
 export const flightDealUrl = (from: string, to: string) =>
   `/flights/results?${qs({ trip: 'ONE_WAY', from, to, adults: 1, cabin: 'ECONOMY' })}`;
-export const busRouteUrl = (from: string, to: string) => `/buses/results?${qs({ from, to })}`;
+export const busRouteUrl = (from: string, to: string) => `/buses/search?${qs({ from, to })}`;
 export const trainRouteUrl = (from: string, to: string) => `/trains/results?${qs({ from, to })}`;
 export const hotelCityUrl = (city: string) =>
   `/hotels/results?${qs({ city, rooms: 1, adults: 2 })}`;

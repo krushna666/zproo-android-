@@ -1,4 +1,4 @@
-import { addDays, todayIso } from '@zproo/validation';
+import { addDays, todayInIst, todayIso } from '@zproo/validation';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
@@ -122,9 +122,9 @@ describe('SearchWidget — other services', () => {
     const user = userEvent.setup();
     const { location } = renderWidget();
     await user.click(screen.getByRole('tab', { name: 'Bus' }));
-    await user.click(await screen.findByRole('button', { name: 'Search Buses' }));
+    await user.click(await screen.findByTestId('bus-search-submit'));
     await screen.findByText('results page');
-    expect(location()).toBe(`/buses/results?from=pune&to=mumbai&date=${inDays(1)}`);
+    expect(location()).toBe(`/buses/search?from=PNQ&to=BOM&date=${addDays(todayInIst(), 1)}`);
   });
 
   it('keeps hotel check-out after check-in', async () => {

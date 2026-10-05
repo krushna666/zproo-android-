@@ -1,3 +1,4 @@
+import { busSearchFilters } from '@zproo/catalog';
 import { createHash } from 'node:crypto';
 import type { BusCity, BusSearchResponse, BusSeatMap, BusTripDetails } from '@zproo/types';
 import type { BusSearch } from '@zproo/validation';
@@ -30,10 +31,6 @@ export class BusService {
       SEARCH_CACHE_SECONDS,
       () => this.provider.search(search),
     );
-    const operators = new Map<string, number>();
-    for (const t of trips)
-      operators.set(t.operator.name, (operators.get(t.operator.name) ?? 0) + 1);
-    const prices = trips.map((t) => t.fromPrice);
     return {
       searchId,
       serverNow: clock.now().toISOString(),
@@ -41,13 +38,7 @@ export class BusService {
       to: search.to,
       date: search.date,
       trips,
-      filters: {
-        operators: [...operators]
-          .map(([name, count]) => ({ name, count }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-        priceMin: prices.length > 0 ? Math.min(...prices) : 0,
-        priceMax: prices.length > 0 ? Math.max(...prices) : 0,
-      },
+      filters: busSearchFilters(trips),
       demo: this.provider.isDemo,
     };
   }

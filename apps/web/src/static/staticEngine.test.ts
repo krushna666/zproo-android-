@@ -2,8 +2,12 @@ import type {
   AuthSession,
   BookingDetails,
   BookingListItem,
-  BusSearchResult,
+  BusBookResponse,
+  BusSearchResponse,
+  BusSeat,
   BusSeatMap,
+  BusTripDetails,
+  CancellationQuote,
   FlightSearchResult,
   OtpSent,
   PaymentOrder,
@@ -159,123 +163,110 @@ describe('static engine: flights', () => {
   });
 });
 
+const PUNE_MUMBAI = { from: 'PNQ', to: 'BOM', date: day(10) };
+
+/** A trip's details plus an open seat matching `pick`, on the first trip that has one. */
+async function findSeat(pick: (s: BusSeat) => boolean) {
+  const search = await data<BusSearchResponse>(api.get('/buses/search', { params: PUNE_MUMBAI }));
+  for (const summary of search.trips) {
+    const map = await data<BusSeatMap>(api.get(`/buses/${summary.tripId}/seats`));
+    const seat = map.decks.flatMap((d) => d.seats).find((s) => s.status === 'AVAILABLE' && pick(s));
+    if (!seat) continue;
+    return { trip: await data<BusTripDetails>(api.get(`/buses/${summary.tripId}`)), seat };
+  }
+  throw new Error('no matching seat');
+}
+
+const busBody = (trip: BusTripDetails, seat: BusSeat, gender: 'MALE' | 'FEMALE' = 'MALE') => ({
+  tripId: trip.tripId,
+  seats: [seat.seatNo],
+  boardingPointId: trip.boardingPoints[0]?.id,
+  droppingPointId: trip.droppingPoints.at(-1)?.id,
+  travellers: [{ seatNo: seat.seatNo, name: 'Rohan Patil', age: 30, gender }],
+  contact: { email: 'rohan@example.com', mobile: '9876543210' },
+  expectedTotal: seat.price,
+});
+
+const statusOf = (map: BusSeatMap, seatNo: string) =>
+  map.decks.flatMap((d) => d.seats).find((s) => s.seatNo === seatNo)?.status;
+
 describe('static engine: buses', () => {
-  it('holds seats for the booking, releases them on expiry, and confirms on payment', async () => {
-    const search = await data<BusSearchResult>(
+  it('returns the same trips as the API generator', async () => {
+    const search = await data<BusSearchResponse>(
       api.get('/buses/search', { params: { from: 'pune', to: 'mumbai', date: day(10) } }),
     );
-    expect(search.trips.length).toBeGreaterThan(3);
-    const trip = search.trips[0];
-    if (!trip) throw new Error('no trips');
-    expect(trip.boardingPoints[0]?.name).toBe('Swargate');
+    expect(search).toMatchObject({ from: 'PNQ', to: 'BOM', demo: true });
+    expect(search.trips.length).toBeGreaterThanOrEqual(10);
+    expect(search.trips[0]?.tripId).toMatch(/^trp_PNQ_BOM_\d{8}_\d{2}$/);
+    expect(search.filters.priceMin).toBe(Math.min(...search.trips.map((t) => t.fromPrice)));
+    const cities = await data<{ code: string }[]>(
+      api.get('/buses/cities', { params: { q: 'nag' } }),
+    );
+    expect(cities[0]?.code).toBe('NAG');
+  });
 
-    const map = await data<BusSeatMap>(api.get(`/buses/${trip.id}/seats`));
-    const seat = map.decks.flatMap((d) => d.seats).find((s) => s.available && !s.ladiesOnly);
-    if (!seat) throw new Error('no seat');
-
+  it('holds seats, confirms on payment and cancels with a tiered refund', async () => {
     await signUp();
-    const body = {
-      tripId: trip.id,
-      boardingPointId: trip.boardingPoints[0]?.id,
-      droppingPointId: trip.droppingPoints.at(-1)?.id,
-      passengers: [
-        { seatNumber: seat.number, firstName: 'Rohan', lastName: 'Patil', age: 30, gender: 'MALE' },
-      ],
-      contact: { email: 'rohan@example.com', phone: '9876543210' },
-      expectedTotalPaise: seat.pricePaise,
-    };
-    const booking = await data<BookingDetails>(book('/buses/book', body));
-    expect(booking.bus).toMatchObject({
-      seatNumbers: [seat.number],
-      boardingPoint: { name: 'Swargate' },
-    });
+    const { trip, seat } = await findSeat((s) => !s.ladiesOnly);
+    expect(trip.boardingPoints[0]?.name).toBe('Swargate');
+    const held = await data<BusBookResponse>(book('/buses/book', busBody(trip, seat)));
+    expect(held).toMatchObject({ status: 'HELD', priceBreakdown: { totalPaise: seat.price } });
 
-    const held = await data<BusSeatMap>(api.get(`/buses/${trip.id}/seats`));
-    expect(
-      held.decks.flatMap((d) => d.seats).find((s) => s.number === seat.number)?.available,
-    ).toBe(false);
-    expect((await fail(book('/buses/book', body))).body.error).toMatchObject({
+    const map = await data<BusSeatMap>(api.get(`/buses/${trip.tripId}/seats`));
+    expect(statusOf(map, seat.seatNo)).toBe('HELD');
+    expect((await fail(book('/buses/book', busBody(trip, seat)))).body.error).toMatchObject({
       code: 'SEAT_UNAVAILABLE',
-      details: { seats: [seat.number] },
+      details: { seats: [seat.seatNo] },
     });
 
-    await pay(booking.reference);
-    const confirmed = await data<BookingDetails>(api.get(`/bookings/${booking.reference}`));
+    await pay(held.bookingRef);
+    const confirmed = await data<BookingDetails>(api.get(`/bookings/${held.bookingRef}`));
     expect(confirmed.bus?.pnr).toMatch(new RegExp(`^${trip.operator.code}\\d{7}$`));
+
+    const quote = await data<CancellationQuote>(
+      api.get(`/bookings/${held.bookingRef}/cancellation`),
+    );
+    expect(quote).toMatchObject({ cancellable: true, refundPercent: 90 });
+    const cancelled = await data<{ status: string; refundAmount: number }>(
+      api.post(`/buses/${held.bookingRef}/cancel`),
+    );
+    expect(cancelled).toEqual({
+      bookingRef: held.bookingRef,
+      status: 'REFUND_PENDING',
+      refundAmount: quote.refundAmount,
+    });
+    const freed = await data<BusSeatMap>(api.get(`/buses/${trip.tripId}/seats`));
+    expect(statusOf(freed, seat.seatNo)).toBe('AVAILABLE');
   });
 
   it('keeps ladies-only seats for women', async () => {
     await signUp();
-    const search = await data<BusSearchResult>(
-      api.get('/buses/search', { params: { from: 'pune', to: 'mumbai', date: day(10) } }),
-    );
-    for (const trip of search.trips) {
-      const map = await data<BusSeatMap>(api.get(`/buses/${trip.id}/seats`));
-      const seat = map.decks.flatMap((d) => d.seats).find((s) => s.available && s.ladiesOnly);
-      if (!seat) continue;
-      const res = await fail(
-        book('/buses/book', {
-          tripId: trip.id,
-          boardingPointId: trip.boardingPoints[0]?.id,
-          droppingPointId: trip.droppingPoints[0]?.id,
-          passengers: [
-            {
-              seatNumber: seat.number,
-              firstName: 'Amit',
-              lastName: 'Patil',
-              age: 30,
-              gender: 'MALE',
-            },
-          ],
-          contact: { email: 'amit@example.com', phone: '9876543210' },
-          expectedTotalPaise: seat.pricePaise,
-        }),
-      );
-      expect(res.body.error.details.issues).toEqual([
-        {
-          path: 'body.passengers.0.gender',
-          message: `Seat ${seat.number} is reserved for women`,
-        },
-      ]);
-      return;
-    }
-    throw new Error('no ladies seat found');
+    const { trip, seat } = await findSeat((s) => s.ladiesOnly);
+    const res = await fail(book('/buses/book', busBody(trip, seat)));
+    expect(res.body.error.details.issues).toEqual([
+      { path: 'body.travellers.0.gender', message: 'This seat is reserved for women' },
+    ]);
+    await data(book('/buses/book', busBody(trip, seat, 'FEMALE')));
+  });
+
+  it('refuses a stale price', async () => {
+    await signUp();
+    const { trip, seat } = await findSeat((s) => !s.ladiesOnly);
+    const res = await fail(book('/buses/book', { ...busBody(trip, seat), expectedTotal: 100 }));
+    expect(res.body.error).toMatchObject({
+      code: 'PRICE_CHANGED',
+      details: { oldTotal: 100, newTotal: seat.price },
+    });
   });
 });
 
 describe('static engine: payments and coupons', () => {
-  /** A held bus seat above BUS10's ₹400 minimum, on whichever trip has one. */
+  /** A held bus seat above BUS10's minimum. */
   async function heldBus() {
     await signUp();
-    const search = await data<BusSearchResult>(
-      api.get('/buses/search', { params: { from: 'pune', to: 'mumbai', date: day(10) } }),
-    );
-    for (const trip of search.trips) {
-      const map = await data<BusSeatMap>(api.get(`/buses/${trip.id}/seats`));
-      const seat = map.decks
-        .flatMap((d) => d.seats)
-        .find((x) => x.available && !x.ladiesOnly && x.pricePaise > 40_000);
-      if (!seat) continue;
-      return data<BookingDetails>(
-        book('/buses/book', {
-          tripId: trip.id,
-          boardingPointId: trip.boardingPoints[0]?.id,
-          droppingPointId: trip.droppingPoints[0]?.id,
-          passengers: [
-            {
-              seatNumber: seat.number,
-              firstName: 'Amit',
-              lastName: 'Sharma',
-              age: 30,
-              gender: 'MALE',
-            },
-          ],
-          contact: { email: 'amit@example.com', phone: '9876543210' },
-          expectedTotalPaise: seat.pricePaise,
-        }),
-      );
-    }
-    throw new Error('no seat above ₹400');
+    const { trip, seat } = await findSeat((s) => !s.ladiesOnly && s.price > 40_000);
+    const held = await data<BusBookResponse>(book('/buses/book', busBody(trip, seat)));
+    return data<BookingDetails>(api.get(`/bookings/${held.bookingRef}`));
   }
 
   it('returns copies, never the stored records', async () => {

@@ -79,6 +79,7 @@ export class MockBusProvider implements BusProvider {
       decks,
       maxSelectable: MAX_BUS_SEATS,
       bookable: busTripDetails(plan, now).bookable,
+      demo: this.isDemo,
     };
   }
 
