@@ -21,7 +21,7 @@ describe('toFailure', () => {
       message: 'Mobile number already registered',
       details: undefined,
     });
-    expect(toFailure(new PaymentError()).status).toBe(402);
+    expect(toFailure(new PaymentError()).status).toBe(400);
     expect(toFailure(new ProviderError('Flight supplier timed out', 'amadeus')).status).toBe(502);
   });
 

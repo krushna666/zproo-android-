@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { seedBusData } from '../../../prisma/seed/buses';
+import { seedCoupons } from '../../../prisma/seed/coupons';
 import { seedFlightData } from '../../../prisma/seed/flights';
 import { seedReferenceData } from '../../../prisma/seed/reference';
 import { TEST_DATABASE_URL } from './testUrls';
@@ -26,6 +27,7 @@ export default async function setup() {
     await seedReferenceData(prisma);
     await seedFlightData(prisma);
     await seedBusData(prisma);
+    await seedCoupons(prisma);
   } finally {
     await prisma.$disconnect();
   }

@@ -75,20 +75,23 @@ function Payment({ booking }: { booking: BookingDetails }) {
   }, [booking, createOrder]);
 
   const pay = useMutation({
-    mutationFn: (outcome: 'success' | 'failure') => {
+    mutationFn: async (outcome: 'success' | 'failure') => {
       const current = order.data as PaymentOrder;
-      return checkoutApi.completeMockPayment(current.paymentId, outcome);
+      const gateway = await checkoutApi.completeMockPayment(current.orderId, outcome);
+      if (gateway.outcome === 'failure') return { status: 'FAILED' as const };
+      const { outcome: _done, ...result } = gateway;
+      return checkoutApi.verifyPayment(booking.reference, result);
     },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: bookingKeys.booking(booking.reference) });
-      if (result.status === 'CAPTURED') {
-        if (service === 'bus') clearBus();
-        else clearFlight();
-        setPaid(result.reference);
-      } else {
+      if (result.status === 'FAILED') {
         // A failed attempt closes that order; the next attempt gets a fresh one.
         createOrder();
+        return;
       }
+      if (service === 'bus') clearBus();
+      else clearFlight();
+      setPaid(booking.reference);
     },
   });
 

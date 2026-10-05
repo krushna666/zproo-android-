@@ -11,6 +11,8 @@ import { apiRateLimiter, type RateLimitStoreFactory } from './middleware/rateLim
 import { corsPolicy, securityHeaders } from './middleware/security';
 import { createApiRouter } from './routes';
 
+const WEBHOOK_PATH = '/api/payments/webhook';
+
 export interface AppOptions {
   env: Env;
   logger: Logger;
@@ -33,7 +35,16 @@ export function createApp({
   app.use(httpLogger(logger));
   app.use(securityHeaders());
   app.use(corsPolicy(env));
-  app.use(express.json({ limit: '100kb' }));
+  app.use(
+    express.json({
+      limit: '100kb',
+      // The payment webhook signature covers the exact bytes; keep them for that route only.
+      verify: (req, _res, buf) => {
+        if ((req as { url?: string }).url === WEBHOOK_PATH)
+          (req as typeof req & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+      },
+    }),
+  );
   app.use(cookieParser());
 
   if (env.apiDocsEnabled) app.use('/api/docs', docsRouter(env.APP_VERSION));

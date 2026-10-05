@@ -34,6 +34,19 @@ function busInfo(booking: BookingRecord): BusBookingInfo | null {
 
 /** Customer-facing lines for the stored amounts; amounts always come from the booking itself. */
 function priceLines(booking: BookingRecord, offers: FlightOffer[]): PriceBreakdown['lines'] {
+  const discount =
+    booking.discountAmountPaise > 0
+      ? [
+          {
+            label: booking.coupon ? `Coupon ${booking.coupon.code}` : 'Discount',
+            amountPaise: -booking.discountAmountPaise,
+          },
+        ]
+      : [];
+  return [...fareLines(booking, offers), ...discount];
+}
+
+function fareLines(booking: BookingRecord, offers: FlightOffer[]): PriceBreakdown['lines'] {
   if (booking.serviceType === 'FLIGHT')
     return flightPriceBreakdown(offers, paxCounts(booking)).lines;
   const seats = booking.passengers.length;
@@ -70,6 +83,9 @@ export function toBookingDetails(booking: BookingRecord, now: Date = new Date())
       totalPaise: booking.totalAmountPaise,
     },
     contact: { email: booking.contactEmail, phone: booking.contactPhone },
+    coupon: booking.coupon
+      ? { code: booking.coupon.code, discountPaise: booking.discountAmountPaise }
+      : null,
     passengers: booking.passengers.map((p) => ({
       id: p.id,
       type: p.type,

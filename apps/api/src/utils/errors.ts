@@ -198,7 +198,7 @@ export class RateLimitError extends AppError {
 
 export class PaymentError extends AppError {
   constructor(message = 'Payment could not be processed') {
-    super(message, 402, ErrorCode.PAYMENT_ERROR);
+    super(message, 400, ErrorCode.PAYMENT_ERROR);
   }
 }
 

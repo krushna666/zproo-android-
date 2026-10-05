@@ -13,6 +13,7 @@ import { authRateLimiters, type RateLimitStoreFactory } from '../middleware/rate
 import { adminRoutes } from './admin.routes';
 import { authRoutes } from './auth.routes';
 import { bookingRoutes, busRoutes, flightRoutes, paymentRoutes } from './commerce.routes';
+import { couponRoutes } from './coupon.routes';
 import { healthRoutes } from './health.routes';
 import { meRoutes } from './me.routes';
 
@@ -44,11 +45,17 @@ export function createApiRouter(
       createFlightsController(services.flights, services.bookings),
       requireUser,
       services.rbac,
+      services.idempotency,
     ),
   );
   router.use(
     '/buses',
-    busRoutes(createBusesController(services.buses, services.bookings), requireUser, services.rbac),
+    busRoutes(
+      createBusesController(services.buses, services.bookings),
+      requireUser,
+      services.rbac,
+      services.idempotency,
+    ),
   );
   router.use(
     '/bookings',
@@ -60,9 +67,16 @@ export function createApiRouter(
   );
   router.use(
     '/payments',
-    paymentRoutes(createPaymentsController(services.payments), requireUser, services.rbac, {
-      mockCheckout: services.payments.providerName === 'mock' && !env.isProduction,
-    }),
+    paymentRoutes(
+      createPaymentsController(services.payments),
+      requireUser,
+      services.rbac,
+      services.idempotency,
+      {
+        mockCheckout: services.payments.providerName === 'mock' && !env.isProduction,
+      },
+    ),
   );
+  router.use('/coupons', couponRoutes(services.coupons, requireUser, services.rbac));
   return router;
 }

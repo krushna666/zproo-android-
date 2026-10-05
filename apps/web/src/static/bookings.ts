@@ -1,6 +1,12 @@
-import { findCity } from '@zproo/config';
-import type { BookingDetails, BookingListItem, BookingStatus, PaymentOrder } from '@zproo/types';
-import { OPEN_HOLD_STATUSES, transition } from '@zproo/utils';
+import { DEMO_COUPONS, findCity, type DemoCoupon } from '@zproo/config';
+import type {
+  BookingDetails,
+  BookingListItem,
+  BookingStatus,
+  CouponRejection,
+  PaymentOrder,
+} from '@zproo/types';
+import { OPEN_HOLD_STATUSES, couponDiscount, subtotalOf, totalOf, transition } from '@zproo/utils';
 import { randomInt } from './random';
 import {
   currentUser,
@@ -14,6 +20,7 @@ import {
   type StaticRequest,
   type StaticResult,
   type StoredBooking,
+  type StoredPayment,
 } from './core';
 
 /** Minutes seats stay held for an unpaid booking. */
@@ -28,6 +35,7 @@ type NewBooking = Omit<
   | 'serverNow'
   | 'confirmedAt'
   | 'cancelledAt'
+  | 'coupon'
 >;
 
 /** Applies a status change through the shared state machine (throws on an illegal move). */
@@ -50,6 +58,7 @@ export function newBooking(input: NewBooking): BookingDetails {
     createdAt: new Date(now).toISOString(),
     holdExpiresAt: new Date(now + holdMinutes * 60_000).toISOString(),
     serverNow: new Date(now).toISOString(),
+    coupon: null,
     confirmedAt: null,
     cancelledAt: null,
   };
@@ -86,11 +95,72 @@ export function activeHolds(): StoredBooking['holds'][number][] {
     .flatMap((b) => b.holds as StoredBooking['holds'][number][]);
 }
 
+function ownPayment(orderId: string | undefined): StoredPayment {
+  const user = currentUser();
+  const payment = db().payments.find((p) => p.orderId === orderId);
+  if (!payment) throw notFound('Payment not found');
+  if (payment.userId !== user.id)
+    throw new StaticError(403, 'FORBIDDEN', "You don't have access to this payment");
+  return payment;
+}
+
+const couponInvalid = (reason: CouponRejection) =>
+  new StaticError(422, 'COUPON_INVALID', "This coupon can't be used for this booking.", {
+    reason,
+  });
+
+/** Same rules as the API: dates, service, minimum amount and per-customer use. */
+function checkCoupon(coupon: DemoCoupon | undefined, booking: StoredBooking): number {
+  const d = booking.details;
+  if (!coupon) throw couponInvalid('not_applicable');
+  const now = Date.now();
+  if (now < Date.parse(coupon.startsAt) || now >= Date.parse(coupon.endsAt))
+    throw couponInvalid('expired');
+  if (coupon.serviceType && coupon.serviceType !== d.serviceType)
+    throw couponInvalid('not_applicable');
+  const amounts = {
+    basePaise: d.price.basePaise,
+    taxPaise: d.price.taxesPaise,
+    feePaise: d.price.feesPaise,
+  };
+  if (subtotalOf(amounts) < coupon.minAmountPaise) throw couponInvalid('min_amount');
+  const used = db().bookings.filter(
+    (b) =>
+      b !== booking &&
+      b.userId === booking.userId &&
+      b.details.coupon?.code === coupon.code &&
+      (OPEN_HOLD_STATUSES.includes(b.details.status) || b.details.status === 'CONFIRMED'),
+  ).length;
+  if (used >= coupon.perUserLimit) throw couponInvalid('usage_limit');
+  const discount = couponDiscount(coupon, d.price.basePaise);
+  if (discount <= 0) throw couponInvalid('not_applicable');
+  return discount;
+}
+
+/** Stores a coupon discount on the booking and keeps its price lines and total in step. */
+function setDiscount(d: BookingDetails, code: string | null, discountPaise: number): void {
+  const lines = d.price.lines.filter((l) => l.amountPaise >= 0);
+  d.price = {
+    ...d.price,
+    lines: code ? [...lines, { label: `Coupon ${code}`, amountPaise: -discountPaise }] : lines,
+    discountPaise,
+    totalPaise: totalOf({
+      basePaise: d.price.basePaise,
+      taxPaise: d.price.taxesPaise,
+      feePaise: d.price.feesPaise,
+      discountPaise,
+    }),
+  };
+  d.coupon = code ? { code, discountPaise } : null;
+}
+
 function ownBooking(reference: string): StoredBooking {
   expireHolds();
   const user = currentUser();
   const booking = db().bookings.find((b) => b.details.reference === reference.toUpperCase());
-  if (!booking || booking.userId !== user.id) throw notFound('Booking not found');
+  if (!booking) throw notFound('Booking not found');
+  if (booking.userId !== user.id)
+    throw new StaticError(403, 'FORBIDDEN', "You don't have access to this booking");
   return booking;
 }
 
@@ -163,39 +233,38 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
     return { data: withClock(ownBooking(details[1] as string).details) };
 
   if (method === 'POST' && path === '/payments/create') {
-    const { bookingReference } = (body ?? {}) as { bookingReference?: string };
-    const booking = ownBooking(bookingReference ?? '');
+    const { bookingRef } = (body ?? {}) as { bookingRef?: string };
+    const booking = ownBooking(bookingRef ?? '');
     const d = booking.details;
     if (d.status === 'EXPIRED') throw holdExpired();
-    if (!OPEN_HOLD_STATUSES.includes(d.status))
+    if (!OPEN_HOLD_STATUSES.includes(d.status) || d.paymentStatus === 'CAPTURED')
       throw new StaticError(409, 'INVALID_STATE', 'This booking is not awaiting payment');
-    if (d.status === 'HELD') {
-      move(d, 'PAYMENT_PENDING');
-      save();
+    if (d.status === 'HELD') move(d, 'PAYMENT_PENDING');
+    let open = db().payments.find((p) => p.reference === d.reference && p.status === 'CREATED');
+    // A coupon applied or removed since the order was made changes the amount: start a new order.
+    if (open && open.amountPaise !== d.price.totalPaise) {
+      open.status = 'CANCELLED';
+      open = undefined;
     }
-    const open =
-      db().payments.find((p) => p.reference === d.reference && p.status === 'CREATED') ??
-      (() => {
-        const p = {
-          id: randomId(),
-          reference: d.reference,
-          userId: booking.userId,
-          orderId: `mockorder_${randomId().slice(0, 14)}`,
-          amountPaise: d.price.totalPaise,
-          status: 'CREATED' as const,
-        };
-        db().payments.push(p);
-        save();
-        return p;
-      })();
+    if (!open) {
+      open = {
+        id: randomId(),
+        reference: d.reference,
+        userId: booking.userId,
+        orderId: `order_demo${randomId().slice(0, 14)}`,
+        amountPaise: d.price.totalPaise,
+        status: 'CREATED',
+      };
+      db().payments.push(open);
+    }
+    save();
     const order: PaymentOrder = {
-      paymentId: open.id,
-      provider: 'mock',
-      providerOrderId: open.orderId,
-      amountPaise: open.amountPaise,
+      orderId: open.orderId,
+      amount: open.amountPaise,
       currency: 'INR',
-      publicKey: null,
-      bookingReference: d.reference,
+      keyId: null,
+      provider: 'mock',
+      bookingRef: d.reference,
       holdExpiresAt: d.holdExpiresAt,
       serverNow: new Date().toISOString(),
     };
@@ -203,22 +272,56 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
   }
 
   if (method === 'POST' && path === '/payments/mock/complete') {
-    const { paymentId, outcome } = (body ?? {}) as {
-      paymentId?: string;
+    const { orderId, outcome } = (body ?? {}) as {
+      orderId?: string;
       outcome?: 'success' | 'failure';
     };
-    const user = currentUser();
-    const payment = db().payments.find((p) => p.id === paymentId && p.userId === user.id);
-    if (!payment) throw notFound('Payment not found');
+    const payment = ownPayment(orderId);
+    if (outcome !== 'success') {
+      if (payment.status === 'CREATED') payment.status = 'FAILED';
+      save();
+      return { data: { outcome: 'failure' }, message: 'Payment failed' };
+    }
+    payment.gatewayPaymentId ??= `pay_demo${randomId().slice(0, 14)}`;
+    payment.signature ??= randomId() + randomId();
+    save();
+    return {
+      data: {
+        outcome: 'success',
+        orderId: payment.orderId,
+        paymentId: payment.gatewayPaymentId,
+        signature: payment.signature,
+      },
+      message: 'Payment authorised',
+    };
+  }
+
+  if (method === 'POST' && path === '/payments/verify') {
+    const input = (body ?? {}) as {
+      bookingRef?: string;
+      orderId?: string;
+      paymentId?: string;
+      signature?: string;
+    };
+    const payment = ownPayment(input.orderId);
     const booking = ownBooking(payment.reference);
     const d = booking.details;
-    if (outcome !== 'success') {
-      payment.status = 'FAILED';
-      save();
-      return { data: { reference: d.reference, status: 'FAILED' }, message: 'Payment failed' };
+    const result = () => ({
+      data: { bookingRef: d.reference, status: d.status, paymentStatus: d.paymentStatus },
+    });
+    if (
+      input.bookingRef !== d.reference ||
+      !payment.signature ||
+      input.paymentId !== payment.gatewayPaymentId ||
+      input.signature !== payment.signature
+    ) {
+      throw new StaticError(
+        400,
+        'PAYMENT_ERROR',
+        'We could not verify this payment. You have not been charged for a booking.',
+      );
     }
-    if (payment.status === 'CAPTURED')
-      return { data: { reference: d.reference, status: 'CAPTURED' } };
+    if (payment.status === 'CAPTURED') return result();
     if (d.status !== 'PAYMENT_PENDING') {
       // Paid after the hold ran out: never confirmed, the money is owed back.
       payment.status = 'REFUND_DUE';
@@ -235,19 +338,55 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
     move(d, 'CONFIRMED');
     d.confirmedAt = new Date().toISOString();
     save();
-    return {
-      data: { reference: d.reference, status: 'CAPTURED' },
-      message: 'Payment successful. Your booking is confirmed.',
-    };
+    return { ...result(), message: 'Payment successful. Your booking is confirmed.' };
   }
 
-  const fail = /^\/payments\/([^/]+)\/fail$/.exec(path);
-  if (method === 'POST' && fail) {
-    const payment = db().payments.find((p) => p.id === fail[1] && p.userId === currentUser().id);
-    if (!payment) throw notFound('Payment not found');
+  if (method === 'POST' && path === '/payments/fail') {
+    const { orderId } = (body ?? {}) as { orderId?: string };
+    const payment = ownPayment(orderId);
     if (payment.status === 'CREATED') payment.status = 'FAILED';
     save();
     return { data: null, message: 'Payment marked as failed. You can try again.' };
+  }
+
+  if (method === 'GET' && path === '/coupons') {
+    const service = (req.params.service ?? null) as DemoCoupon['serviceType'];
+    const now = Date.now();
+    return {
+      data: DEMO_COUPONS.filter(
+        (c) =>
+          Date.parse(c.startsAt) <= now &&
+          Date.parse(c.endsAt) > now &&
+          (!service || c.serviceType === null || c.serviceType === service),
+      ).map((c) => ({
+        code: c.code,
+        description: c.description,
+        serviceType: c.serviceType,
+        minAmountPaise: c.minAmountPaise,
+        endsAt: new Date(c.endsAt).toISOString(),
+      })),
+    };
+  }
+
+  if (method === 'POST' && (path === '/coupons/apply' || path === '/coupons/remove')) {
+    const input = (body ?? {}) as { bookingRef?: string; code?: string };
+    const booking = ownBooking(input.bookingRef ?? '');
+    const d = booking.details;
+    if (d.status === 'EXPIRED') throw holdExpired();
+    if (!OPEN_HOLD_STATUSES.includes(d.status) || d.paymentStatus === 'CAPTURED')
+      throw new StaticError(409, 'INVALID_STATE', 'Coupons can only be changed before payment');
+    if (path === '/coupons/remove') {
+      setDiscount(d, null, 0);
+    } else {
+      const code = (input.code ?? '').trim().toUpperCase();
+      const coupon = DEMO_COUPONS.find((c) => c.code === code);
+      setDiscount(d, code, checkCoupon(coupon, booking));
+    }
+    save();
+    return {
+      data: withClock(d),
+      message: path === '/coupons/apply' ? 'Coupon applied' : 'Coupon removed',
+    };
   }
   return null;
 }

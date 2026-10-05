@@ -1,5 +1,5 @@
-import type { PrismaClient } from '@prisma/client';
-import type { PaymentOrder } from '@zproo/types';
+import { Prisma, type PrismaClient } from '@prisma/client';
+import type { BookingStatus, PaymentOrder, PaymentStatus } from '@zproo/types';
 import type { Logger } from 'pino';
 import { OPEN_HOLD_STATUSES } from '@zproo/utils';
 import type { BusProvider } from '../providers/bus';
@@ -16,6 +16,12 @@ import {
 } from '../utils/errors';
 import type { AuditService, RequestContext } from './audit.service';
 import type { BookingService } from './booking.service';
+
+export interface PaymentResult {
+  bookingRef: string;
+  status: BookingStatus;
+  paymentStatus: PaymentStatus;
+}
 
 interface PaymentServiceDeps {
   prisma: PrismaClient;
@@ -48,29 +54,38 @@ export class PaymentService {
    * Idempotent: an open payment for the booking is returned rather than a second order created.
    * The amount always comes from the stored booking. The first order moves HELD → PAYMENT_PENDING.
    */
-  async createOrder(userId: string, reference: string, ctx: RequestContext): Promise<PaymentOrder> {
-    const booking = await this.deps.bookings.get(reference, { userId, canReadAny: false });
+  async createOrder(
+    userId: string,
+    bookingRef: string,
+    ctx: RequestContext,
+  ): Promise<PaymentOrder> {
+    const booking = await this.deps.bookings.get(bookingRef, { userId, canReadAny: false });
     if (booking.status === 'EXPIRED') throw new HoldExpiredError();
     if (!OPEN_HOLD_STATUSES.includes(booking.status) || booking.paymentStatus === 'CAPTURED')
       throw new InvalidStateError('This booking is not awaiting payment');
     if (booking.holdExpiresAt && booking.holdExpiresAt <= this.now()) throw new HoldExpiredError();
 
     const payments = new PaymentRepository(this.deps.prisma);
+    const open = await payments.findOpenForBooking(booking.id);
+    // A coupon applied or removed since the order was made changes the amount: start a new order.
+    if (open && open.amountPaise !== booking.totalAmountPaise)
+      await payments.transition(open.id, ['CREATED', 'PENDING'], { status: 'CANCELLED' });
     const payment =
-      (await payments.findOpenForBooking(booking.id)) ??
-      (await payments.create({
-        bookingId: booking.id,
-        userId,
-        provider: this.deps.provider.name,
-        providerOrderId: (
-          await this.deps.provider.createOrder({
+      open && open.amountPaise === booking.totalAmountPaise
+        ? open
+        : await payments.create({
+            bookingId: booking.id,
+            userId,
+            provider: this.deps.provider.name,
+            providerOrderId: (
+              await this.deps.provider.createOrder({
+                amountPaise: booking.totalAmountPaise,
+                currency: 'INR',
+                receipt: booking.reference,
+              })
+            ).orderId,
             amountPaise: booking.totalAmountPaise,
-            currency: 'INR',
-            receipt: booking.reference,
-          })
-        ).orderId,
-        amountPaise: booking.totalAmountPaise,
-      }));
+          });
     if (booking.status === 'HELD') {
       await this.deps.prisma.$transaction((tx) =>
         new BookingRepository(tx).move(booking.id, ['HELD'], 'PAYMENT_PENDING', {
@@ -84,113 +99,152 @@ export class PaymentService {
       actorId: userId,
       entityType: 'Payment',
       entityId: payment.id,
-      after: { reference, amountPaise: payment.amountPaise, provider: payment.provider },
+      after: { bookingRef, amountPaise: payment.amountPaise, provider: payment.provider },
       context: ctx,
     });
     return {
-      paymentId: payment.id,
-      provider: payment.provider,
-      providerOrderId: payment.providerOrderId,
-      amountPaise: payment.amountPaise,
+      orderId: payment.providerOrderId,
+      amount: payment.amountPaise,
       currency: 'INR',
-      publicKey: this.deps.provider.publicKey,
-      bookingReference: booking.reference,
+      keyId: this.deps.provider.publicKey,
+      provider: payment.provider,
+      bookingRef: booking.reference,
       holdExpiresAt: booking.holdExpiresAt?.toISOString() ?? null,
       serverNow: this.now().toISOString(),
     };
   }
 
-  /** Called with the gateway's result from the browser; trusted only if the signature verifies. */
+  /**
+   * The browser reports the gateway's result. Trusted only if (1) the signature over
+   * `orderId|paymentId` verifies, and (2) the gateway's own record of that payment matches this
+   * order, its amount and currency. Retries of a completed verification return the same result.
+   */
   async verify(
     userId: string,
-    input: {
-      paymentId: string;
-      providerPaymentId: string;
-      signature: string;
-      method?: string | undefined;
-    },
+    input: { bookingRef: string; orderId: string; paymentId: string; signature: string },
     ctx: RequestContext,
-  ): Promise<{ reference: string }> {
-    const payment = await new PaymentRepository(this.deps.prisma).findById(input.paymentId);
-    if (!payment) throw new NotFoundError('Payment not found');
-    if (payment.userId !== userId)
-      throw new AuthorizationError("You don't have access to this payment");
-    if (payment.status === 'CAPTURED') return { reference: payment.booking.reference }; // retry of a completed call
+  ): Promise<PaymentResult> {
+    const payment = await this.ownPayment(userId, input.orderId);
+    if (payment.booking.reference !== input.bookingRef)
+      throw new PaymentError('This payment does not belong to this booking.');
+    if (payment.status === 'CAPTURED' && payment.providerPaymentId === input.paymentId)
+      return this.result(payment.bookingId);
 
-    const valid = this.deps.provider.verifyPayment({
-      orderId: payment.providerOrderId,
-      paymentId: input.providerPaymentId,
-      signature: input.signature,
-    });
-    if (!valid) {
-      await this.deps.audit.record({
-        action: 'PAYMENT_SIGNATURE_INVALID',
-        actorId: userId,
-        entityType: 'Payment',
-        entityId: payment.id,
-        context: ctx,
-      });
+    if (!this.deps.provider.verifySignature(input)) {
+      await this.audit('PAYMENT_SIGNATURE_INVALID', userId, payment.id, ctx);
       throw new PaymentError(
         'We could not verify this payment. You have not been charged for a booking.',
       );
     }
-    await this.confirm(payment.id, input.providerPaymentId, input.method, userId, ctx);
-    return { reference: payment.booking.reference };
+    await this.checkGatewayPayment(input.paymentId, payment, userId, ctx);
+    await this.confirm(payment.id, input.paymentId, undefined, `user:${userId}`, userId, ctx);
+    return this.result(payment.bookingId);
   }
 
-  /** Records a failed attempt; the booking stays payable until its hold expires. */
+  /**
+   * Gateway webhook (raw body, signed with the webhook secret). Each event ID is processed once.
+   * `payment.captured` / `order.paid` confirm the booking exactly like `verify`; whichever
+   * arrives first wins and the other is a no-op. Returns what happened, for logging.
+   */
+  async handleWebhook(
+    rawBody: Buffer,
+    signature: string,
+    eventIdHeader: string | undefined,
+    ctx: RequestContext,
+  ): Promise<'processed' | 'duplicate' | 'ignored'> {
+    if (!this.deps.provider.verifyWebhook(rawBody, signature)) {
+      await this.audit('PAYMENT_WEBHOOK_SIGNATURE_INVALID', null, null, ctx);
+      throw new PaymentError('Invalid webhook signature');
+    }
+    const event = this.deps.provider.parseWebhook(rawBody, eventIdHeader);
+    if (!event) throw new PaymentError('Unrecognised webhook payload');
+
+    const gatewayPayment = event.payment;
+    const payment = gatewayPayment
+      ? await new PaymentRepository(this.deps.prisma).findByOrderId(gatewayPayment.orderId)
+      : null;
+    try {
+      await this.deps.prisma.webhookEvent.create({
+        data: {
+          provider: this.deps.provider.name,
+          eventId: event.eventId,
+          type: event.type,
+          paymentId: payment?.id ?? null,
+        },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')
+        return 'duplicate';
+      throw err;
+    }
+    if (!payment || !gatewayPayment) return 'ignored';
+
+    const actor = `webhook:${this.deps.provider.name}`;
+    if (
+      (event.type === 'payment.captured' || event.type === 'order.paid') &&
+      gatewayPayment.status === 'captured'
+    ) {
+      if (payment.status === 'CAPTURED') return 'processed'; // verify got there first
+      if (
+        gatewayPayment.amountPaise !== payment.amountPaise ||
+        gatewayPayment.currency !== payment.currency
+      ) {
+        await this.audit('PAYMENT_AMOUNT_MISMATCH', null, payment.id, ctx);
+        return 'ignored';
+      }
+      try {
+        await this.confirm(payment.id, gatewayPayment.paymentId, undefined, actor, null, ctx);
+      } catch (err) {
+        // A late capture is recorded as refund-due inside confirm(); nothing else to do here.
+        if (!(err instanceof HoldExpiredError)) throw err;
+      }
+      return 'processed';
+    }
+    if (event.type === 'payment.failed') {
+      await new PaymentRepository(this.deps.prisma).transition(payment.id, ['CREATED', 'PENDING'], {
+        status: 'FAILED',
+        failureReason: 'Declined by the gateway',
+      });
+      return 'processed';
+    }
+    return 'ignored';
+  }
+
+  /** The customer closed checkout or the bank declined; the booking stays payable until its hold ends. */
   async markFailed(
     userId: string,
-    paymentId: string,
+    orderId: string,
     reason: string,
     ctx: RequestContext,
   ): Promise<void> {
-    const payment = await new PaymentRepository(this.deps.prisma).findById(paymentId);
-    if (!payment) throw new NotFoundError('Payment not found');
-    if (payment.userId !== userId)
-      throw new AuthorizationError("You don't have access to this payment");
+    const payment = await this.ownPayment(userId, orderId);
     await new PaymentRepository(this.deps.prisma).transition(payment.id, ['CREATED', 'PENDING'], {
       status: 'FAILED',
       failureReason: reason.slice(0, 200),
     });
-    await this.deps.audit.record({
-      action: 'PAYMENT_FAILED',
-      actorId: userId,
-      entityType: 'Payment',
-      entityId: payment.id,
-      after: { reason },
-      context: ctx,
-    });
+    await this.audit('PAYMENT_FAILED', userId, payment.id, ctx, { reason });
   }
 
-  /** Development only: behaves like the gateway returning from checkout. */
+  /**
+   * Development checkout: returns what the gateway's checkout hands the browser after a
+   * successful payment (the browser then calls /payments/verify), or records a decline.
+   */
   async simulateMockPayment(
     userId: string,
-    paymentId: string,
+    orderId: string,
     outcome: 'success' | 'failure',
     ctx: RequestContext,
-  ) {
+  ): Promise<
+    | { outcome: 'success'; orderId: string; paymentId: string; signature: string }
+    | { outcome: 'failure' }
+  > {
     if (!(this.deps.provider instanceof MockPaymentProvider)) throw new NotFoundError();
-    const payment = await new PaymentRepository(this.deps.prisma).findById(paymentId);
-    if (!payment) throw new NotFoundError('Payment not found');
-    if (payment.userId !== userId)
-      throw new AuthorizationError("You don't have access to this payment");
+    await this.ownPayment(userId, orderId);
     if (outcome === 'failure') {
-      await this.markFailed(userId, paymentId, 'Declined by bank (simulated)', ctx);
-      return { reference: payment.booking.reference, status: 'FAILED' as const };
+      await this.markFailed(userId, orderId, 'Declined by bank (simulated)', ctx);
+      return { outcome: 'failure' };
     }
-    const result = this.deps.provider.simulateSuccess(payment.providerOrderId);
-    await this.verify(
-      userId,
-      {
-        paymentId,
-        providerPaymentId: result.paymentId,
-        signature: result.signature,
-        method: 'mock',
-      },
-      ctx,
-    );
-    return { reference: payment.booking.reference, status: 'CAPTURED' as const };
+    return { outcome: 'success', ...this.deps.provider.simulateSuccess(orderId) };
   }
 
   /**
@@ -210,28 +264,88 @@ export class PaymentService {
     paymentId: string,
     providerPaymentId: string,
     method: string | undefined,
-    userId: string,
+    actor: string,
+    userId: string | null,
     ctx: RequestContext,
   ) {
     let bookingId: string;
     try {
-      bookingId = await this.capture(paymentId, providerPaymentId, method);
+      bookingId = await this.capture(paymentId, providerPaymentId, method, actor);
     } catch (err) {
       if (!(err instanceof HoldExpiredError)) throw err;
       const current = await new PaymentRepository(this.deps.prisma).findById(paymentId);
-      // A concurrent verify of the same payment captured it first.
+      // A concurrent verify or webhook captured this payment first.
       if (current?.status === 'CAPTURED') return;
-      await this.recordLateCapture(paymentId, providerPaymentId, method, userId, ctx);
+      await this.recordLateCapture(paymentId, providerPaymentId, method, actor, userId, ctx);
       throw err;
     }
-    await this.deps.audit.record({
-      action: 'PAYMENT_CAPTURED',
-      actorId: userId,
+    await this.audit('PAYMENT_CAPTURED', userId, paymentId, ctx);
+    await this.issueTickets(bookingId);
+  }
+
+  /** The caller's payment for a gateway order (403 for someone else's). */
+  private async ownPayment(userId: string, orderId: string) {
+    const payment = await new PaymentRepository(this.deps.prisma).findByOrderId(orderId);
+    if (!payment) throw new NotFoundError('Payment not found');
+    if (payment.userId !== userId)
+      throw new AuthorizationError("You don't have access to this payment");
+    return payment;
+  }
+
+  /** The gateway's own record must match this order's amount and currency (never the browser's). */
+  private async checkGatewayPayment(
+    paymentId: string,
+    payment: {
+      id: string;
+      providerOrderId: string;
+      amountPaise: number;
+      currency: string;
+      booking: { totalAmountPaise: number };
+    },
+    userId: string,
+    ctx: RequestContext,
+  ) {
+    const gateway = await this.deps.provider.fetchPayment(paymentId);
+    const matches =
+      gateway !== null &&
+      gateway.orderId === payment.providerOrderId &&
+      gateway.amountPaise === payment.amountPaise &&
+      gateway.amountPaise === payment.booking.totalAmountPaise &&
+      gateway.currency === payment.currency &&
+      (gateway.status === 'captured' || gateway.status === 'authorized');
+    if (!matches) {
+      await this.audit('PAYMENT_AMOUNT_MISMATCH', userId, payment.id, ctx);
+      throw new PaymentError('This payment does not match the booking amount.');
+    }
+  }
+
+  private async result(bookingId: string): Promise<PaymentResult> {
+    const booking = await this.deps.prisma.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      select: { reference: true, status: true, paymentStatus: true },
+    });
+    return {
+      bookingRef: booking.reference,
+      status: booking.status,
+      paymentStatus: booking.paymentStatus,
+    };
+  }
+
+  private audit(
+    action: string,
+    actorId: string | null,
+    entityId: string | null,
+    ctx: RequestContext,
+    after?: Prisma.InputJsonObject,
+  ) {
+    return this.deps.audit.record({
+      action,
+      actorId,
       entityType: 'Payment',
-      entityId: paymentId,
+      entityId,
+      ...(after && { after }),
       context: ctx,
     });
-    await this.issueTickets(bookingId);
   }
 
   /**
@@ -243,6 +357,7 @@ export class PaymentService {
     paymentId: string,
     providerPaymentId: string,
     method: string | undefined,
+    actor: string,
   ): Promise<string> {
     const now = this.now();
     return this.deps.prisma.$transaction(async (tx) => {
@@ -262,7 +377,7 @@ export class PaymentService {
         );
       // A booking still HELD (paid without an order step, e.g. via webhook) catches up first.
       await new BookingRepository(tx).move(payment.bookingId, ['HELD'], 'PAYMENT_PENDING', {
-        actor: 'system',
+        actor,
         reason: 'Payment captured',
       });
       const captured = await new PaymentRepository(tx).transition(
@@ -289,7 +404,8 @@ export class PaymentService {
     paymentId: string,
     providerPaymentId: string,
     method: string | undefined,
-    userId: string,
+    actor: string,
+    userId: string | null,
     ctx: RequestContext,
   ) {
     await this.deps.prisma.$transaction(async (tx) => {
@@ -308,7 +424,7 @@ export class PaymentService {
       const bookings = new BookingRepository(tx);
       const record = await bookings.findByReference(payment.booking.reference);
       const expiredNow = await bookings.move(payment.bookingId, OPEN_HOLD_STATUSES, 'EXPIRED', {
-        actor: 'system',
+        actor,
         reason: 'Payment arrived after the hold expired',
       });
       if (expiredNow && record) await this.deps.bookings.releaseInventory(record, tx);
@@ -317,13 +433,7 @@ export class PaymentService {
         data: { paymentStatus: 'REFUND_DUE' },
       });
     });
-    await this.deps.audit.record({
-      action: 'PAYMENT_REFUND_DUE',
-      actorId: userId,
-      entityType: 'Payment',
-      entityId: paymentId,
-      context: ctx,
-    });
+    await this.audit('PAYMENT_REFUND_DUE', userId, paymentId, ctx);
     this.deps.logger.warn({ paymentId }, 'Payment captured after hold expiry — refund required');
   }
 

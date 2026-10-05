@@ -20,6 +20,7 @@ beforeEach(async () => {
 const fakeServices = () => ({
   bookings: { expireHolds: vi.fn().mockResolvedValue(2) },
   payments: { issuePending: vi.fn().mockResolvedValue(1) },
+  idempotency: { purgeExpired: vi.fn().mockResolvedValue({ count: 0 }) },
 });
 
 describe('Redis lock', () => {

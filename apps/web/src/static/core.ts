@@ -130,6 +130,9 @@ export interface StoredPayment {
   orderId: string;
   amountPaise: number;
   status: 'CREATED' | 'CAPTURED' | 'FAILED' | 'CANCELLED' | 'REFUND_DUE';
+  /** Set by the demo gateway's checkout; verify must present the same values. */
+  gatewayPaymentId?: string;
+  signature?: string;
 }
 
 export interface Db {

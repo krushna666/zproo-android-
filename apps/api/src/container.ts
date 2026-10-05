@@ -19,11 +19,13 @@ import { AuditService } from './services/audit.service';
 import { AuthService } from './services/auth.service';
 import { BookingService } from './services/booking.service';
 import { BusService } from './services/bus.service';
+import { CouponService } from './services/coupon.service';
 import { CacheService } from './services/cache.service';
 import { FlightService } from './services/flight.service';
 import { PaymentService } from './services/payment.service';
 import { TicketService } from './services/ticket.service';
 import { HealthService, type DependencyCheck } from './services/health.service';
+import { IdempotencyService } from './services/idempotency.service';
 import { OtpService } from './services/otp.service';
 import { PasswordService } from './services/password.service';
 import { RbacService } from './services/rbac.service';
@@ -110,6 +112,8 @@ export function createServices({
     flights: new FlightService(flightProvider, new CacheService(redis, logger)),
     buses: new BusService(busProvider, new CacheService(redis, logger)),
     bookings,
+    idempotency: new IdempotencyService(prisma),
+    coupons: new CouponService({ prisma, bookings, audit }),
     payments: new PaymentService({
       prisma,
       provider: paymentProvider,

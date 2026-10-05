@@ -10,35 +10,35 @@ One `.env` file at the repository root is read by the API, Prisma and Vite. Copy
 
 ## API
 
-| Variable                 | Required | Default                 | Notes                                                                                                                                |
-| ------------------------ | -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `NODE_ENV`               | no       | `development`           | Set by the deployment environment, **not** in `.env`: Vite would otherwise build development React. `test` is set by the test runner |
-| `PORT`                   | no       | `5000`                  |                                                                                                                                      |
-| `LOG_LEVEL`              | no       | `info`                  | `fatal`…`trace`, `silent`                                                                                                            |
-| `APP_VERSION`            | no       | `0.1.0`                 | Reported by `/api/health`; set from the release tag                                                                                  |
-| `DATABASE_URL`           | **yes**  |                         | `postgres://` or `postgresql://` (pooled URL on Supabase/Neon)                                                                       |
-| `DIRECT_DATABASE_URL`    | no       |                         | Direct URL for migrations (Supabase/Neon)                                                                                            |
-| `REDIS_URL`              | **yes**  |                         | `redis://` or `rediss://` (TLS)                                                                                                      |
-| `FRONTEND_URL`           | no       | `http://localhost:5173` | Used in links and as the default CORS origin                                                                                         |
-| `CORS_ORIGINS`           | no       | `FRONTEND_URL`          | Comma-separated allowlist                                                                                                            |
-| `TRUST_PROXY`            | no       | `0`                     | Proxy hops in front of the API (for correct client IPs)                                                                              |
-| `RATE_LIMIT_WINDOW_MS`   | no       | `60000`                 |                                                                                                                                      |
-| `RATE_LIMIT_MAX`         | no       | `300`                   | Requests per IP per window                                                                                                           |
-| `ENABLE_API_DOCS`        | no       | on outside production   | Swagger UI at `/api/docs`                                                                                                            |
-| `JWT_SECRET`             | prod     | random in dev           | ≥ 32 chars. Signs access tokens; keys OTP hashes. Development generates a throwaway one (sessions reset on restart)                  |
-| `JWT_REFRESH_SECRET`     | prod     | random in dev           | ≥ 32 chars, must differ from `JWT_SECRET`. Keys refresh-token hashes                                                                 |
-| `JWT_ACCESS_TTL`         | no       | `15m`                   | Access token lifetime: number + `s`, `m` or `h`                                                                                      |
-| `REFRESH_TOKEN_TTL_DAYS` | no       | `30`                    | 1–90                                                                                                                                 |
-| `COOKIE_DOMAIN`          | no       |                         | Set when web and API use different subdomains (e.g. `.zproogo.com`)                                                                  |
-| `GOOGLE_OAUTH_CLIENT_ID` | no       |                         | Enables Google sign-in (ID tokens must have this audience)                                                                           |
-| `APPLE_CLIENT_ID`        | no       |                         | Enables Apple sign-in (Services ID)                                                                                                  |
-| `SMS_PROVIDER`           | no       | `console`               | `console` prints codes (development only; refused in production)                                                                     |
-| `EMAIL_PROVIDER`         | no       | `console`               | `console` prints emails (development only; refused in production)                                                                    |
-| `FLIGHT_PROVIDER`        | no       | `mock`                  | `mock` = built-in timetable with fictional airlines (development only; refused in production)                                        |
-| `BUS_PROVIDER`           | no       | `mock`                  | `mock` = built-in network with fictional operators (development only; refused in production)                                         |
-| `PAYMENT_PROVIDER`       | no       | `mock`                  | `mock` = simulated gateway with signed results (development only; refused in production)                                             |
-| `BOOKING_HOLD_MINUTES`   | no       | `15`                    | 5–60. How long seats are held for an unpaid booking                                                                                  |
-| `BRAND_LOGO_PATH`        | no       |                         | Logo PNG for PDF tickets; defaults to `apps/web/public/assets/brand/zproo-go-logo.png`                                               |
+| Variable                 | Required | Default                 | Notes                                                                                                                                                           |
+| ------------------------ | -------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`               | no       | `development`           | Set by the deployment environment, **not** in `.env`: Vite would otherwise build development React. `test` is set by the test runner                            |
+| `PORT`                   | no       | `5000`                  |                                                                                                                                                                 |
+| `LOG_LEVEL`              | no       | `info`                  | `fatal`…`trace`, `silent`                                                                                                                                       |
+| `APP_VERSION`            | no       | `0.1.0`                 | Reported by `/api/health`; set from the release tag                                                                                                             |
+| `DATABASE_URL`           | **yes**  |                         | `postgres://` or `postgresql://` (pooled URL on Supabase/Neon)                                                                                                  |
+| `DIRECT_DATABASE_URL`    | no       |                         | Direct URL for migrations (Supabase/Neon)                                                                                                                       |
+| `REDIS_URL`              | **yes**  |                         | `redis://` or `rediss://` (TLS)                                                                                                                                 |
+| `FRONTEND_URL`           | no       | `http://localhost:5173` | Used in links and as the default CORS origin                                                                                                                    |
+| `CORS_ORIGINS`           | no       | `FRONTEND_URL`          | Comma-separated allowlist                                                                                                                                       |
+| `TRUST_PROXY`            | no       | `0`                     | Proxy hops in front of the API (for correct client IPs)                                                                                                         |
+| `RATE_LIMIT_WINDOW_MS`   | no       | `60000`                 |                                                                                                                                                                 |
+| `RATE_LIMIT_MAX`         | no       | `300`                   | Requests per IP per window                                                                                                                                      |
+| `ENABLE_API_DOCS`        | no       | on outside production   | Swagger UI at `/api/docs`                                                                                                                                       |
+| `JWT_SECRET`             | prod     | random in dev           | ≥ 32 chars. Signs access tokens; keys OTP hashes. Development generates a throwaway one (sessions reset on restart)                                             |
+| `JWT_REFRESH_SECRET`     | prod     | random in dev           | ≥ 32 chars, must differ from `JWT_SECRET`. Keys refresh-token hashes                                                                                            |
+| `JWT_ACCESS_TTL`         | no       | `15m`                   | Access token lifetime: number + `s`, `m` or `h`                                                                                                                 |
+| `REFRESH_TOKEN_TTL_DAYS` | no       | `30`                    | 1–90                                                                                                                                                            |
+| `COOKIE_DOMAIN`          | no       |                         | Set when web and API use different subdomains (e.g. `.zproogo.com`)                                                                                             |
+| `GOOGLE_OAUTH_CLIENT_ID` | no       |                         | Enables Google sign-in (ID tokens must have this audience)                                                                                                      |
+| `APPLE_CLIENT_ID`        | no       |                         | Enables Apple sign-in (Services ID)                                                                                                                             |
+| `SMS_PROVIDER`           | no       | `console`               | `console` prints codes (development only; refused in production)                                                                                                |
+| `EMAIL_PROVIDER`         | no       | `console`               | `console` prints emails (development only; refused in production)                                                                                               |
+| `FLIGHT_PROVIDER`        | no       | `mock`                  | `mock` = built-in timetable with fictional airlines (development only; refused in production)                                                                   |
+| `BUS_PROVIDER`           | no       | `mock`                  | `mock` = built-in network with fictional operators (development only; refused in production)                                                                    |
+| `PAYMENT_PROVIDER`       | no       | `mock`                  | `mock` = simulated gateway with signed results (development only; refused in production). `razorpay` = Razorpay Orders API; needs the three `RAZORPAY_*` values |
+| `BOOKING_HOLD_MINUTES`   | no       | `15`                    | 5–60. How long seats are held for an unpaid booking                                                                                                             |
+| `BRAND_LOGO_PATH`        | no       |                         | Logo PNG for PDF tickets; defaults to `apps/web/public/assets/brand/zproo-go-logo.png`                                                                          |
 
 Generate a secret: `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`
 

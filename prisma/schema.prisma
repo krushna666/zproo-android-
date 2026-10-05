@@ -156,8 +156,8 @@ model User {
   updatedAt       DateTime   @updatedAt @map("updated_at")
   deletedAt       DateTime?  @map("deleted_at")
 
-  roles          UserRole[]      @relation("UserRoles")
-  rolesAssigned  UserRole[]      @relation("RoleAssigner")
+  roles          UserRole[]         @relation("UserRoles")
+  rolesAssigned  UserRole[]         @relation("RoleAssigner")
   refreshTokens  RefreshToken[]
   otpCodes       OtpCode[]
   identities     AuthIdentity[]
@@ -166,6 +166,8 @@ model User {
   settingsEdited SystemSetting[]
   bookings       Booking[]
   payments       Payment[]
+  idempotency    IdempotencyKey[]
+  redemptions    CouponRedemption[]
 
   @@index([status])
   @@index([createdAt])
@@ -475,6 +477,8 @@ model Booking {
   taxAmountPaise      Int           @map("tax_amount_paise")
   feeAmountPaise      Int           @default(0) @map("fee_amount_paise")
   discountAmountPaise Int           @default(0) @map("discount_amount_paise")
+  /// Applied coupon (discount is recomputed server-side on apply/remove).
+  couponId            String?       @map("coupon_id")
   totalAmountPaise    Int           @map("total_amount_paise")
   contactEmail        String        @map("contact_email")
   contactPhone        String        @map("contact_phone")
@@ -491,6 +495,8 @@ model Booking {
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
   user       User               @relation(fields: [userId], references: [id])
+  coupon     Coupon?            @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  redemption CouponRedemption?
   passengers BookingPassenger[]
   flights    FlightBooking[]
   bus        BusBooking?
@@ -779,4 +785,103 @@ model Payment {
   @@index([userId, createdAt])
   @@index([status])
   @@map("payments")
+}
+
+/// Gateway webhook events already processed (dedupe by the provider's event ID).
+model WebhookEvent {
+  id         String   @id @default(cuid())
+  provider   String
+  eventId    String   @unique @map("event_id")
+  type       String
+  /// Our payment the event was about, if any.
+  paymentId  String?  @map("payment_id")
+  receivedAt DateTime @default(now()) @map("received_at")
+
+  @@index([receivedAt])
+  @@map("webhook_events")
+}
+
+// ────────────────────────────── Platform: idempotency ─────────────────────────────
+
+enum IdempotencyState {
+  IN_PROGRESS
+  COMPLETED
+}
+
+/// Stored responses for retried POSTs (Idempotency-Key). Same key + same body replays the
+/// response; same key + different body is IDEMPOTENCY_CONFLICT. Kept 24 hours.
+model IdempotencyKey {
+  id             String           @id @default(cuid())
+  userId         String           @map("user_id")
+  /// `METHOD /path` of the route, so one key can't be replayed against another endpoint.
+  scope          String
+  key            String
+  /// SHA-256 of the canonical JSON body.
+  requestHash    String           @map("request_hash")
+  state          IdempotencyState @default(IN_PROGRESS)
+  responseStatus Int?             @map("response_status")
+  responseBody   Json?            @map("response_body")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  expiresAt      DateTime         @map("expires_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scope, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+// ────────────────────────────── Coupons ─────────────────────────────
+
+enum DiscountType {
+  FLAT
+  PERCENT
+}
+
+model Coupon {
+  id               String       @id @default(cuid())
+  /// Upper-case code customers type, e.g. ZPROOFIRST
+  code             String       @unique
+  description      String
+  /// Null = every bookable service.
+  serviceType      ServiceType? @map("service_type")
+  discountType     DiscountType @map("discount_type")
+  /// FLAT: paise. PERCENT: basis points (1000 = 10%).
+  value            Int
+  /// Upper bound of the discount in paise (PERCENT coupons).
+  maxDiscountPaise Int?         @map("max_discount_paise")
+  /// Booking subtotal (before discount) must be at least this.
+  minAmountPaise   Int          @default(0) @map("min_amount_paise")
+  startsAt         DateTime     @map("starts_at")
+  endsAt           DateTime     @map("ends_at")
+  /// Uses per customer (live holds and confirmed bookings count).
+  perUserLimit     Int          @default(1) @map("per_user_limit")
+  /// Uses across all customers; null = unlimited.
+  totalLimit       Int?         @map("total_limit")
+  active           Boolean      @default(true)
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  bookings    Booking[]
+  redemptions CouponRedemption[]
+
+  @@map("coupons")
+}
+
+/// A coupon applied to a booking. Counts towards limits while the booking is held or confirmed.
+model CouponRedemption {
+  id            String   @id @default(cuid())
+  couponId      String   @map("coupon_id")
+  userId        String   @map("user_id")
+  bookingId     String   @unique @map("booking_id")
+  discountPaise Int      @map("discount_paise")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  coupon  Coupon  @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([couponId])
+  @@index([userId, couponId])
+  @@map("coupon_redemptions")
 }

@@ -8,8 +8,9 @@ import type { createBusesController } from '../controllers/buses.controller';
 import { offerQuerySchema, type createFlightsController } from '../controllers/flights.controller';
 import type { createPaymentsController } from '../controllers/payments.controller';
 import { authorize } from '../middleware/auth';
-import { requireIdempotencyKey } from '../middleware/idempotency';
+import { idempotent } from '../middleware/idempotency';
 import { validate } from '../middleware/validate';
+import type { IdempotencyService } from '../services/idempotency.service';
 import type { RbacService } from '../services/rbac.service';
 
 export const referenceParams = z.object({
@@ -28,6 +29,7 @@ export function busRoutes(
   c: ReturnType<typeof createBusesController>,
   authenticate: RequestHandler,
   rbac: RbacService,
+  idempotency: IdempotencyService,
 ): Router {
   const router = Router();
   router.get('/search', c.search);
@@ -35,7 +37,7 @@ export function busRoutes(
     '/book',
     authenticate,
     authorize(rbac, Permission.BOOKING_CREATE),
-    requireIdempotencyKey,
+    idempotent(idempotency),
     validate({ body: bookBusSchema }),
     c.book,
   );
@@ -48,6 +50,7 @@ export function flightRoutes(
   c: ReturnType<typeof createFlightsController>,
   authenticate: RequestHandler,
   rbac: RbacService,
+  idempotency: IdempotencyService,
 ): Router {
   const router = Router();
   router.get('/search', c.search);
@@ -55,7 +58,7 @@ export function flightRoutes(
     '/book',
     authenticate,
     authorize(rbac, Permission.BOOKING_CREATE),
-    requireIdempotencyKey,
+    idempotent(idempotency),
     validate({ body: bookFlightSchema }),
     c.book,
   );
@@ -80,36 +83,52 @@ export function bookingRoutes(
   return router;
 }
 
+const orderId = z
+  .string()
+  .trim()
+  .regex(/^order_[A-Za-z0-9]{6,40}$/, 'Invalid order');
+
 export function paymentRoutes(
   c: ReturnType<typeof createPaymentsController>,
   authenticate: RequestHandler,
   rbac: RbacService,
+  idempotency: IdempotencyService,
   options: { mockCheckout: boolean },
 ): Router {
   const router = Router();
+  // Called by the gateway, not a customer: authenticated by its signature over the raw body.
+  router.post('/webhook', c.webhook);
+
   router.use(authenticate, authorize(rbac, Permission.BOOKING_CREATE));
   router.post(
     '/create',
-    validate({ body: z.object({ bookingReference: referenceParams.shape.reference }) }),
+    idempotent(idempotency),
+    validate({ body: z.strictObject({ bookingRef: referenceParams.shape.reference }) }),
     c.create,
   );
   router.post(
     '/verify',
+    idempotent(idempotency),
     validate({
-      body: z.object({
-        paymentId: idSchema,
-        providerPaymentId: z.string().trim().min(4).max(100),
-        signature: z.string().trim().min(10).max(200),
-        method: z.string().trim().max(30).optional(),
+      body: z.strictObject({
+        bookingRef: referenceParams.shape.reference,
+        orderId,
+        paymentId: z
+          .string()
+          .trim()
+          .regex(/^pay_[A-Za-z0-9]{6,40}$/, 'Invalid payment'),
+        signature: z
+          .string()
+          .trim()
+          .regex(/^[0-9a-f]{64}$/, 'Invalid signature'),
       }),
     }),
     c.verify,
   );
   router.post(
-    '/:paymentId/fail',
+    '/fail',
     validate({
-      params: z.object({ paymentId: idSchema }),
-      body: z.object({ reason: z.string().trim().min(1).max(200) }),
+      body: z.strictObject({ orderId, reason: z.string().trim().min(1).max(200) }),
     }),
     c.fail,
   );
@@ -118,7 +137,7 @@ export function paymentRoutes(
     router.post(
       '/mock/complete',
       validate({
-        body: z.object({ paymentId: idSchema, outcome: z.enum(['success', 'failure']) }),
+        body: z.strictObject({ orderId, outcome: z.enum(['success', 'failure']) }),
       }),
       c.mockComplete,
     );

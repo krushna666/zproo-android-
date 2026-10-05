@@ -47,7 +47,13 @@ const envSchema = z
     SMS_PROVIDER: z.enum(['console']).default('console'),
     FLIGHT_PROVIDER: z.enum(['mock']).default('mock'),
     BUS_PROVIDER: z.enum(['mock']).default('mock'),
-    PAYMENT_PROVIDER: z.enum(['mock']).default('mock'),
+    PAYMENT_PROVIDER: z.enum(['mock', 'razorpay']).default('mock'),
+    RAZORPAY_KEY_ID: z
+      .string()
+      .regex(/^rzp_(test|live)_\w+$/, 'must be a Razorpay key id')
+      .optional(),
+    RAZORPAY_KEY_SECRET: z.string().min(16).optional(),
+    RAZORPAY_WEBHOOK_SECRET: z.string().min(16).optional(),
     /** Minutes seats stay held for an unpaid booking. */
     BOOKING_HOLD_MINUTES: z.coerce.number().int().min(5).max(60).default(15),
     /** Optional path to the logo PNG used in PDFs (defaults to the web app's brand asset). */
@@ -55,6 +61,16 @@ const envSchema = z
     EMAIL_PROVIDER: z.enum(['console']).default('console'),
   })
   .superRefine((env, ctx) => {
+    if (env.PAYMENT_PROVIDER === 'razorpay') {
+      for (const key of [
+        'RAZORPAY_KEY_ID',
+        'RAZORPAY_KEY_SECRET',
+        'RAZORPAY_WEBHOOK_SECRET',
+      ] as const) {
+        if (!env[key])
+          ctx.addIssue({ code: 'custom', path: [key], message: 'is required for razorpay' });
+      }
+    }
     if (env.NODE_ENV !== 'production') return;
     for (const key of ['JWT_SECRET', 'JWT_REFRESH_SECRET'] as const) {
       if (!env[key])

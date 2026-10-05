@@ -44,6 +44,7 @@ function booking(overrides: Partial<BookingDetails> = {}): BookingDetails {
     createdAt: '2026-09-26T10:00:00.000Z',
     holdExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
     serverNow: new Date().toISOString(),
+    coupon: null,
     confirmedAt: null,
     cancelledAt: null,
     travelDate: '2026-10-25',
@@ -167,14 +168,14 @@ describe('flight checkout', () => {
     post.mockResolvedValueOnce(booking());
     serve((url) => (url.startsWith('/bookings/') ? booking() : flightRoutes(url)));
     post.mockResolvedValueOnce({
-      paymentId: 'pay1',
-      provider: 'mock',
-      providerOrderId: 'mockorder_1',
-      amountPaise: 480_000,
+      orderId: 'order_mock1',
+      amount: 480_000,
       currency: 'INR',
-      publicKey: null,
-      bookingReference: 'ZF00000ABC12',
+      keyId: null,
+      provider: 'mock',
+      bookingRef: 'ZF00000ABC12',
       holdExpiresAt: null,
+      serverNow: new Date().toISOString(),
     });
     await user.click(screen.getByRole('button', { name: /continue to payment/i }));
 

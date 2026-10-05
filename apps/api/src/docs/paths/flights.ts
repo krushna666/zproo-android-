@@ -143,14 +143,14 @@ const BookingDetails = registry.register(
 const PaymentOrder = registry.register(
   'PaymentOrder',
   z.object({
-    paymentId: z.string(),
-    provider: z.string(),
-    providerOrderId: z.string(),
-    amountPaise: z.number().int(),
+    orderId: z.string().openapi({ example: 'order_Kx9f2Lm3' }),
+    amount: z.number().int().openapi({ description: 'Paise, from the stored booking' }),
     currency: z.literal('INR'),
-    publicKey: z.string().nullable(),
-    bookingReference: z.string(),
+    keyId: z.string().nullable().openapi({ description: 'Public Razorpay key_id' }),
+    provider: z.string(),
+    bookingRef: z.string(),
     holdExpiresAt: z.iso.datetime().nullable(),
+    serverNow: z.iso.datetime(),
   }),
 );
 
@@ -269,18 +269,34 @@ registry.registerPath({
   },
 });
 
+const idempotencyHeader = z.object({
+  'idempotency-key': z.uuid().openapi({ description: 'Client-generated UUID; retries replay' }),
+});
+
+const PaymentResult = z.object({
+  bookingRef: z.string(),
+  status: z.string().openapi({ example: 'CONFIRMED' }),
+  paymentStatus: z.string().openapi({ example: 'CAPTURED' }),
+});
+
 registry.registerPath({
   method: 'post',
   path: '/payments/create',
   tags: ['Payments'],
   summary: 'Create (or reuse) the payment order for a booking',
-  description: 'The amount always comes from the booking on the server.',
+  description:
+    'The amount always comes from the booking on the server. Moves the booking HELD → PAYMENT_PENDING.',
   security: bearer,
-  request: { body: { content: json(z.object({ bookingReference: z.string() })) } },
+  request: {
+    headers: idempotencyHeader,
+    body: { content: json(z.object({ bookingRef: z.string() })) },
+  },
   responses: {
     201: ok('Payment order', PaymentOrder),
+    403: error('Not your booking'),
     404: error('Booking not found'),
-    409: error('Booking not awaiting payment, or hold expired'),
+    409: error('Booking not awaiting payment, or IDEMPOTENCY_CONFLICT'),
+    410: error('HOLD_EXPIRED'),
   },
 });
 
@@ -288,36 +304,60 @@ registry.registerPath({
   method: 'post',
   path: '/payments/verify',
   tags: ['Payments'],
-  summary: "Verify the gateway's payment signature and confirm the booking",
+  summary: "Verify the gateway's payment and confirm the booking",
+  description:
+    "HMAC-SHA256(orderId|paymentId) is checked in constant time, then the gateway's record of the " +
+    'payment must match the order, amount and currency. The browser is never trusted.',
   security: bearer,
   request: {
+    headers: idempotencyHeader,
     body: {
       content: json(
         z.object({
+          bookingRef: z.string(),
+          orderId: z.string(),
           paymentId: z.string(),
-          providerPaymentId: z.string(),
           signature: z.string(),
-          method: z.string().optional(),
         }),
       ),
     },
   },
   responses: {
-    200: ok('Payment captured; booking confirmed', z.object({ reference: z.string() })),
-    402: error('Signature did not verify'),
-    409: error('Seat hold expired before payment'),
+    200: ok('Payment captured; booking confirmed (or issuing)', PaymentResult),
+    400: error('Signature or amount did not verify (PAYMENT_ERROR)'),
+    403: error('Not your payment'),
+    410: error('HOLD_EXPIRED — the payment is recorded as refund due'),
   },
 });
 
 registry.registerPath({
   method: 'post',
-  path: '/payments/{paymentId}/fail',
+  path: '/payments/webhook',
+  tags: ['Payments'],
+  summary: 'Gateway webhook (payment.captured, order.paid, payment.failed)',
+  description:
+    'Authenticated by X-Razorpay-Signature over the raw body. Each X-Razorpay-Event-Id is processed ' +
+    'once; whichever of verify/webhook arrives first confirms the booking, the other is a no-op.',
+  request: {
+    headers: z.object({ 'x-razorpay-signature': z.string(), 'x-razorpay-event-id': z.string() }),
+  },
+  responses: {
+    200: ok(
+      'Processed, duplicate or ignored',
+      z.object({ outcome: z.enum(['processed', 'duplicate', 'ignored']) }),
+    ),
+    400: error('Invalid signature or payload'),
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/payments/fail',
   tags: ['Payments'],
   summary: 'Record a failed or abandoned payment attempt',
   security: bearer,
   request: {
-    params: z.object({ paymentId: z.string() }),
-    body: { content: json(z.object({ reason: z.string() })) },
+    body: { content: json(z.object({ orderId: z.string(), reason: z.string() })) },
   },
   responses: { 200: ok('Recorded', z.null()), 404: error('Payment not found') },
 });

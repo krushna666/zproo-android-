@@ -87,7 +87,8 @@ export async function staticAdapter(config: InternalAxiosRequestConfig): Promise
     return respond(result.status ?? 200, {
       success: true,
       message: result.message ?? 'Success',
-      data: result.data,
+      // A copy, like a real response: callers must never hold the engine's stored objects.
+      data: structuredClone(result.data),
     });
   } catch (err) {
     const e =

@@ -52,10 +52,8 @@ export const paginationQuerySchema = z.object({
 export type PaginationQuery = z.infer<typeof paginationQuerySchema>;
 
 /** `Idempotency-Key` header: client-generated UUID or similar opaque token. */
-export const idempotencyKeySchema = z
-  .string()
-  .trim()
-  .regex(/^[A-Za-z0-9_-]{16,128}$/, 'Invalid Idempotency-Key');
+/** A client-generated UUID sent as the `Idempotency-Key` header. */
+export const idempotencyKeySchema = z.uuid('Send a unique Idempotency-Key header (a UUID)');
 
 /** ISO calendar date `YYYY-MM-DD`. */
 export const isoDateSchema = z.iso.date({ message: 'Use YYYY-MM-DD' });

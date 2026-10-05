@@ -43,6 +43,16 @@ async function signUp(phone = '9876543210') {
   );
 }
 
+/** Order → demo gateway → server verification, as the payment page does. */
+async function pay(bookingRef: string) {
+  const order = await data<PaymentOrder>(api.post('/payments/create', { bookingRef }));
+  const gateway = await data<{ orderId: string; paymentId: string; signature: string }>(
+    api.post('/payments/mock/complete', { orderId: order.orderId, outcome: 'success' }),
+  );
+  const { outcome: _ignored, ...result } = gateway as typeof gateway & { outcome?: string };
+  return data<{ status: string }>(api.post('/payments/verify', { bookingRef, ...result }));
+}
+
 const book = (url: string, body: unknown, key = crypto.randomUUID()) =>
   api.post(url, body, { headers: { 'Idempotency-Key': key } });
 
@@ -124,14 +134,11 @@ describe('static engine: flights', () => {
     expect(retry.reference).toBe(booking.reference);
 
     const order = await data<PaymentOrder>(
-      api.post('/payments/create', { bookingReference: booking.reference }),
+      api.post('/payments/create', { bookingRef: booking.reference }),
     );
-    expect(order.amountPaise).toBe(offer.totalPaise);
-    await api.post('/payments/mock/complete', { paymentId: order.paymentId, outcome: 'failure' });
-    const order2 = await data<PaymentOrder>(
-      api.post('/payments/create', { bookingReference: booking.reference }),
-    );
-    await api.post('/payments/mock/complete', { paymentId: order2.paymentId, outcome: 'success' });
+    expect(order.amount).toBe(offer.totalPaise);
+    await api.post('/payments/mock/complete', { orderId: order.orderId, outcome: 'failure' });
+    await pay(booking.reference);
 
     const confirmed = await data<BookingDetails>(api.get(`/bookings/${booking.reference}`));
     expect(confirmed.status).toBe('CONFIRMED');
@@ -192,10 +199,7 @@ describe('static engine: buses', () => {
       details: { seats: [seat.number] },
     });
 
-    const order = await data<PaymentOrder>(
-      api.post('/payments/create', { bookingReference: booking.reference }),
-    );
-    await api.post('/payments/mock/complete', { paymentId: order.paymentId, outcome: 'success' });
+    await pay(booking.reference);
     const confirmed = await data<BookingDetails>(api.get(`/bookings/${booking.reference}`));
     expect(confirmed.bus?.pnr).toMatch(new RegExp(`^${trip.operator.code}\\d{7}$`));
   });
@@ -236,5 +240,90 @@ describe('static engine: buses', () => {
       return;
     }
     throw new Error('no ladies seat found');
+  });
+});
+
+describe('static engine: payments and coupons', () => {
+  /** A held bus seat above BUS10's ₹400 minimum, on whichever trip has one. */
+  async function heldBus() {
+    await signUp();
+    const search = await data<BusSearchResult>(
+      api.get('/buses/search', { params: { from: 'pune', to: 'mumbai', date: day(10) } }),
+    );
+    for (const trip of search.trips) {
+      const map = await data<BusSeatMap>(api.get(`/buses/${trip.id}/seats`));
+      const seat = map.decks
+        .flatMap((d) => d.seats)
+        .find((x) => x.available && !x.ladiesOnly && x.pricePaise > 40_000);
+      if (!seat) continue;
+      return data<BookingDetails>(
+        book('/buses/book', {
+          tripId: trip.id,
+          boardingPointId: trip.boardingPoints[0]?.id,
+          droppingPointId: trip.droppingPoints[0]?.id,
+          passengers: [
+            {
+              seatNumber: seat.number,
+              firstName: 'Amit',
+              lastName: 'Sharma',
+              age: 30,
+              gender: 'MALE',
+            },
+          ],
+          contact: { email: 'amit@example.com', phone: '9876543210' },
+          expectedTotalPaise: seat.pricePaise,
+        }),
+      );
+    }
+    throw new Error('no seat above ₹400');
+  }
+
+  it('returns copies, never the stored records', async () => {
+    const booking = await heldBus();
+    const total = booking.price.totalPaise;
+    booking.price.totalPaise = 1;
+    const again = await data<BookingDetails>(api.get(`/bookings/${booking.reference}`));
+    expect(again.price.totalPaise).toBe(total);
+  });
+
+  it('rejects a payment the gateway did not sign', async () => {
+    const booking = await heldBus();
+    const order = await data<PaymentOrder>(
+      api.post('/payments/create', { bookingRef: booking.reference }),
+    );
+    const res = await fail(
+      api.post('/payments/verify', {
+        bookingRef: booking.reference,
+        orderId: order.orderId,
+        paymentId: 'pay_forged',
+        signature: 'f'.repeat(64),
+      }),
+    );
+    expect(res).toMatchObject({ status: 400, body: { error: { code: 'PAYMENT_ERROR' } } });
+  });
+
+  it('applies and removes coupons with the same rules as the API', async () => {
+    const booking = await heldBus();
+    const applied = await data<BookingDetails>(
+      api.post('/coupons/apply', { bookingRef: booking.reference, code: 'bus10' }),
+    );
+    expect(applied.coupon?.code).toBe('BUS10');
+    expect(applied.price.totalPaise).toBe(booking.price.totalPaise - applied.price.discountPaise);
+    const wrong = await fail(
+      api.post('/coupons/apply', { bookingRef: booking.reference, code: 'FLY500' }),
+    );
+    expect(wrong.body.error).toMatchObject({
+      code: 'COUPON_INVALID',
+      details: { reason: 'not_applicable' },
+    });
+    const expired = await fail(
+      api.post('/coupons/apply', { bookingRef: booking.reference, code: 'MONSOON20' }),
+    );
+    expect(expired.body.error.details).toEqual({ reason: 'expired' });
+    const removed = await data<BookingDetails>(
+      api.post('/coupons/remove', { bookingRef: booking.reference }),
+    );
+    expect(removed.price.totalPaise).toBe(booking.price.totalPaise);
+    expect(removed.coupon).toBeNull();
   });
 });

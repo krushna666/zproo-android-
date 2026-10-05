@@ -2,6 +2,7 @@ import type { BusSeatInfo, BusSeatMap, BusTripOffer } from '@zproo/types';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createTestContext, grantRole, prisma, resetUsers, signUp } from './helpers';
+import { payWithMock } from './payments';
 
 beforeEach(resetUsers);
 
@@ -280,17 +281,8 @@ describe('bus payment, ticket and expiry', () => {
     const reference = (await book(ctx, accessToken, trip, seats).expect(201)).body.data
       .reference as string;
 
-    const order = await request(ctx.app)
-      .post('/api/payments/create')
-      .set(auth)
-      .send({ bookingReference: reference })
-      .expect(201);
-    expect(order.body.data.amountPaise).toBe(seats[0]?.pricePaise);
-    await request(ctx.app)
-      .post('/api/payments/mock/complete')
-      .set(auth)
-      .send({ paymentId: order.body.data.paymentId, outcome: 'success' })
-      .expect(200);
+    const { order } = await payWithMock(ctx, accessToken, reference);
+    expect(order.body.data.amount).toBe(seats[0]?.pricePaise);
 
     const details = await request(ctx.app).get(`/api/bookings/${reference}`).set(auth).expect(200);
     expect(details.body.data).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'CAPTURED' });

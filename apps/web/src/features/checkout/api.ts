@@ -33,23 +33,38 @@ export function useMyBookings() {
   });
 }
 
+/** What the gateway's checkout hands the browser after a successful payment. */
+export interface GatewayResult {
+  orderId: string;
+  paymentId: string;
+  signature: string;
+}
+
+export interface PaymentResult {
+  bookingRef: string;
+  status: BookingDetails['status'];
+  paymentStatus: BookingDetails['paymentStatus'];
+}
+
+const idempotency = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
+
 export const checkoutApi = {
-  createPayment: (bookingReference: string) =>
-    apiPost<PaymentOrder>('/payments/create', { bookingReference }),
+  createPayment: (bookingRef: string) =>
+    apiPost<PaymentOrder>('/payments/create', { bookingRef }, idempotency()),
   /** Development gateway only: stands in for the checkout popup of a real gateway. */
-  completeMockPayment: (paymentId: string, outcome: 'success' | 'failure') =>
-    apiPost<{ reference: string; status: 'CAPTURED' | 'FAILED' }>('/payments/mock/complete', {
-      paymentId,
-      outcome,
-    }),
-  verifyPayment: (body: {
-    paymentId: string;
-    providerPaymentId: string;
-    signature: string;
-    method?: string;
-  }) => apiPost<{ reference: string }>('/payments/verify', body),
-  failPayment: (paymentId: string, reason: string) =>
-    apiPost<null>(`/payments/${paymentId}/fail`, { reason }),
+  completeMockPayment: (orderId: string, outcome: 'success' | 'failure') =>
+    apiPost<({ outcome: 'success' } & GatewayResult) | { outcome: 'failure' }>(
+      '/payments/mock/complete',
+      { orderId, outcome },
+    ),
+  /** The server checks the signature and the gateway's own record before confirming. */
+  verifyPayment: (bookingRef: string, result: GatewayResult) =>
+    apiPost<PaymentResult>('/payments/verify', { bookingRef, ...result }, idempotency()),
+  failPayment: (orderId: string, reason: string) =>
+    apiPost<null>('/payments/fail', { orderId, reason }),
+  applyCoupon: (bookingRef: string, code: string) =>
+    apiPost<BookingDetails>('/coupons/apply', { bookingRef, code }),
+  removeCoupon: (bookingRef: string) => apiPost<BookingDetails>('/coupons/remove', { bookingRef }),
   /** Fetched with the access token (a plain link can't send it), then saved via a blob URL. */
   async downloadTicket(reference: string): Promise<void> {
     // Static mode has no PDF service: open the printable ticket (Print → Save as PDF).

@@ -16,6 +16,7 @@ export const bookingInclude = {
   passengers: { orderBy: { sequence: 'asc' } },
   flights: { orderBy: { sequence: 'asc' } },
   bus: true,
+  coupon: { select: { code: true } },
 } satisfies Prisma.BookingInclude;
 
 export type BookingRecord = Prisma.BookingGetPayload<{ include: typeof bookingInclude }>;

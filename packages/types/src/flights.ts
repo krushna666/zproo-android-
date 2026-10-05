@@ -132,6 +132,8 @@ export interface BookingDetails {
   travelDate: string;
   price: PriceBreakdown;
   contact: { email: string; phone: string };
+  /** Applied coupon; its discount is already in `price`. */
+  coupon: { code: string; discountPaise: number } | null;
   passengers: BookingPassengerInfo[];
   /** Flight legs (flight bookings; empty otherwise) */
   flights: FlightBookingLeg[];
@@ -151,15 +153,16 @@ export interface BookingListItem {
   createdAt: string;
 }
 
+/** A gateway order for a booking (POST /payments/create). Amount is the stored booking total. */
 export interface PaymentOrder {
-  paymentId: string;
-  provider: string;
-  providerOrderId: string;
-  amountPaise: number;
+  orderId: string;
+  /** Paise */
+  amount: number;
   currency: 'INR';
-  /** Public key for the provider's checkout (never a secret). */
-  publicKey: string | null;
-  bookingReference: string;
+  /** Public checkout key (Razorpay key_id). Never a secret. */
+  keyId: string | null;
+  provider: string;
+  bookingRef: string;
   holdExpiresAt: string | null;
   /** Server clock when this was sent; countdowns use it to avoid client clock skew. */
   serverNow: string;

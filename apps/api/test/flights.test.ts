@@ -3,76 +3,10 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MockFlightProvider } from '../src/providers/flight/MockFlightProvider';
 import { createTestContext, grantRole, prisma, resetUsers, signUp } from './helpers';
+import { adult, book, bookedFlight, daysAhead, searchOffers } from './flightFixtures';
+import { createOrder, mockCheckout, payWithMock, verifyPayment } from './payments';
 
 beforeEach(resetUsers);
-
-/** A date comfortably inside the bookable window, as YYYY-MM-DD. */
-function daysAhead(days: number): string {
-  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
-}
-
-const adult = {
-  type: 'ADULT',
-  title: 'MR',
-  firstName: 'Amit',
-  lastName: 'Sharma',
-  gender: 'MALE',
-} as const;
-
-type Ctx = ReturnType<typeof createTestContext>;
-
-async function searchOffers(ctx: Ctx, query: Record<string, string> = {}): Promise<FlightOffer[]> {
-  const res = await request(ctx.app)
-    .get('/api/flights/search')
-    .query({ from: 'PNQ', to: 'DEL', date: daysAhead(20), ...query })
-    .expect(200);
-  return res.body.data.legs[0].offers as FlightOffer[];
-}
-
-function book(
-  ctx: Ctx,
-  token: string,
-  offer: FlightOffer,
-  options: { key?: string; passengers?: object[]; expectedTotalPaise?: number } = {},
-) {
-  return request(ctx.app)
-    .post('/api/flights/book')
-    .set('Authorization', `Bearer ${token}`)
-    .set('Idempotency-Key', options.key ?? crypto.randomUUID())
-    .send({
-      offerIds: [offer.id],
-      passengers: options.passengers ?? [adult],
-      contact: { email: 'amit@example.com', phone: '+919876543210' },
-      expectedTotalPaise: options.expectedTotalPaise ?? offer.totalPaise,
-    });
-}
-
-/** Signs up, books the cheapest PNQ→DEL fare for one adult and returns the booking. */
-async function bookedFlight(ctx: Ctx) {
-  const user = await signUp(ctx);
-  const [offer] = await searchOffers(ctx);
-  if (!offer) throw new Error('No offers');
-  const res = await book(ctx, user.accessToken, offer).expect(201);
-  return { user, offer, reference: res.body.data.reference as string };
-}
-
-async function payWithMock(
-  ctx: Ctx,
-  token: string,
-  reference: string,
-  outcome: 'success' | 'failure' = 'success',
-) {
-  const order = await request(ctx.app)
-    .post('/api/payments/create')
-    .set('Authorization', `Bearer ${token}`)
-    .send({ bookingReference: reference })
-    .expect(201);
-  return request(ctx.app)
-    .post('/api/payments/mock/complete')
-    .set('Authorization', `Bearer ${token}`)
-    .send({ paymentId: order.body.data.paymentId, outcome })
-    .expect(200);
-}
 
 describe('GET /api/flights/search', () => {
   it('returns priced, demo-flagged offers sorted by price', async () => {
@@ -293,7 +227,11 @@ describe('payments', () => {
     await request(ctx.app).get(`/api/bookings/${reference}/ticket.pdf`).set(auth).expect(409);
 
     const paid = await payWithMock(ctx, user.accessToken, reference);
-    expect(paid.body.data).toEqual({ reference, status: 'CAPTURED' });
+    expect(paid.verified?.body.data).toEqual({
+      bookingRef: reference,
+      status: 'CONFIRMED',
+      paymentStatus: 'CAPTURED',
+    });
 
     const details = await request(ctx.app).get(`/api/bookings/${reference}`).set(auth).expect(200);
     expect(details.body.data).toMatchObject({
@@ -329,37 +267,28 @@ describe('payments', () => {
   it('reuses the open payment order for the booking', async () => {
     const ctx = createTestContext();
     const { user, reference } = await bookedFlight(ctx);
-    const create = () =>
-      request(ctx.app)
-        .post('/api/payments/create')
-        .set('Authorization', `Bearer ${user.accessToken}`)
-        .send({ bookingReference: reference })
-        .expect(201);
-    const first = await create();
-    const second = await create();
-    expect(second.body.data.paymentId).toBe(first.body.data.paymentId);
-    expect(first.body.data.amountPaise).toBe(
-      (await prisma.booking.findFirstOrThrow()).totalAmountPaise,
-    );
+    const first = await createOrder(ctx, user.accessToken, reference);
+    const second = await createOrder(ctx, user.accessToken, reference);
+    expect(second.body.data.orderId).toBe(first.body.data.orderId);
+    expect(first.body.data).toMatchObject({
+      amount: (await prisma.booking.findFirstOrThrow()).totalAmountPaise,
+      currency: 'INR',
+      keyId: 'rzp_test_mock',
+      bookingRef: reference,
+    });
+    expect(await prisma.payment.count()).toBe(1);
   });
 
   it('rejects a forged payment signature', async () => {
     const ctx = createTestContext();
     const { user, reference } = await bookedFlight(ctx);
-    const order = await request(ctx.app)
-      .post('/api/payments/create')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ bookingReference: reference })
-      .expect(201);
-    const res = await request(ctx.app)
-      .post('/api/payments/verify')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({
-        paymentId: order.body.data.paymentId,
-        providerPaymentId: 'pay_forged123',
-        signature: 'a'.repeat(64),
-      })
-      .expect(402);
+    const order = await createOrder(ctx, user.accessToken, reference);
+    const res = await verifyPayment(ctx, user.accessToken, {
+      bookingRef: reference,
+      orderId: order.body.data.orderId,
+      paymentId: 'pay_forged123',
+      signature: 'a'.repeat(64),
+    }).expect(400);
     expect(res.body.error.code).toBe('PAYMENT_ERROR');
     expect((await prisma.booking.findFirstOrThrow()).status).toBe('PAYMENT_PENDING');
     expect(await prisma.auditLog.count({ where: { action: 'PAYMENT_SIGNATURE_INVALID' } })).toBe(1);
@@ -369,7 +298,7 @@ describe('payments', () => {
     const ctx = createTestContext();
     const { user, reference } = await bookedFlight(ctx);
     const failed = await payWithMock(ctx, user.accessToken, reference, 'failure');
-    expect(failed.body.data.status).toBe('FAILED');
+    expect(failed.gateway.body.data).toEqual({ outcome: 'failure' });
     await payWithMock(ctx, user.accessToken, reference);
     expect(
       await prisma.payment.findMany({ select: { status: true }, orderBy: { createdAt: 'asc' } }),
@@ -379,18 +308,16 @@ describe('payments', () => {
   it('refuses payment once the seat hold has expired and records the refund due', async () => {
     const ctx = createTestContext();
     const { user, reference } = await bookedFlight(ctx);
-    const order = await request(ctx.app)
-      .post('/api/payments/create')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ bookingReference: reference })
-      .expect(201);
+    const order = await createOrder(ctx, user.accessToken, reference);
+    const gateway = await mockCheckout(ctx, user.accessToken, order.body.data.orderId);
     await prisma.booking.updateMany({ data: { holdExpiresAt: new Date(Date.now() - 1000) } });
 
-    const res = await request(ctx.app)
-      .post('/api/payments/mock/complete')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ paymentId: order.body.data.paymentId, outcome: 'success' })
-      .expect(410);
+    const res = await verifyPayment(ctx, user.accessToken, {
+      bookingRef: reference,
+      orderId: order.body.data.orderId,
+      paymentId: gateway.body.data.paymentId,
+      signature: gateway.body.data.signature,
+    }).expect(410);
     expect(res.body.error.code).toBe('HOLD_EXPIRED');
     expect(await prisma.payment.findFirstOrThrow()).toMatchObject({
       status: 'REFUND_DUE',
@@ -403,11 +330,7 @@ describe('payments', () => {
     });
     expect((await prisma.flightInventory.findFirstOrThrow()).sold).toBe(0);
     expect((await prisma.flightBooking.findFirstOrThrow()).pnr).toBeNull();
-    await request(ctx.app)
-      .post('/api/payments/create')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ bookingReference: reference })
-      .expect(410);
+    await createOrder(ctx, user.accessToken, reference, 410);
   });
 
   it('cancels expired holds and returns their seats', async () => {
@@ -425,26 +348,14 @@ describe('booking access', () => {
   it("refuses other users' bookings, tickets and payments with 403 and no data", async () => {
     const ctx = createTestContext();
     const { user, reference } = await bookedFlight(ctx);
-    const order = await request(ctx.app)
-      .post('/api/payments/create')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ bookingReference: reference })
-      .expect(201);
+    const order = await createOrder(ctx, user.accessToken, reference);
     const stranger = await signUp(ctx);
     const auth = { Authorization: `Bearer ${stranger.accessToken}` };
     const forbidden = [
       await request(ctx.app).get(`/api/bookings/${reference}`).set(auth).expect(403),
       await request(ctx.app).get(`/api/bookings/${reference}/ticket.pdf`).set(auth).expect(403),
-      await request(ctx.app)
-        .post('/api/payments/create')
-        .set(auth)
-        .send({ bookingReference: reference })
-        .expect(403),
-      await request(ctx.app)
-        .post('/api/payments/mock/complete')
-        .set(auth)
-        .send({ paymentId: order.body.data.paymentId, outcome: 'success' })
-        .expect(403),
+      await createOrder(ctx, stranger.accessToken, reference, 403),
+      await mockCheckout(ctx, stranger.accessToken, order.body.data.orderId, 'success', 403),
     ];
     for (const res of forbidden) {
       expect(Object.keys(res.body)).toEqual(['error']);
@@ -534,13 +445,9 @@ describe('booking lifecycle', () => {
     const ctx = createTestContext();
     const { user, reference } = await bookedFlight(ctx);
     // Simulate a process stop after capture: payment captured, booking still PAYMENT_PENDING.
-    const order = await request(ctx.app)
-      .post('/api/payments/create')
-      .set('Authorization', `Bearer ${user.accessToken}`)
-      .send({ bookingReference: reference })
-      .expect(201);
+    const order = await createOrder(ctx, user.accessToken, reference);
     await prisma.payment.update({
-      where: { id: order.body.data.paymentId },
+      where: { providerOrderId: order.body.data.orderId },
       data: { status: 'CAPTURED' },
     });
     await prisma.booking.update({
