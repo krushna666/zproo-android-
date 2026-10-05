@@ -44,7 +44,7 @@ export default function AdminUsersPage() {
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight">Users</h1>
             <p className="text-sm text-muted">
-              {data ? `${data.total.toLocaleString('en-IN')} users` : 'Loading…'}
+              {data ? `${data.total.toLocaleString('en-IN')} users` : 'Loading...'}
             </p>
           </div>
         </div>

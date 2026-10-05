@@ -74,6 +74,10 @@ export const routes: RouteObject[] = [
           ...accountPlanned.map((meta) => ({ path: meta.path, handle: meta, lazy: plannedPage })),
         ],
       },
+      // Development only: shared UI gallery (not in production builds).
+      ...(import.meta.env.DEV
+        ? [{ path: '/dev/ui', lazy: page(() => import('@/pages/dev/UiGalleryPage')) }]
+        : []),
       // Eager: also used by the error boundary, so it is already in the main bundle.
       { path: '*', Component: NotFoundPage },
     ],

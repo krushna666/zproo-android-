@@ -1,11 +1,27 @@
 import { BRAND } from '@zproo/config';
 import type { BookingDetails, BusBookingInfo, FlightOffer } from '@zproo/types';
 import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
 
 const RED = BRAND.colors.primary;
 const DARK = BRAND.colors.foreground;
 const MUTED = BRAND.colors.muted;
 const BORDER = BRAND.colors.border;
+const WARNING = BRAND.colors.warning;
+const WHITE = BRAND.colors.card;
+
+/**
+ * Customer-entered text (names, emails, requests) is printed as plain text with control
+ * characters removed, so it can never break the layout or smuggle content into the PDF.
+ */
+export function pdfText(value: string): string {
+  let out = '';
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code >= 0x20 && !(code >= 0x7f && code <= 0x9f)) out += ch;
+  }
+  return out;
+}
 
 /** PDF core fonts have no ₹ glyph, so amounts are printed as "INR 5,320". */
 const money = (paise: number) =>
@@ -35,8 +51,14 @@ export class TicketService {
    * Flight or bus e-ticket. Demo bookings carry a watermark so they can never pass as a real
    * ticket.
    */
-  ticket(booking: BookingDetails, options: { demo: boolean }): Promise<Buffer> {
+  async ticket(booking: BookingDetails, options: { demo: boolean }): Promise<Buffer> {
     const bus = booking.bus;
+    // A QR of the booking reference, for check-in staff to scan.
+    const qr = await QRCode.toBuffer(booking.reference, {
+      margin: 1,
+      width: 240,
+      color: { dark: DARK, light: WHITE },
+    });
     const doc = new PDFDocument({
       size: 'A4',
       margin: 40,
@@ -84,11 +106,11 @@ export class TicketService {
 
     let y = 96;
     if (options.demo) {
-      doc.roundedRect(left, y, width, 26, 6).fill('#FEF3C7');
+      doc.save().fillOpacity(0.15).roundedRect(left, y, width, 26, 6).fill(WARNING).restore();
       doc
         .font('Helvetica-Bold')
         .fontSize(9)
-        .fillColor('#92400E')
+        .fillColor(DARK)
         .text(
           `Demo booking from the development ${bus ? 'bus' : 'flight'} provider — not valid for travel.`,
           left + 10,
@@ -114,12 +136,12 @@ export class TicketService {
       .fillColor(DARK)
       .text(status, left, y + 12)
       .text(date(booking.createdAt, 'Asia/Kolkata'), left + 180, y + 12)
-      .text(booking.contact.phone, left + 340, y + 12);
+      .text(pdfText(booking.contact.phone), left + 340, y + 12);
     doc
       .font('Helvetica')
       .fontSize(9)
       .fillColor(MUTED)
-      .text(booking.contact.email, left + 340, y + 27);
+      .text(pdfText(booking.contact.email), left + 340, y + 27);
     y += 50;
 
     for (const leg of booking.flights)
@@ -140,7 +162,7 @@ export class TicketService {
         doc.font('Helvetica').fontSize(10).fillColor(DARK);
         doc
           .text(String(i + 1), left, y)
-          .text(`${p.firstName} ${p.lastName}`, left + 24, y, { width: 220 })
+          .text(pdfText(`${p.firstName} ${p.lastName}`), left + 24, y, { width: 220 })
           .text(
             `${p.age ?? '-'} / ${p.gender.charAt(0) + p.gender.slice(1).toLowerCase()}`,
             left + 250,
@@ -166,7 +188,7 @@ export class TicketService {
         doc.font('Helvetica').fontSize(10).fillColor(DARK);
         doc
           .text(String(i + 1), left, y)
-          .text(`${p.title} ${p.firstName} ${p.lastName}`, left + 24, y, { width: 220 });
+          .text(pdfText(`${p.title} ${p.firstName} ${p.lastName}`), left + 24, y, { width: 220 });
         doc
           .text(p.type.charAt(0) + p.type.slice(1).toLowerCase(), left + 250, y)
           .text(tickets || 'Pending', left + 330, y, { width: width - 330 });
@@ -225,6 +247,27 @@ export class TicketService {
       y = doc.y + 4;
     }
 
+    // QR of the booking reference and support details.
+    const qrY = Math.max(y + 10, doc.page.height - 170);
+    doc.image(qr, left + width - 90, qrY, { width: 90 });
+    doc
+      .font('Helvetica')
+      .fontSize(8)
+      .fillColor(MUTED)
+      .text(booking.reference, left + width - 90, qrY + 92, { width: 90, align: 'center' });
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(9)
+      .fillColor(DARK)
+      .text('Need help?', left, qrY + 10)
+      .font('Helvetica')
+      .fillColor(MUTED)
+      .text(
+        `${BRAND.support.email} · ${BRAND.support.hours} · Quote booking ${booking.reference}`,
+        left,
+        qrY + 24,
+        { width: width - 110 },
+      );
     doc
       .font('Helvetica')
       .fontSize(8)

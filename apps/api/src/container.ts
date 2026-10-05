@@ -8,6 +8,7 @@ import { createBusProvider, type BusProvider } from './providers/bus';
 import { createEmailProvider, type EmailProvider } from './providers/email';
 import { createFlightProvider, type FlightProvider } from './providers/flight';
 import { createPaymentProvider, type PaymentProvider } from './providers/payment';
+import { withResilience } from './providers/resilience';
 import { createIdentityVerifiers, type IdentityVerifiers } from './providers/identity';
 import { createSmsProvider, type SmsProvider } from './providers/sms';
 import { AuditRepository } from './repositories/audit.repository';
@@ -67,8 +68,17 @@ export function createServices({
   const sms = providers.sms ?? createSmsProvider(env);
   const email = providers.email ?? createEmailProvider(env);
   const identityVerifiers = providers.identityVerifiers ?? createIdentityVerifiers(env);
-  const flightProvider = providers.flights ?? createFlightProvider(env, prisma);
-  const busProvider = providers.buses ?? createBusProvider(env, prisma);
+  // Every supplier call gets a timeout, read retries, a circuit breaker and latency logs.
+  const flightProvider = withResilience(providers.flights ?? createFlightProvider(env, prisma), {
+    name: `flight:${env.FLIGHT_PROVIDER}`,
+    logger,
+    reads: ['search', 'getOffer'],
+  });
+  const busProvider = withResilience(providers.buses ?? createBusProvider(env, prisma), {
+    name: `bus:${env.BUS_PROVIDER}`,
+    logger,
+    reads: ['search', 'getTrip', 'seatMap'],
+  });
   const paymentProvider = providers.payments ?? createPaymentProvider(env);
 
   const users = new UserRepository(prisma);

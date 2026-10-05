@@ -210,7 +210,9 @@ function Payment({ booking }: { booking: BookingDetails }) {
                     onClick={() => pay.mutate('success')}
                   >
                     <Lock aria-hidden />{' '}
-                    {pay.isPending ? 'Processing…' : `Pay ${inr(booking.price.totalPaise)}`}
+                    {pay.isPending
+                      ? 'Processing payment...'
+                      : `Pay ${inr(booking.price.totalPaise)}`}
                   </Button>
                   <Button
                     size="lg"

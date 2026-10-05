@@ -121,6 +121,38 @@ npm run dev                 # web → http://localhost:5173, API → http://loca
 | `npm run db:seed`    | Idempotent seed                                      |
 | `npm run db:studio`  | Prisma Studio                                        |
 
+## Security model
+
+The full control list is in [docs/SECURITY.md](docs/SECURITY.md). In short:
+
+- **Accounts.** Passwords are hashed with argon2id (19 MiB, t=2, p=1). Access tokens are 15-minute
+  HS256 JWTs (pinned algorithm; `iss`, `aud`, `exp` checked; claims `sub`, `sid`, `roles` only)
+  kept in memory by the web app. Refresh tokens are random 256-bit values stored only as hashes,
+  rotated on every use; replaying an old one revokes the whole session family. The refresh cookie
+  is `HttpOnly; Secure; SameSite=Strict; Path=/api/auth`, and the two cookie-authenticated
+  endpoints also need a double-submit CSRF token and an allowed `Origin`.
+- **OTP.** Six digits from `crypto.randomInt`, stored as an HMAC, 5-minute expiry (10 for password
+  reset), 5 attempts, 30-second resend, 5 sends per number and 20 per IP an hour. Forgot-password
+  answers identically for unknown accounts.
+- **Sign-in redirects.** `?returnTo=` only accepts relative in-app paths from an allow-list.
+- **Money.** Amounts are integer paise end to end and always computed on the server. The browser
+  sends IDs, selections and coupon codes, never prices; a changed price is `409 PRICE_CHANGED`.
+- **Payments.** Orders are created for the stored booking total. A payment is trusted only after
+  the gateway signature (HMAC-SHA256, constant-time compare) verifies and the gateway's own record
+  matches the order, amount and currency. Webhooks are verified over the raw body and processed
+  once per event ID. Card data never reaches ZPROO GO.
+- **Bookings.** A single state machine (`DRAFT → HELD → PAYMENT_PENDING → CONFIRMED …`) with every
+  change logged. Holds last 15 minutes; a minute job (one instance, Redis lock) expires them.
+  Booking, payment and verify requests need an `Idempotency-Key`; retries replay the stored response
+  and a different body is `409 IDEMPOTENCY_CONFLICT`. Other customers' bookings, tickets and
+  payments are `403` with no data.
+- **Platform.** Strict Zod validation on every route, Helmet headers, CORS allow-list, Redis-backed
+  rate limits, one error shape (`{ error: { code, message, requestId } }`) that never leaks stack
+  traces, and log redaction of tokens, passwords, OTPs and card fields. Suppliers are called with
+  timeouts, read retries and a circuit breaker.
+- **Test hooks.** `X-Test-Now`, `X-Mock-Scenario`, `ALLOW_TEST_OTP` and `/api/test/*` exist only with
+  `NODE_ENV=test`; production refuses to start with them.
+
 ## Documentation
 
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md): architecture, phases, decisions

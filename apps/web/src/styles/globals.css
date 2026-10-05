@@ -78,7 +78,22 @@
   }
   body {
     @apply bg-background font-sans text-foreground antialiased;
+    /* SOP §2.2: body 0.95rem (15.2px), line-height 1.55; paragraphs 1.6. */
+    font-size: 0.95rem;
+    line-height: 1.55;
     font-feature-settings: 'cv11', 'ss01';
+  }
+  p {
+    line-height: 1.6;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
+  /* Mono only for OTP codes and booking references / PNRs. */
+  .font-mono {
+    font-feature-settings: normal;
   }
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-ring;
@@ -88,6 +103,7 @@
   }
 }
 
+/* SOP §2.3: every animation is off under prefers-reduced-motion. */
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
@@ -95,8 +111,21 @@
   *,
   ::before,
   ::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    animation: none !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* Printing: only the ticket/voucher content, no navigation chrome. */
+@media print {
+  header,
+  nav,
+  footer,
+  [data-print='hide'] {
+    display: none !important;
+  }
+  body {
+    background: var(--card);
   }
 }

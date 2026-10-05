@@ -202,7 +202,7 @@ function EditName({ fullName }: { fullName: string }) {
             className="sm:mt-6"
             disabled={mutation.isPending || !form.formState.isDirty}
           >
-            {mutation.isPending ? 'Saving…' : 'Save'}
+            {mutation.isPending ? 'Saving...' : 'Save'}
           </Button>
         </form>
         <div className="mt-3 empty:hidden">
@@ -248,7 +248,7 @@ function SignOutEverywhere({ onDone }: { onDone: () => void }) {
               });
             }}
           >
-            {pending ? 'Signing out…' : 'Sign out everywhere'}
+            {pending ? 'Signing out...' : 'Sign out everywhere'}
           </Button>
         </div>
       </DialogContent>

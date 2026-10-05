@@ -156,7 +156,7 @@ function Results({ search }: { search: BusSearch }) {
               className="mr-auto text-sm font-semibold text-muted"
               aria-live="polite"
             >
-              {isPending ? 'Searching buses…' : `${visible.length} of ${trips.length} buses`}
+              {isPending ? 'Searching...' : `${visible.length} of ${trips.length} buses`}
             </h2>
             <Button
               variant="outline"

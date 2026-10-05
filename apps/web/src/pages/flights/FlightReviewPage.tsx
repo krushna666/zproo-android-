@@ -101,7 +101,7 @@ function Review() {
                 onClick={continueToPayment}
               >
                 <Lock aria-hidden />{' '}
-                {book.isPending ? 'Holding your seats…' : 'Continue to payment'}
+                {book.isPending ? 'Holding your seats...' : 'Continue to payment'}
                 {!book.isPending && <ArrowRight aria-hidden />}
               </Button>
             )}

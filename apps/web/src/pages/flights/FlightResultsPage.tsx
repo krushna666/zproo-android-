@@ -268,7 +268,7 @@ function Results({ search }: { search: FlightSearch }) {
               aria-live="polite"
             >
               {isPending
-                ? 'Searching flights…'
+                ? 'Searching...'
                 : leg
                   ? `${visible.length} of ${leg.offers.length} flights · ${cityOf(leg.from)} to ${cityOf(leg.to)}`
                   : ''}

@@ -5,6 +5,11 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+/** A CSS hex colour (#rgb, #rrggbb, #rrggbbaa) in a string, template or JSX text. */
+const HEX_COLOUR = String.raw`/(^|[^\w&])#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})(?![\w-])/`;
+const HEX_MESSAGE =
+  'Use a design token class (bg-primary, text-muted, border-border, …) instead of a hex colour. See the UI Style SOP §2.1.';
+
 export default tseslint.config(
   {
     ignores: [
@@ -52,5 +57,28 @@ export default tseslint.config(
   {
     files: ['apps/api/src/**/*.ts'],
     rules: { 'no-console': 'error' },
+  },
+  // UI Style SOP §2.1: colours come from the 13 design tokens (Tailwind classes), never hex
+  // literals. Illustrations (SceneArt) keep their own palette; tests may use fixtures.
+  {
+    files: ['apps/web/src/**/*.{ts,tsx}', 'packages/ui/src/**/*.{ts,tsx}'],
+    ignores: ['**/SceneArt.tsx', '**/*.test.{ts,tsx}', 'apps/web/src/test/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: `Literal[value=${HEX_COLOUR}]`,
+          message: HEX_MESSAGE,
+        },
+        {
+          selector: `TemplateElement[value.raw=${HEX_COLOUR}]`,
+          message: HEX_MESSAGE,
+        },
+        {
+          selector: `JSXText[value=${HEX_COLOUR}]`,
+          message: HEX_MESSAGE,
+        },
+      ],
+    },
   },
 );

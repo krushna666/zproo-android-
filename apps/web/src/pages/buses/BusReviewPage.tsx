@@ -128,7 +128,8 @@ function Review({ selection }: { selection: BusSelection }) {
               disabled={book.isPending || map.isPending}
               onClick={continueToPayment}
             >
-              <Lock aria-hidden /> {book.isPending ? 'Holding your seats…' : 'Continue to payment'}
+              <Lock aria-hidden />{' '}
+              {book.isPending ? 'Holding your seats...' : 'Continue to payment'}
               {!book.isPending && <ArrowRight aria-hidden />}
             </Button>
           )}

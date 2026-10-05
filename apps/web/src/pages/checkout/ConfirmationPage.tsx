@@ -118,7 +118,7 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
           disabled={!ticketsIssued || download.isPending}
           onClick={() => download.mutate()}
         >
-          <Download aria-hidden /> {download.isPending ? 'Preparing…' : 'Download e-ticket'}
+          <Download aria-hidden /> {download.isPending ? 'Preparing...' : 'Download e-ticket'}
         </Button>
         {!ticketsIssued && (
           <span className="text-sm text-muted">

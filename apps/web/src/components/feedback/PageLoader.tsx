@@ -17,7 +17,7 @@ export function PageLoader({ fullscreen = false }: { fullscreen?: boolean }) {
         aria-hidden
         className="size-7 animate-spin rounded-full border-[3px] border-primary-light border-t-primary"
       />
-      <span className="sr-only">Loading…</span>
+      <span className="sr-only">Loading...</span>
     </div>
   );
 }
