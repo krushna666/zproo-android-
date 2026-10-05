@@ -10,6 +10,7 @@ import { useBusDraft } from '@/features/buses/draft';
 import { bookingKeys, checkoutApi, useBooking } from '@/features/checkout/api';
 import { CHECKOUT_STEP, type CheckoutService } from '@/features/checkout/steps';
 import { confirmationUrl, searchHome, serviceOf } from '@/features/checkout/links';
+import { isAwaitingPayment, isConfirmed, isConfirming } from '@/features/checkout/status';
 import { TripSummary } from '@/features/checkout/TripSummary';
 import { CheckoutShell } from '@/features/checkout/CheckoutShell';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
@@ -49,7 +50,7 @@ export default function PaymentPage() {
       </CheckoutShell>
     );
   }
-  if (booking.status === 'CONFIRMED' || booking.status === 'COMPLETED') {
+  if (isConfirmed(booking.status) || isConfirming(booking)) {
     return <Navigate to={confirmationUrl(serviceOf(booking), booking.reference)} replace />;
   }
   return <Payment booking={booking} />;
@@ -64,14 +65,14 @@ function Payment({ booking }: { booking: BookingDetails }) {
   const [paid, setPaid] = useState<string | null>(null);
   const holdEnds = booking.holdExpiresAt ? Date.parse(booking.holdExpiresAt) : 0;
   const secondsLeft = useCountdown(holdEnds);
-  const expired = booking.status !== 'PENDING_PAYMENT' || secondsLeft === 0;
+  const expired = !isAwaitingPayment(booking) || secondsLeft === 0;
 
   const order = useMutation({ mutationFn: () => checkoutApi.createPayment(booking.reference) });
   const createOrder = order.mutate;
   // One order per booking: the API returns the open order if one exists, so this is safe to repeat.
   useEffect(() => {
-    if (booking.status === 'PENDING_PAYMENT') createOrder();
-  }, [booking.status, createOrder]);
+    if (isAwaitingPayment(booking)) createOrder();
+  }, [booking, createOrder]);
 
   const pay = useMutation({
     mutationFn: (outcome: 'success' | 'failure') => {
@@ -80,7 +81,7 @@ function Payment({ booking }: { booking: BookingDetails }) {
     },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: bookingKeys.booking(booking.reference) });
-      if (result.status === 'SUCCESS') {
+      if (result.status === 'CAPTURED') {
         if (service === 'bus') clearBus();
         else clearFlight();
         setPaid(result.reference);

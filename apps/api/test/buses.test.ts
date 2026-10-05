@@ -182,7 +182,7 @@ describe('POST /api/buses/book', () => {
     const total = seats.reduce((sum, s) => sum + s.pricePaise, 0);
     expect(res.body.data).toMatchObject({
       serviceType: 'BUS',
-      status: 'PENDING_PAYMENT',
+      status: 'HELD',
       price: { totalPaise: total, feesPaise: 0 },
       flights: [],
       bus: {
@@ -293,7 +293,7 @@ describe('bus payment, ticket and expiry', () => {
       .expect(200);
 
     const details = await request(ctx.app).get(`/api/bookings/${reference}`).set(auth).expect(200);
-    expect(details.body.data).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'SUCCESS' });
+    expect(details.body.data).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'CAPTURED' });
     expect(details.body.data.bus.pnr).toMatch(new RegExp(`^${trip.operator.code}\\d{7}$`));
 
     const pdf = await request(ctx.app)
@@ -343,7 +343,7 @@ describe('bus payment, ticket and expiry', () => {
     await request(ctx.app)
       .get(`/api/bookings/${reference}`)
       .set('Authorization', `Bearer ${stranger.accessToken}`)
-      .expect(404);
+      .expect(403);
     const agent = await signUp(ctx);
     await grantRole(agent.body.data.user.id, 'SUPPORT');
     const refreshed = await request(ctx.app)

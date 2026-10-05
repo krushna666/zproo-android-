@@ -69,22 +69,28 @@ enum ServiceType {
   CORPORATE
 }
 
+/// Lifecycle; legal moves are defined once in @zproo/utils (BOOKING_TRANSITIONS).
 enum BookingStatus {
-  INITIATED
-  PENDING_PAYMENT
+  DRAFT
+  HELD
+  PAYMENT_PENDING
   CONFIRMED
+  EXPIRED
+  FAILED
   CANCELLED
-  COMPLETED
   REFUND_PENDING
   REFUNDED
+  COMPLETED
 }
 
 enum PaymentStatus {
   CREATED
   PENDING
   AUTHORIZED
-  SUCCESS
+  CAPTURED
   FAILED
+  /// Captured but no ticket may be issued (hold expired / supplier failed): refund owed.
+  REFUND_DUE
   REFUNDED
   PARTIALLY_REFUNDED
   CANCELLED
@@ -458,11 +464,11 @@ model FlightInventory {
 
 model Booking {
   id                  String        @id @default(cuid())
-  /// Customer-facing reference, ZP-YYYY-XXXXXX
+  /// Customer-facing unguessable reference: ZB/ZF/ZH + 10 base32 characters
   reference           String        @unique
   userId              String        @map("user_id")
   serviceType         ServiceType   @map("service_type")
-  status              BookingStatus @default(INITIATED)
+  status              BookingStatus @default(DRAFT)
   paymentStatus       PaymentStatus @default(CREATED) @map("payment_status")
   currency            String        @default("INR") @db.Char(3)
   baseAmountPaise     Int           @map("base_amount_paise")
@@ -490,12 +496,31 @@ model Booking {
   bus        BusBooking?
   busSeats   BusSeatBooking[]
   payments   Payment[]
+  events     BookingEvent[]
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
   @@index([status, holdExpiresAt])
   @@index([serviceType, travelDate])
   @@map("bookings")
+}
+
+/// Append-only audit of every status change of a booking.
+model BookingEvent {
+  id         String         @id @default(cuid())
+  bookingId  String         @map("booking_id")
+  /// Null for the creating event.
+  fromStatus BookingStatus? @map("from_status")
+  toStatus   BookingStatus  @map("to_status")
+  /// `user:<id>`, `system`, `job:release-holds`, `webhook:<provider>`
+  actor      String
+  reason     String?
+  at         DateTime       @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, at])
+  @@map("booking_events")
 }
 
 model BookingPassenger {

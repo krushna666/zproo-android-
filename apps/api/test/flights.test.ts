@@ -1,6 +1,7 @@
 import type { FlightOffer } from '@zproo/types';
 import request from 'supertest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MockFlightProvider } from '../src/providers/flight/MockFlightProvider';
 import { createTestContext, grantRole, prisma, resetUsers, signUp } from './helpers';
 
 beforeEach(resetUsers);
@@ -178,14 +179,14 @@ describe('POST /api/flights/book', () => {
   it('holds seats and creates a booking awaiting payment', async () => {
     const ctx = createTestContext();
     const { user, offer, reference } = await bookedFlight(ctx);
-    expect(reference).toMatch(/^ZP-\d{4}-[0-9A-Z]{6}$/);
+    expect(reference).toMatch(/^ZF[0-9A-HJKMNP-TV-Z]{10}$/);
 
     const res = await request(ctx.app)
       .get(`/api/bookings/${reference}`)
       .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(200);
     expect(res.body.data).toMatchObject({
-      status: 'PENDING_PAYMENT',
+      status: 'HELD',
       paymentStatus: 'CREATED',
       price: { totalPaise: offer.totalPaise, feesPaise: 0 },
       passengers: [{ firstName: 'Amit', lastName: 'Sharma', type: 'ADULT' }],
@@ -292,12 +293,12 @@ describe('payments', () => {
     await request(ctx.app).get(`/api/bookings/${reference}/ticket.pdf`).set(auth).expect(409);
 
     const paid = await payWithMock(ctx, user.accessToken, reference);
-    expect(paid.body.data).toEqual({ reference, status: 'SUCCESS' });
+    expect(paid.body.data).toEqual({ reference, status: 'CAPTURED' });
 
     const details = await request(ctx.app).get(`/api/bookings/${reference}`).set(auth).expect(200);
     expect(details.body.data).toMatchObject({
       status: 'CONFIRMED',
-      paymentStatus: 'SUCCESS',
+      paymentStatus: 'CAPTURED',
       holdExpiresAt: null,
     });
     expect(details.body.data.flights[0].pnr).toMatch(/^[A-Z0-9]{6}$/);
@@ -360,7 +361,7 @@ describe('payments', () => {
       })
       .expect(402);
     expect(res.body.error.code).toBe('PAYMENT_ERROR');
-    expect((await prisma.booking.findFirstOrThrow()).status).toBe('PENDING_PAYMENT');
+    expect((await prisma.booking.findFirstOrThrow()).status).toBe('PAYMENT_PENDING');
     expect(await prisma.auditLog.count({ where: { action: 'PAYMENT_SIGNATURE_INVALID' } })).toBe(1);
   });
 
@@ -372,7 +373,7 @@ describe('payments', () => {
     await payWithMock(ctx, user.accessToken, reference);
     expect(
       await prisma.payment.findMany({ select: { status: true }, orderBy: { createdAt: 'asc' } }),
-    ).toEqual([{ status: 'FAILED' }, { status: 'SUCCESS' }]);
+    ).toEqual([{ status: 'FAILED' }, { status: 'CAPTURED' }]);
   });
 
   it('refuses payment once the seat hold has expired and records the refund due', async () => {
@@ -392,9 +393,16 @@ describe('payments', () => {
       .expect(410);
     expect(res.body.error.code).toBe('HOLD_EXPIRED');
     expect(await prisma.payment.findFirstOrThrow()).toMatchObject({
-      status: 'FAILED',
+      status: 'REFUND_DUE',
       failureReason: expect.stringMatching(/refund due/),
     });
+    // The booking ends EXPIRED (never confirmed, never ticketed) and its seats are released.
+    expect(await prisma.booking.findFirstOrThrow()).toMatchObject({
+      status: 'EXPIRED',
+      paymentStatus: 'REFUND_DUE',
+    });
+    expect((await prisma.flightInventory.findFirstOrThrow()).sold).toBe(0);
+    expect((await prisma.flightBooking.findFirstOrThrow()).pnr).toBeNull();
     await request(ctx.app)
       .post('/api/payments/create')
       .set('Authorization', `Bearer ${user.accessToken}`)
@@ -407,28 +415,43 @@ describe('payments', () => {
     await bookedFlight(ctx);
     await prisma.booking.updateMany({ data: { holdExpiresAt: new Date(Date.now() - 1000) } });
     expect(await ctx.services.bookings.expireHolds()).toBe(1);
-    expect(await prisma.booking.findFirstOrThrow()).toMatchObject({
-      status: 'CANCELLED',
-      cancellationReason: 'HOLD_EXPIRED',
-    });
+    expect(await prisma.booking.findFirstOrThrow()).toMatchObject({ status: 'EXPIRED' });
     expect((await prisma.flightInventory.findFirstOrThrow()).sold).toBe(0);
     expect(await ctx.services.bookings.expireHolds()).toBe(0);
   });
 });
 
 describe('booking access', () => {
-  it("hides other users' bookings and payments behind 404", async () => {
+  it("refuses other users' bookings, tickets and payments with 403 and no data", async () => {
     const ctx = createTestContext();
-    const { reference } = await bookedFlight(ctx);
+    const { user, reference } = await bookedFlight(ctx);
+    const order = await request(ctx.app)
+      .post('/api/payments/create')
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .send({ bookingReference: reference })
+      .expect(201);
     const stranger = await signUp(ctx);
     const auth = { Authorization: `Bearer ${stranger.accessToken}` };
-    await request(ctx.app).get(`/api/bookings/${reference}`).set(auth).expect(404);
-    await request(ctx.app).get(`/api/bookings/${reference}/ticket.pdf`).set(auth).expect(404);
-    await request(ctx.app)
-      .post('/api/payments/create')
-      .set(auth)
-      .send({ bookingReference: reference })
-      .expect(404);
+    const forbidden = [
+      await request(ctx.app).get(`/api/bookings/${reference}`).set(auth).expect(403),
+      await request(ctx.app).get(`/api/bookings/${reference}/ticket.pdf`).set(auth).expect(403),
+      await request(ctx.app)
+        .post('/api/payments/create')
+        .set(auth)
+        .send({ bookingReference: reference })
+        .expect(403),
+      await request(ctx.app)
+        .post('/api/payments/mock/complete')
+        .set(auth)
+        .send({ paymentId: order.body.data.paymentId, outcome: 'success' })
+        .expect(403),
+    ];
+    for (const res of forbidden) {
+      expect(Object.keys(res.body)).toEqual(['error']);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+      expect(JSON.stringify(res.body)).not.toContain(reference);
+    }
+    expect((await prisma.booking.findFirstOrThrow()).status).toBe('PAYMENT_PENDING');
     expect((await request(ctx.app).get('/api/bookings').set(auth).expect(200)).body.data).toEqual(
       [],
     );
@@ -458,5 +481,78 @@ describe('booking access', () => {
       .get('/api/bookings/not-a-ref')
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(400);
+  });
+});
+
+describe('booking lifecycle', () => {
+  it('records every status change as a BookingEvent', async () => {
+    const ctx = createTestContext();
+    const { user, reference } = await bookedFlight(ctx);
+    await payWithMock(ctx, user.accessToken, reference);
+    const booking = await prisma.booking.findUniqueOrThrow({ where: { reference } });
+    const events = await prisma.bookingEvent.findMany({
+      where: { bookingId: booking.id },
+      orderBy: { at: 'asc' },
+    });
+    expect(events.map((e) => [e.fromStatus, e.toStatus])).toEqual([
+      ['DRAFT', 'HELD'],
+      ['HELD', 'PAYMENT_PENDING'],
+      ['PAYMENT_PENDING', 'CONFIRMED'],
+    ]);
+    expect(events[0]?.actor).toBe(`user:${user.body.data.user.id}`);
+    expect(events[2]?.actor).toBe('system');
+  });
+
+  it('fails the booking and marks the payment refund-due when the airline cannot issue', async () => {
+    const issue = vi
+      .spyOn(MockFlightProvider.prototype, 'issue')
+      .mockRejectedValue(new Error('airline timeout'));
+    try {
+      const ctx = createTestContext();
+      const { user, reference } = await bookedFlight(ctx);
+      await payWithMock(ctx, user.accessToken, reference);
+      expect(issue).toHaveBeenCalledTimes(3);
+      expect(await prisma.booking.findUniqueOrThrow({ where: { reference } })).toMatchObject({
+        status: 'FAILED',
+        paymentStatus: 'REFUND_DUE',
+      });
+      expect((await prisma.payment.findFirstOrThrow()).status).toBe('REFUND_DUE');
+      expect((await prisma.flightInventory.findFirstOrThrow()).sold).toBe(0);
+      await request(ctx.app)
+        .get(`/api/bookings/${reference}/ticket.pdf`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(409);
+    } finally {
+      issue.mockRestore();
+    }
+  });
+
+  it('recovers a paid booking whose issue was interrupted', async () => {
+    const issue = vi
+      .spyOn(MockFlightProvider.prototype, 'issue')
+      .mockRejectedValue(new Error('crash'));
+    const ctx = createTestContext();
+    const { user, reference } = await bookedFlight(ctx);
+    // Simulate a process stop after capture: payment captured, booking still PAYMENT_PENDING.
+    const order = await request(ctx.app)
+      .post('/api/payments/create')
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .send({ bookingReference: reference })
+      .expect(201);
+    await prisma.payment.update({
+      where: { id: order.body.data.paymentId },
+      data: { status: 'CAPTURED' },
+    });
+    await prisma.booking.update({
+      where: { reference },
+      data: { paymentStatus: 'CAPTURED', holdExpiresAt: null },
+    });
+    issue.mockRestore();
+    expect(await ctx.services.payments.issuePending()).toBe(1);
+    expect((await prisma.booking.findUniqueOrThrow({ where: { reference } })).status).toBe(
+      'CONFIRMED',
+    );
+    // The expiry job never touches a paid booking.
+    expect(await ctx.services.bookings.expireHolds()).toBe(0);
   });
 });

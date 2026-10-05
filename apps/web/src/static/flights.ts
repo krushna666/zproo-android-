@@ -249,9 +249,8 @@ export function flightRoutes(req: StaticRequest): StaticResult | null {
       throw priceChanged(input.expectedTotalPaise, price.totalPaise);
     const seats = pax.adults + pax.children;
     if (list.some((o) => o.seatsLeft < seats)) throw fareUnavailable();
-    const now = new Date();
     const details = newBooking({
-      reference: generateBookingReference(now),
+      reference: generateBookingReference('FLIGHT'),
       serviceType: 'FLIGHT',
       price,
       travelDate,

@@ -112,7 +112,7 @@ export function buildTestApp(options: TestContextOptions = {}) {
 export async function resetUsers() {
   await prisma.$executeRawUnsafe(
     'TRUNCATE TABLE users, otp_codes, refresh_tokens, audit_logs, auth_identities, addresses, user_roles, ' +
-      'payments, flight_bookings, bus_bookings, bus_seat_bookings, bus_trips, booking_passengers, bookings, ' +
+      'payments, booking_events, flight_bookings, bus_bookings, bus_seat_bookings, bus_trips, booking_passengers, bookings, ' +
       'flight_inventory RESTART IDENTITY CASCADE',
   );
 }

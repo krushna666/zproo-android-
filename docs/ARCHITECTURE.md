@@ -149,11 +149,12 @@ hydration script (use hashes).
 ```
 GET  /flights/search ─▶ FlightService ─▶ FlightProvider.search   (cached 60 s in Redis)
 POST /flights/book   ─▶ BookingService: re-price offers → check passengers → PRICE_CHANGED?
-                        └─ transaction: FlightProvider.hold (seats) + create booking (PENDING_PAYMENT)
+                        └─ transaction: FlightProvider.hold (seats) + create booking (HELD) + BookingEvent
 POST /payments/create ─▶ PaymentService: order for the stored total (PaymentProvider.createOrder)
 POST /payments/verify ─▶ verify signature → transaction: booking CONFIRMED (hold still valid) + payment SUCCESS
                         └─ after commit: FlightProvider.issue → PNR + ticket numbers
-every minute         ─▶ BookingService.expireHolds: CANCELLED + seats released + open payments cancelled
+every minute         ─▶ jobs/releaseExpiredHolds (Redis lock): EXPIRED + seats released + open payments
+                        cancelled; paid bookings still awaiting issue are retried
 ```
 
 `FlightProvider` and `PaymentProvider` are the seams for real suppliers (an airline aggregator,

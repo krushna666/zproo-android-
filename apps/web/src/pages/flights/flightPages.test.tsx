@@ -37,12 +37,13 @@ const serveFlights = () => serve(flightRoutes);
 function booking(overrides: Partial<BookingDetails> = {}): BookingDetails {
   const offer = OFFERS[0] as (typeof OFFERS)[number];
   return {
-    reference: 'ZP-2026-ABC123',
+    reference: 'ZF00000ABC12',
     serviceType: 'FLIGHT',
-    status: 'PENDING_PAYMENT',
+    status: 'HELD',
     paymentStatus: 'CREATED',
     createdAt: '2026-09-26T10:00:00.000Z',
     holdExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    serverNow: new Date().toISOString(),
     confirmedAt: null,
     cancelledAt: null,
     travelDate: '2026-10-25',
@@ -172,13 +173,13 @@ describe('flight checkout', () => {
       amountPaise: 480_000,
       currency: 'INR',
       publicKey: null,
-      bookingReference: 'ZP-2026-ABC123',
+      bookingReference: 'ZF00000ABC12',
       holdExpiresAt: null,
     });
     await user.click(screen.getByRole('button', { name: /continue to payment/i }));
 
     await screen.findByRole('heading', { level: 1, name: 'Payment' });
-    expect(router.state.location.search).toBe('?ref=ZP-2026-ABC123');
+    expect(router.state.location.search).toBe('?ref=ZF00000ABC12');
     const key = useFlightDraft.getState().idempotencyKey;
     expect(post).toHaveBeenNthCalledWith(
       1,
@@ -223,7 +224,7 @@ describe('flight checkout', () => {
   it('shows the confirmation with PNR and ticket numbers', async () => {
     const confirmed = booking({
       status: 'CONFIRMED',
-      paymentStatus: 'SUCCESS',
+      paymentStatus: 'CAPTURED',
       holdExpiresAt: null,
       flights: [
         {
@@ -234,8 +235,8 @@ describe('flight checkout', () => {
         },
       ],
     });
-    serve((url) => (url === '/bookings/ZP-2026-ABC123' ? confirmed : undefined));
-    renderRoute('/flights/confirmation?ref=ZP-2026-ABC123', makeUser());
+    serve((url) => (url === '/bookings/ZF00000ABC12' ? confirmed : undefined));
+    renderRoute('/flights/confirmation?ref=ZF00000ABC12', makeUser());
     expect(await screen.findByText('Your trip is booked!')).toBeInTheDocument();
     expect(screen.getByText('Q7X2KD')).toBeInTheDocument();
     expect(screen.getByText('0981234567890')).toBeInTheDocument();

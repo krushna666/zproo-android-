@@ -96,7 +96,7 @@ const FlightSearchResult = registry.register(
 const BookingDetails = registry.register(
   'BookingDetails',
   z.object({
-    reference: z.string().openapi({ example: 'ZP-2026-7K4Q2M' }),
+    reference: z.string().openapi({ example: 'ZF7K4Q2M9XPA' }),
     serviceType: z.enum(['FLIGHT', 'BUS']),
     status: z.enum(Object.values(BookingStatus) as [string, ...string[]]),
     paymentStatus: z.enum(Object.values(PaymentStatus) as [string, ...string[]]),
@@ -154,7 +154,7 @@ const PaymentOrder = registry.register(
   }),
 );
 
-const referenceParams = z.object({ reference: z.string().openapi({ example: 'ZP-2026-7K4Q2M' }) });
+const referenceParams = z.object({ reference: z.string().openapi({ example: 'ZF7K4Q2M9XPA' }) });
 
 registry.registerPath({
   method: 'get',

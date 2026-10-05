@@ -46,7 +46,7 @@ function priceLines(booking: BookingRecord, offers: FlightOffer[]): PriceBreakdo
   ];
 }
 
-export function toBookingDetails(booking: BookingRecord): BookingDetails {
+export function toBookingDetails(booking: BookingRecord, now: Date = new Date()): BookingDetails {
   const offers = booking.flights.map((f) => f.offer as unknown as FlightOffer);
   return {
     reference: booking.reference,
@@ -55,6 +55,7 @@ export function toBookingDetails(booking: BookingRecord): BookingDetails {
     paymentStatus: booking.paymentStatus,
     createdAt: booking.createdAt.toISOString(),
     holdExpiresAt: iso(booking.holdExpiresAt),
+    serverNow: now.toISOString(),
     confirmedAt: iso(booking.confirmedAt),
     cancelledAt: iso(booking.cancelledAt),
     travelDate: isoDate(booking.travelDate),

@@ -4,7 +4,7 @@ import { loginPath, maskPhone, safeNext } from './redirect';
 describe('safeNext', () => {
   it.each([
     ['/wallet', '/wallet'],
-    ['/bookings/ZP-2026-7K3QX9?tab=invoice', '/bookings/ZP-2026-7K3QX9?tab=invoice'],
+    ['/bookings/ZF7K3QX9M2PA?tab=invoice', '/bookings/ZF7K3QX9M2PA?tab=invoice'],
     [null, '/'],
     ['https://evil.example', '/'],
     ['//evil.example', '/'],

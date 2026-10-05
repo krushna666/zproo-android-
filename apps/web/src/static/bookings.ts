@@ -1,5 +1,6 @@
 import { findCity } from '@zproo/config';
-import type { BookingDetails, BookingListItem, PaymentOrder } from '@zproo/types';
+import type { BookingDetails, BookingListItem, BookingStatus, PaymentOrder } from '@zproo/types';
+import { OPEN_HOLD_STATUSES, transition } from '@zproo/utils';
 import { randomInt } from './random';
 import {
   currentUser,
@@ -20,35 +21,52 @@ export const holdMinutes = 15;
 
 type NewBooking = Omit<
   BookingDetails,
-  'status' | 'paymentStatus' | 'createdAt' | 'holdExpiresAt' | 'confirmedAt' | 'cancelledAt'
+  | 'status'
+  | 'paymentStatus'
+  | 'createdAt'
+  | 'holdExpiresAt'
+  | 'serverNow'
+  | 'confirmedAt'
+  | 'cancelledAt'
 >;
+
+/** Applies a status change through the shared state machine (throws on an illegal move). */
+function move(d: BookingDetails, to: BookingStatus): void {
+  d.status = transition(d.status, to);
+}
+
+/** What the API returns: the booking plus the server clock. */
+const withClock = (d: BookingDetails): BookingDetails => ({
+  ...d,
+  serverNow: new Date().toISOString(),
+});
 
 export function newBooking(input: NewBooking): BookingDetails {
   const now = Date.now();
   return {
     ...input,
-    status: 'PENDING_PAYMENT',
+    status: 'HELD',
     paymentStatus: 'CREATED',
     createdAt: new Date(now).toISOString(),
     holdExpiresAt: new Date(now + holdMinutes * 60_000).toISOString(),
+    serverNow: new Date(now).toISOString(),
     confirmedAt: null,
     cancelledAt: null,
   };
 }
 
-/** Cancels unpaid bookings whose hold ran out (their seats are then free again). */
+/** Expires unpaid bookings whose hold ran out (their seats are then free again). */
 function expireHolds(): void {
   let changed = false;
   for (const b of db().bookings) {
     const d = b.details;
     if (
-      d.status === 'PENDING_PAYMENT' &&
+      OPEN_HOLD_STATUSES.includes(d.status) &&
       d.holdExpiresAt &&
       Date.parse(d.holdExpiresAt) < Date.now()
     ) {
-      d.status = 'CANCELLED';
+      move(d, 'EXPIRED');
       d.paymentStatus = 'CANCELLED';
-      d.cancelledAt = new Date().toISOString();
       for (const p of db().payments) {
         if (p.reference === d.reference && p.status === 'CREATED') p.status = 'CANCELLED';
       }
@@ -63,7 +81,7 @@ export function activeHolds(): StoredBooking['holds'][number][] {
   expireHolds();
   return db()
     .bookings.filter(
-      (b) => b.details.status === 'PENDING_PAYMENT' || b.details.status === 'CONFIRMED',
+      (b) => OPEN_HOLD_STATUSES.includes(b.details.status) || b.details.status === 'CONFIRMED',
     )
     .flatMap((b) => b.holds as StoredBooking['holds'][number][]);
 }
@@ -141,14 +159,20 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
   }
 
   const details = /^\/bookings\/([^/]+)$/.exec(path);
-  if (method === 'GET' && details) return { data: ownBooking(details[1] as string).details };
+  if (method === 'GET' && details)
+    return { data: withClock(ownBooking(details[1] as string).details) };
 
   if (method === 'POST' && path === '/payments/create') {
     const { bookingReference } = (body ?? {}) as { bookingReference?: string };
     const booking = ownBooking(bookingReference ?? '');
     const d = booking.details;
-    if (d.status !== 'PENDING_PAYMENT')
+    if (d.status === 'EXPIRED') throw holdExpired();
+    if (!OPEN_HOLD_STATUSES.includes(d.status))
       throw new StaticError(409, 'INVALID_STATE', 'This booking is not awaiting payment');
+    if (d.status === 'HELD') {
+      move(d, 'PAYMENT_PENDING');
+      save();
+    }
     const open =
       db().payments.find((p) => p.reference === d.reference && p.status === 'CREATED') ??
       (() => {
@@ -173,6 +197,7 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
       publicKey: null,
       bookingReference: d.reference,
       holdExpiresAt: d.holdExpiresAt,
+      serverNow: new Date().toISOString(),
     };
     return { status: 201, data: order, message: 'Payment order created' };
   }
@@ -192,22 +217,26 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
       save();
       return { data: { reference: d.reference, status: 'FAILED' }, message: 'Payment failed' };
     }
-    if (payment.status === 'SUCCESS')
-      return { data: { reference: d.reference, status: 'SUCCESS' } };
-    if (d.status !== 'PENDING_PAYMENT') {
+    if (payment.status === 'CAPTURED')
+      return { data: { reference: d.reference, status: 'CAPTURED' } };
+    if (d.status !== 'PAYMENT_PENDING') {
+      // Paid after the hold ran out: never confirmed, the money is owed back.
+      payment.status = 'REFUND_DUE';
+      d.paymentStatus = 'REFUND_DUE';
+      save();
       throw holdExpired(
-        'Your seat hold expired before payment completed. Any amount debited will be refunded.',
+        'Your hold expired before payment completed. Any amount debited will be refunded.',
       );
     }
-    payment.status = 'SUCCESS';
-    d.status = 'CONFIRMED';
-    d.paymentStatus = 'SUCCESS';
-    d.confirmedAt = new Date().toISOString();
+    payment.status = 'CAPTURED';
+    d.paymentStatus = 'CAPTURED';
     d.holdExpiresAt = null;
     issueTickets(d);
+    move(d, 'CONFIRMED');
+    d.confirmedAt = new Date().toISOString();
     save();
     return {
-      data: { reference: d.reference, status: 'SUCCESS' },
+      data: { reference: d.reference, status: 'CAPTURED' },
       message: 'Payment successful. Your booking is confirmed.',
     };
   }

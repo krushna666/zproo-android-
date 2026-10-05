@@ -274,7 +274,7 @@ export function busRoutes(req: StaticRequest): StaticResult | null {
     const n = seats.length;
     const seatNumbers = input.passengers.map((p) => p.seatNumber);
     const details = newBooking({
-      reference: generateBookingReference(new Date()),
+      reference: generateBookingReference('BUS'),
       serviceType: 'BUS',
       price: {
         lines: [

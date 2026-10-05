@@ -48,17 +48,17 @@ those fields so the number can be registered again.
 
 ## Phase 4 schema (flights, bookings, payments)
 
-| Table                | Purpose                                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `airports`           | IATA code, city, country and IANA time zone (all flight times are stored as UTC instants)                                             |
-| `airlines`           | Two-letter code and name                                                                                                              |
-| `flights`            | A scheduled service: route, days of week (`1`=Mon … `7`=Sun), aircraft, base fare, seats per cabin                                    |
-| `flight_segments`    | Legs of a service (non-stop = 1) with local departure time, day offset and duration                                                   |
-| `flight_inventory`   | Seats sold per service, date and cabin. Holds use `sold = sold + n WHERE sold + n <= capacity` (atomic)                               |
-| `bookings`           | One per purchase, any service: reference `ZP-YYYY-XXXXXX`, status, amounts in paise, hold expiry, `(user_id, idempotency_key)` unique |
-| `booking_passengers` | Travellers on a booking                                                                                                               |
-| `flight_bookings`    | One per flight leg: offer snapshot (JSON, what the customer saw), PNR, ticket numbers, seats held                                     |
-| `payments`           | Gateway orders and results; unique `provider_order_id` / `provider_payment_id`                                                        |
+| Table                | Purpose                                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `airports`           | IATA code, city, country and IANA time zone (all flight times are stored as UTC instants)                                                                  |
+| `airlines`           | Two-letter code and name                                                                                                                                   |
+| `flights`            | A scheduled service: route, days of week (`1`=Mon … `7`=Sun), aircraft, base fare, seats per cabin                                                         |
+| `flight_segments`    | Legs of a service (non-stop = 1) with local departure time, day offset and duration                                                                        |
+| `flight_inventory`   | Seats sold per service, date and cabin. Holds use `sold = sold + n WHERE sold + n <= capacity` (atomic)                                                    |
+| `bookings`           | One per purchase, any service: reference `ZB`/`ZF`/`ZH` + 10 base32 characters, status, amounts in paise, hold expiry, `(user_id, idempotency_key)` unique |
+| `booking_passengers` | Travellers on a booking                                                                                                                                    |
+| `flight_bookings`    | One per flight leg: offer snapshot (JSON, what the customer saw), PNR, ticket numbers, seats held                                                          |
+| `payments`           | Gateway orders and results; unique `provider_order_id` / `provider_payment_id`                                                                             |
 
 ## Phase 5 schema (buses)
 
@@ -76,10 +76,11 @@ those fields so the number can be registered again.
 
 `booking_passengers` gains `age` and `seat_number` (buses ask for age and assign a seat per traveller).
 
-Booking lifecycle: `PENDING_PAYMENT` (seats held) → `CONFIRMED` on verified payment, or `CANCELLED`
-(`HOLD_EXPIRED`) when the hold runs out and the seats are released. Every transition is a
-conditional update on the current status, so concurrent requests and API instances cannot apply
-the same change twice.
+Booking lifecycle (one `transition()` in `@zproo/utils`, every change written to `booking_events`):
+`DRAFT → HELD` (inventory held) `→ PAYMENT_PENDING` (payment order created) `→ CONFIRMED` (payment
+captured and supplier issued) `→ COMPLETED`; `HELD`/`PAYMENT_PENDING → EXPIRED` when the hold runs out;
+`PAYMENT_PENDING → FAILED` when the supplier cannot issue after payment; `CONFIRMED → CANCELLED →
+REFUND_PENDING → REFUNDED`. A payment captured after expiry, or for a FAILED booking, is `REFUND_DUE`.
 
 ## Seed data
 

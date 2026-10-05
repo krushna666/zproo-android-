@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { createApp } from './app';
 import { loadEnvFiles, parseEnv } from './config/env';
 import { createServices } from './container';
+import { scheduleReleaseExpiredHolds } from './jobs/releaseExpiredHolds';
 import { createPrismaClient } from './lib/prisma';
 import { redisRateLimitStore } from './lib/rateLimitStore';
 import { createRedisClient } from './lib/redis';
@@ -45,20 +46,15 @@ server.listen(env.PORT, () => {
   );
 });
 
-// Release seats held by unpaid bookings. Safe on every replica (state changes are conditional).
-const expiry = setInterval(() => {
-  services.bookings
-    .expireHolds()
-    .catch((err: unknown) => logger.error({ err }, 'Expiring booking holds failed'));
-}, 60_000);
-expiry.unref();
+// Release inventory held by unpaid bookings (one instance per tick via a Redis lock).
+const stopHoldJob = scheduleReleaseExpiredHolds(services, redis, logger);
 
 let shuttingDown = false;
 async function shutdown(signal: string, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info({ signal }, 'Shutting down');
-  clearInterval(expiry);
+  stopHoldJob();
   const force = setTimeout(() => process.exit(1), 10_000);
   force.unref();
   await new Promise<void>((resolve) => server.close(() => resolve()));

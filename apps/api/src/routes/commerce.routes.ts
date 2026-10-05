@@ -1,4 +1,5 @@
 import { Permission } from '@zproo/types';
+import { BOOKING_REFERENCE_PATTERN } from '@zproo/utils';
 import { bookBusSchema, bookFlightSchema, idSchema } from '@zproo/validation';
 import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
@@ -11,12 +12,12 @@ import { requireIdempotencyKey } from '../middleware/idempotency';
 import { validate } from '../middleware/validate';
 import type { RbacService } from '../services/rbac.service';
 
-const referenceParams = z.object({
+export const referenceParams = z.object({
   reference: z
     .string()
     .trim()
     .toUpperCase()
-    .regex(/^ZP-\d{4}-[0-9A-Z]{6}$/, 'Invalid booking reference'),
+    .regex(BOOKING_REFERENCE_PATTERN, 'Invalid booking reference'),
 });
 
 const tripParams = z.object({

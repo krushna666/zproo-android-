@@ -8,6 +8,18 @@ export class PaymentRepository {
     return this.db.payment.findUnique({ where: { id }, include: { booking: true } });
   }
 
+  findByOrderId(providerOrderId: string) {
+    return this.db.payment.findUnique({ where: { providerOrderId }, include: { booking: true } });
+  }
+
+  /** The captured payment of a booking (refunds and refund-due marking). */
+  findCapturedForBooking(bookingId: string) {
+    return this.db.payment.findFirst({
+      where: { bookingId, status: 'CAPTURED' },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   /** An open (not yet paid or failed) payment for the booking, if any. */
   findOpenForBooking(bookingId: string) {
     return this.db.payment.findFirst({

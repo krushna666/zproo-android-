@@ -8,6 +8,7 @@ import { errorMessage } from '@/features/auth/errors';
 import { checkoutApi, useBooking } from '@/features/checkout/api';
 import { CHECKOUT_STEP, type CheckoutService } from '@/features/checkout/steps';
 import { paymentUrl, searchHome, serviceOf } from '@/features/checkout/links';
+import { isAwaitingPayment, isConfirmed } from '@/features/checkout/status';
 import { TripSummary } from '@/features/checkout/TripSummary';
 import { CheckoutShell } from '@/features/checkout/CheckoutShell';
 import { DemoBanner } from '@/features/checkout/DemoBanner';
@@ -41,7 +42,7 @@ export default function ConfirmationPage() {
       </CheckoutShell>
     );
   }
-  if (booking.status === 'PENDING_PAYMENT')
+  if (isAwaitingPayment(booking))
     return <Navigate to={paymentUrl(serviceOf(booking), booking.reference)} replace />;
   return <Confirmation booking={booking} />;
 }
@@ -50,7 +51,7 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
   const service = serviceOf(booking);
   const step = CHECKOUT_STEP[service].done;
   const download = useMutation({ mutationFn: () => checkoutApi.downloadTicket(booking.reference) });
-  const confirmed = booking.status === 'CONFIRMED' || booking.status === 'COMPLETED';
+  const confirmed = isConfirmed(booking.status);
   const ticketsIssued = booking.bus
     ? Boolean(booking.bus.pnr)
     : booking.flights.every((f) => f.pnr);

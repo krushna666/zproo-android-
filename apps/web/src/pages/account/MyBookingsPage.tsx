@@ -8,35 +8,32 @@ import { Seo } from '@/components/seo/Seo';
 import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useMyBookings } from '@/features/checkout/api';
+import { BOOKING_STATUS_LABEL, isAwaitingPayment } from '@/features/checkout/status';
 import { confirmationUrl, paymentUrl } from '@/features/checkout/links';
 import { travelDate } from '@/features/flights/format';
 
-const STATUS: Record<
-  BookingStatus,
-  { label: string; tone: 'success' | 'warning' | 'danger' | 'outline' }
-> = {
-  INITIATED: { label: 'Started', tone: 'outline' },
-  PENDING_PAYMENT: { label: 'Awaiting payment', tone: 'warning' },
-  CONFIRMED: { label: 'Confirmed', tone: 'success' },
-  COMPLETED: { label: 'Completed', tone: 'outline' },
-  CANCELLED: { label: 'Cancelled', tone: 'danger' },
-  REFUND_PENDING: { label: 'Refund pending', tone: 'warning' },
-  REFUNDED: { label: 'Refunded', tone: 'outline' },
-};
+const STATUS = BOOKING_STATUS_LABEL;
 
 const TABS = [
   { id: 'upcoming', label: 'Upcoming' },
-  { id: 'past', label: 'Past' },
+  { id: 'completed', label: 'Completed' },
   { id: 'cancelled', label: 'Cancelled' },
 ] as const;
 type Tab = (typeof TABS)[number]['id'];
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+const CLOSED: readonly BookingStatus[] = [
+  'CANCELLED',
+  'REFUND_PENDING',
+  'REFUNDED',
+  'EXPIRED',
+  'FAILED',
+];
+
 function tabOf(b: BookingListItem): Tab {
-  if (b.status === 'CANCELLED' || b.status === 'REFUNDED' || b.status === 'REFUND_PENDING')
-    return 'cancelled';
-  return b.travelDate >= today() && b.status !== 'COMPLETED' ? 'upcoming' : 'past';
+  if (CLOSED.includes(b.status)) return 'cancelled';
+  return b.travelDate >= today() && b.status !== 'COMPLETED' ? 'upcoming' : 'completed';
 }
 
 const serviceOf = (b: BookingListItem) => (b.serviceType === 'BUS' ? 'bus' : 'flight');
@@ -100,10 +97,9 @@ export default function MyBookingsPage() {
           {bookings.map((b) => {
             const status = STATUS[b.status];
             const Icon = b.serviceType === 'BUS' ? Bus : Plane;
-            const href =
-              b.status === 'PENDING_PAYMENT'
-                ? paymentUrl(serviceOf(b), b.reference)
-                : confirmationUrl(serviceOf(b), b.reference);
+            const href = isAwaitingPayment(b)
+              ? paymentUrl(serviceOf(b), b.reference)
+              : confirmationUrl(serviceOf(b), b.reference);
             return (
               <li key={b.reference}>
                 <Link

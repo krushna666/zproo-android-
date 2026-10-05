@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type { BookingDetails, BookingListItem, FlightOffer } from '@zproo/types';
-import { generateBookingReference } from '@zproo/utils';
+import { OPEN_HOLD_STATUSES, generateBookingReference } from '@zproo/utils';
 import { passengerAgeIssues, type BookBusInput, type BookFlightInput } from '@zproo/validation';
 import type { Logger } from 'pino';
 import { toBookingDetails, toBookingListItem } from '../models/booking.dto';
@@ -9,6 +9,7 @@ import type { FlightProvider } from '../providers/flight';
 import { BookingRepository, type BookingRecord } from '../repositories/booking.repository';
 import { PaymentRepository } from '../repositories/payment.repository';
 import {
+  AuthorizationError,
   FareUnavailableError,
   NotFoundError,
   PriceChangedError,
@@ -102,7 +103,7 @@ export class BookingService {
         reference,
         userId,
         serviceType: 'FLIGHT',
-        status: 'PENDING_PAYMENT',
+        status: 'HELD',
         paymentStatus: 'CREATED',
         baseAmountPaise: price.basePaise,
         taxAmountPaise: price.taxesPaise,
@@ -205,7 +206,7 @@ export class BookingService {
         reference,
         userId,
         serviceType: 'BUS',
-        status: 'PENDING_PAYMENT',
+        status: 'HELD',
         paymentStatus: 'CREATED',
         baseAmountPaise: basePaise,
         taxAmountPaise: taxPaise,
@@ -255,14 +256,18 @@ export class BookingService {
     });
   }
 
-  /** Owners see their bookings; staff with booking:read:any see all. Others get 404, not 403. */
+  /**
+   * Owners see their bookings; staff with booking:read:any see all; anyone else gets 403 with no
+   * booking data. References are unguessable (50 random bits), so 403 does not help enumeration.
+   */
   async get(
     reference: string,
     viewer: { userId: string; canReadAny: boolean },
   ): Promise<BookingRecord> {
     const booking = await new BookingRepository(this.deps.prisma).findByReference(reference);
-    if (!booking || (booking.userId !== viewer.userId && !viewer.canReadAny))
-      throw new NotFoundError('Booking not found');
+    if (!booking) throw new NotFoundError('Booking not found');
+    if (booking.userId !== viewer.userId && !viewer.canReadAny)
+      throw new AuthorizationError("You don't have access to this booking");
     return booking;
   }
 
@@ -279,27 +284,29 @@ export class BookingService {
     );
   }
 
-  /** Cancels unpaid bookings whose hold ran out and returns their seats. Safe to run on every replica. */
+  /**
+   * Moves unpaid bookings whose hold ran out to EXPIRED and releases their inventory. Each move is
+   * conditional (still unpaid, still expired), so it is safe if a payment lands meanwhile or two
+   * instances run it at once.
+   */
   async expireHolds(): Promise<number> {
     const expired = await new BookingRepository(this.deps.prisma).findExpiredHolds(this.now());
     let count = 0;
     for (const booking of expired) {
       const done = await this.deps.prisma.$transaction(async (tx) => {
-        const moved = await new BookingRepository(tx).transition(
+        const moved = await new BookingRepository(tx).move(
           booking.id,
-          'PENDING_PAYMENT',
+          OPEN_HOLD_STATUSES,
+          'EXPIRED',
           {
-            status: 'CANCELLED',
-            cancelledAt: this.now(),
-            cancellationReason: 'HOLD_EXPIRED',
-            paymentStatus: 'CANCELLED',
+            actor: 'job:release-holds',
+            reason: 'Hold expired before payment',
+            data: { paymentStatus: 'CANCELLED' },
+            where: { holdExpiresAt: { lt: this.now() } },
           },
-          { holdExpiresAt: { lt: this.now() } },
         );
         if (!moved) return false; // paid or handled by another instance meanwhile
-        for (const leg of booking.flights)
-          await this.deps.flights.release(leg.offerId, leg.seats, tx);
-        if (booking.bus) await this.deps.buses.release(booking.id, tx);
+        await this.releaseInventory(booking, tx);
         await new PaymentRepository(tx).cancelOpenForBooking(booking.id);
         return true;
       });
@@ -307,6 +314,12 @@ export class BookingService {
     }
     if (count > 0) this.deps.logger.info({ count }, 'Expired unpaid booking holds');
     return count;
+  }
+
+  /** Returns a booking's seats to the supplier (expiry, failed issue, cancellation). */
+  async releaseInventory(booking: BookingRecord, tx: Prisma.TransactionClient): Promise<void> {
+    for (const leg of booking.flights) await this.deps.flights.release(leg.offerId, leg.seats, tx);
+    if (booking.bus) await this.deps.buses.release(booking.id, tx);
   }
 
   // ───────── internals ─────────
@@ -376,8 +389,18 @@ export class BookingService {
     ctx: RequestContext,
     create: (reference: string, tx: Prisma.TransactionClient) => Promise<BookingRecord>,
   ): Promise<BookingDetails> {
-    const booking = await this.withUniqueReference((reference) =>
-      this.deps.prisma.$transaction((tx) => create(reference, tx)),
+    const booking = await this.withUniqueReference(service, (reference) =>
+      this.deps.prisma.$transaction(async (tx) => {
+        const created = await create(reference, tx);
+        await new BookingRepository(tx).recordEvent(
+          created.id,
+          'DRAFT',
+          'HELD',
+          `user:${userId}`,
+          'Inventory held',
+        );
+        return created;
+      }),
     );
     await this.deps.audit.record({
       action: 'BOOKING_CREATED',
@@ -391,10 +414,13 @@ export class BookingService {
   }
 
   /** Booking references are random; on the (very rare) collision, try again with a new one. */
-  private async withUniqueReference<T>(create: (reference: string) => Promise<T>): Promise<T> {
+  private async withUniqueReference<T>(
+    service: 'FLIGHT' | 'BUS',
+    create: (reference: string) => Promise<T>,
+  ): Promise<T> {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await create(generateBookingReference(this.now()));
+        return await create(generateBookingReference(service));
       } catch (err) {
         const collision =
           err instanceof Prisma.PrismaClientKnownRequestError &&

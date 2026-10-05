@@ -45,12 +45,13 @@ const busRoutes = (url: string): unknown => {
 function busBooking(overrides: Partial<BookingDetails> = {}): BookingDetails {
   const trip = makeTrip();
   return {
-    reference: 'ZP-2026-BUS123',
+    reference: 'ZB00000BUS12',
     serviceType: 'BUS',
-    status: 'PENDING_PAYMENT',
+    status: 'HELD',
     paymentStatus: 'CREATED',
     createdAt: '2026-09-26T10:00:00.000Z',
     holdExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    serverNow: new Date().toISOString(),
     confirmedAt: null,
     cancelledAt: null,
     travelDate: '2026-10-25',
@@ -227,7 +228,7 @@ describe('bus checkout', () => {
       amountPaise: 94_600,
       currency: 'INR',
       publicKey: null,
-      bookingReference: 'ZP-2026-BUS123',
+      bookingReference: 'ZB00000BUS12',
       holdExpiresAt: null,
     });
     serve((url) => (url.startsWith('/bookings/') ? busBooking() : busRoutes(url)));
@@ -279,12 +280,12 @@ describe('bus checkout', () => {
   it('shows the confirmation with the operator PNR and seats', async () => {
     const confirmed = busBooking({
       status: 'CONFIRMED',
-      paymentStatus: 'SUCCESS',
+      paymentStatus: 'CAPTURED',
       holdExpiresAt: null,
     });
     if (confirmed.bus) confirmed.bus.pnr = 'SSK1234567';
-    serve((url) => (url === '/bookings/ZP-2026-BUS123' ? confirmed : undefined));
-    renderRoute('/buses/confirmation?ref=ZP-2026-BUS123', makeUser());
+    serve((url) => (url === '/bookings/ZB00000BUS12' ? confirmed : undefined));
+    renderRoute('/buses/confirmation?ref=ZB00000BUS12', makeUser());
     expect(await screen.findByText('Your trip is booked!')).toBeInTheDocument();
     expect(screen.getByText('Operator PNR')).toBeInTheDocument();
     expect(screen.getByText('SSK1234567')).toBeInTheDocument();

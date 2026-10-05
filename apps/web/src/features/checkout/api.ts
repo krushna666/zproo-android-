@@ -38,7 +38,7 @@ export const checkoutApi = {
     apiPost<PaymentOrder>('/payments/create', { bookingReference }),
   /** Development gateway only: stands in for the checkout popup of a real gateway. */
   completeMockPayment: (paymentId: string, outcome: 'success' | 'failure') =>
-    apiPost<{ reference: string; status: 'SUCCESS' | 'FAILED' }>('/payments/mock/complete', {
+    apiPost<{ reference: string; status: 'CAPTURED' | 'FAILED' }>('/payments/mock/complete', {
       paymentId,
       outcome,
     }),

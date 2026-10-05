@@ -1,12 +1,19 @@
 import type { PrismaClient } from '@prisma/client';
 import type { PaymentOrder } from '@zproo/types';
 import type { Logger } from 'pino';
+import { OPEN_HOLD_STATUSES } from '@zproo/utils';
 import type { BusProvider } from '../providers/bus';
 import type { FlightProvider } from '../providers/flight';
 import { MockPaymentProvider, type PaymentProvider } from '../providers/payment';
 import { BookingRepository } from '../repositories/booking.repository';
 import { PaymentRepository } from '../repositories/payment.repository';
-import { HoldExpiredError, InvalidStateError, NotFoundError, PaymentError } from '../utils/errors';
+import {
+  AuthorizationError,
+  HoldExpiredError,
+  InvalidStateError,
+  NotFoundError,
+  PaymentError,
+} from '../utils/errors';
 import type { AuditService, RequestContext } from './audit.service';
 import type { BookingService } from './booking.service';
 
@@ -37,10 +44,14 @@ export class PaymentService {
     return this.deps.provider.name;
   }
 
-  /** Idempotent: an open payment for the booking is returned rather than a second order created. */
+  /**
+   * Idempotent: an open payment for the booking is returned rather than a second order created.
+   * The amount always comes from the stored booking. The first order moves HELD → PAYMENT_PENDING.
+   */
   async createOrder(userId: string, reference: string, ctx: RequestContext): Promise<PaymentOrder> {
     const booking = await this.deps.bookings.get(reference, { userId, canReadAny: false });
-    if (booking.status !== 'PENDING_PAYMENT')
+    if (booking.status === 'EXPIRED') throw new HoldExpiredError();
+    if (!OPEN_HOLD_STATUSES.includes(booking.status) || booking.paymentStatus === 'CAPTURED')
       throw new InvalidStateError('This booking is not awaiting payment');
     if (booking.holdExpiresAt && booking.holdExpiresAt <= this.now()) throw new HoldExpiredError();
 
@@ -60,6 +71,14 @@ export class PaymentService {
         ).orderId,
         amountPaise: booking.totalAmountPaise,
       }));
+    if (booking.status === 'HELD') {
+      await this.deps.prisma.$transaction((tx) =>
+        new BookingRepository(tx).move(booking.id, ['HELD'], 'PAYMENT_PENDING', {
+          actor: `user:${userId}`,
+          reason: 'Payment order created',
+        }),
+      );
+    }
     await this.deps.audit.record({
       action: 'PAYMENT_ORDER_CREATED',
       actorId: userId,
@@ -77,6 +96,7 @@ export class PaymentService {
       publicKey: this.deps.provider.publicKey,
       bookingReference: booking.reference,
       holdExpiresAt: booking.holdExpiresAt?.toISOString() ?? null,
+      serverNow: this.now().toISOString(),
     };
   }
 
@@ -92,8 +112,10 @@ export class PaymentService {
     ctx: RequestContext,
   ): Promise<{ reference: string }> {
     const payment = await new PaymentRepository(this.deps.prisma).findById(input.paymentId);
-    if (!payment || payment.userId !== userId) throw new NotFoundError('Payment not found');
-    if (payment.status === 'SUCCESS') return { reference: payment.booking.reference }; // retry of a completed call
+    if (!payment) throw new NotFoundError('Payment not found');
+    if (payment.userId !== userId)
+      throw new AuthorizationError("You don't have access to this payment");
+    if (payment.status === 'CAPTURED') return { reference: payment.booking.reference }; // retry of a completed call
 
     const valid = this.deps.provider.verifyPayment({
       orderId: payment.providerOrderId,
@@ -124,7 +146,9 @@ export class PaymentService {
     ctx: RequestContext,
   ): Promise<void> {
     const payment = await new PaymentRepository(this.deps.prisma).findById(paymentId);
-    if (!payment || payment.userId !== userId) throw new NotFoundError('Payment not found');
+    if (!payment) throw new NotFoundError('Payment not found');
+    if (payment.userId !== userId)
+      throw new AuthorizationError("You don't have access to this payment");
     await new PaymentRepository(this.deps.prisma).transition(payment.id, ['CREATED', 'PENDING'], {
       status: 'FAILED',
       failureReason: reason.slice(0, 200),
@@ -148,7 +172,9 @@ export class PaymentService {
   ) {
     if (!(this.deps.provider instanceof MockPaymentProvider)) throw new NotFoundError();
     const payment = await new PaymentRepository(this.deps.prisma).findById(paymentId);
-    if (!payment || payment.userId !== userId) throw new NotFoundError('Payment not found');
+    if (!payment) throw new NotFoundError('Payment not found');
+    if (payment.userId !== userId)
+      throw new AuthorizationError("You don't have access to this payment");
     if (outcome === 'failure') {
       await this.markFailed(userId, paymentId, 'Declined by bank (simulated)', ctx);
       return { reference: payment.booking.reference, status: 'FAILED' as const };
@@ -164,7 +190,18 @@ export class PaymentService {
       },
       ctx,
     );
-    return { reference: payment.booking.reference, status: 'SUCCESS' as const };
+    return { reference: payment.booking.reference, status: 'CAPTURED' as const };
+  }
+
+  /**
+   * Re-tries issuing for paid bookings that are not confirmed yet (the process stopped between
+   * capture and issue, or the supplier reported issuing as pending). Run by the jobs runner.
+   */
+  async issuePending(): Promise<number> {
+    const waiting = await new BookingRepository(this.deps.prisma).findAwaitingIssue();
+    let confirmed = 0;
+    for (const booking of waiting) if (await this.issueTickets(booking.id)) confirmed += 1;
+    return confirmed;
   }
 
   // ───────── internals ─────────
@@ -182,8 +219,8 @@ export class PaymentService {
     } catch (err) {
       if (!(err instanceof HoldExpiredError)) throw err;
       const current = await new PaymentRepository(this.deps.prisma).findById(paymentId);
-      // A concurrent verify of the same payment confirmed the booking first.
-      if (current?.status === 'SUCCESS') return;
+      // A concurrent verify of the same payment captured it first.
+      if (current?.status === 'CAPTURED') return;
       await this.recordLateCapture(paymentId, providerPaymentId, method, userId, ctx);
       throw err;
     }
@@ -197,7 +234,11 @@ export class PaymentService {
     await this.issueTickets(bookingId);
   }
 
-  /** Marks the booking confirmed and the payment captured, atomically, while the seat hold is valid. */
+  /**
+   * Records the capture atomically while the hold is still valid: the payment becomes CAPTURED and
+   * the booking's hold is cleared (so the expiry job can no longer release it). The booking stays
+   * PAYMENT_PENDING until the supplier issues.
+   */
   private async capture(
     paymentId: string,
     providerPaymentId: string,
@@ -207,22 +248,28 @@ export class PaymentService {
     return this.deps.prisma.$transaction(async (tx) => {
       const payment = await new PaymentRepository(tx).findById(paymentId);
       if (!payment) throw new NotFoundError('Payment not found');
-      // The hold must still be valid; otherwise the seats may already be resold.
-      const confirmed = await new BookingRepository(tx).transition(
-        payment.bookingId,
-        'PENDING_PAYMENT',
-        { status: 'CONFIRMED', paymentStatus: 'SUCCESS', confirmedAt: now, holdExpiresAt: null },
-        { holdExpiresAt: { gt: now } },
-      );
-      if (!confirmed)
+      const { count } = await tx.booking.updateMany({
+        where: {
+          id: payment.bookingId,
+          status: { in: [...OPEN_HOLD_STATUSES] },
+          holdExpiresAt: { gt: now },
+        },
+        data: { paymentStatus: 'CAPTURED', holdExpiresAt: null },
+      });
+      if (count !== 1)
         throw new HoldExpiredError(
-          'Your seat hold expired before payment completed. Any amount debited will be refunded.',
+          'Your hold expired before payment completed. Any amount debited will be refunded.',
         );
+      // A booking still HELD (paid without an order step, e.g. via webhook) catches up first.
+      await new BookingRepository(tx).move(payment.bookingId, ['HELD'], 'PAYMENT_PENDING', {
+        actor: 'system',
+        reason: 'Payment captured',
+      });
       const captured = await new PaymentRepository(tx).transition(
         payment.id,
         ['CREATED', 'PENDING', 'FAILED'],
         {
-          status: 'SUCCESS',
+          status: 'CAPTURED',
           providerPaymentId,
           method: method ?? null,
           capturedAt: now,
@@ -235,8 +282,8 @@ export class PaymentService {
   }
 
   /**
-   * The gateway took the money but the seats were already released. Keep a record of the gateway
-   * payment so finance can refund it; the booking itself stays cancelled.
+   * The gateway took the money but the hold had expired, so the inventory may already be resold.
+   * The booking ends EXPIRED (never re-opened, never ticketed) and the payment is REFUND_DUE.
    */
   private async recordLateCapture(
     paymentId: string,
@@ -245,16 +292,31 @@ export class PaymentService {
     userId: string,
     ctx: RequestContext,
   ) {
-    await new PaymentRepository(this.deps.prisma).transition(
-      paymentId,
-      ['CREATED', 'PENDING', 'FAILED', 'CANCELLED'],
-      {
-        status: 'FAILED',
-        providerPaymentId,
-        method: method ?? null,
-        failureReason: 'Captured after the seat hold expired; refund due',
-      },
-    );
+    await this.deps.prisma.$transaction(async (tx) => {
+      const payment = await new PaymentRepository(tx).findById(paymentId);
+      if (!payment) return;
+      await new PaymentRepository(tx).transition(
+        paymentId,
+        ['CREATED', 'PENDING', 'FAILED', 'CANCELLED'],
+        {
+          status: 'REFUND_DUE',
+          providerPaymentId,
+          method: method ?? null,
+          failureReason: 'Captured after the hold expired; refund due',
+        },
+      );
+      const bookings = new BookingRepository(tx);
+      const record = await bookings.findByReference(payment.booking.reference);
+      const expiredNow = await bookings.move(payment.bookingId, OPEN_HOLD_STATUSES, 'EXPIRED', {
+        actor: 'system',
+        reason: 'Payment arrived after the hold expired',
+      });
+      if (expiredNow && record) await this.deps.bookings.releaseInventory(record, tx);
+      await tx.booking.update({
+        where: { id: payment.bookingId },
+        data: { paymentStatus: 'REFUND_DUE' },
+      });
+    });
     await this.deps.audit.record({
       action: 'PAYMENT_REFUND_DUE',
       actorId: userId,
@@ -266,11 +328,12 @@ export class PaymentService {
   }
 
   /**
-   * Tickets are issued after the payment commits. If the airline or operator call fails, the
-   * booking stays confirmed without a PNR and is picked up by support (logged), rather than
-   * losing the payment.
+   * Issues tickets with the supplier after the capture commits, then confirms the booking. A
+   * failed call is retried (suppliers' issue is idempotent per booking); if it still fails the
+   * booking becomes FAILED, its inventory is released and the payment is REFUND_DUE (alert log).
+   * Returns true when the booking ended CONFIRMED.
    */
-  private async issueTickets(bookingId: string) {
+  private async issueTickets(bookingId: string): Promise<boolean> {
     const booking = await this.deps.prisma.booking.findUnique({
       where: { id: bookingId },
       include: {
@@ -279,36 +342,66 @@ export class PaymentService {
         bus: true,
       },
     });
-    if (!booking) return;
+    if (booking?.status !== 'PAYMENT_PENDING') return false;
     const repo = new BookingRepository(this.deps.prisma);
-    if (booking.bus) {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= ISSUE_ATTEMPTS; attempt++) {
       try {
-        const issued = await this.deps.buses.issue(booking.bus.offerId, booking.bus.seatNumbers);
-        await repo.setBusPnr(booking.id, issued.pnr);
-      } catch (err) {
-        this.deps.logger.error(
-          { err, bookingId },
-          'Bus ticket issuance failed — needs manual follow-up',
+        if (booking.bus && !booking.bus.pnr) {
+          const issued = await this.deps.buses.issue(booking.bus.offerId, booking.bus.seatNumbers);
+          await repo.setBusPnr(booking.id, issued.pnr);
+        }
+        for (const leg of booking.flights) {
+          if (leg.pnr) continue;
+          const issued = await this.deps.flights.issue(leg.offerId, booking.passengers);
+          await repo.setFlightTickets(
+            leg.id,
+            issued.pnr,
+            booking.passengers.map((p, i) => ({
+              passengerId: p.id,
+              ticketNumber: issued.ticketNumbers[i] ?? '',
+            })),
+          );
+          leg.pnr = issued.pnr;
+        }
+        return await this.deps.prisma.$transaction((tx) =>
+          new BookingRepository(tx).move(booking.id, ['PAYMENT_PENDING'], 'CONFIRMED', {
+            actor: 'system',
+            reason: 'Tickets issued',
+            data: { confirmedAt: this.now() },
+          }),
         );
+      } catch (err) {
+        lastError = err;
+        this.deps.logger.warn({ err, bookingId, attempt }, 'Ticket issue attempt failed');
       }
     }
-    for (const leg of booking.flights) {
-      try {
-        const issued = await this.deps.flights.issue(leg.offerId, booking.passengers);
-        await repo.setFlightTickets(
-          leg.id,
-          issued.pnr,
-          booking.passengers.map((p, i) => ({
-            passengerId: p.id,
-            ticketNumber: issued.ticketNumbers[i] ?? '',
-          })),
-        );
-      } catch (err) {
-        this.deps.logger.error(
-          { err, bookingId, leg: leg.sequence },
-          'Ticket issuance failed — needs manual follow-up',
-        );
-      }
-    }
+    await this.deps.prisma.$transaction(async (tx) => {
+      const record = await new BookingRepository(tx).findByReference(booking.reference);
+      const failed = await new BookingRepository(tx).move(
+        booking.id,
+        ['PAYMENT_PENDING'],
+        'FAILED',
+        {
+          actor: 'system',
+          reason: 'Supplier could not issue the ticket',
+          data: { paymentStatus: 'REFUND_DUE' },
+        },
+      );
+      if (!failed) return;
+      if (record) await this.deps.bookings.releaseInventory(record, tx);
+      await tx.payment.updateMany({
+        where: { bookingId: booking.id, status: 'CAPTURED' },
+        data: { status: 'REFUND_DUE', failureReason: 'Supplier could not issue; refund due' },
+      });
+    });
+    this.deps.logger.error(
+      { err: lastError, bookingId, alert: 'ISSUE_FAILED_REFUND_DUE' },
+      'Ticket issue failed after retries — booking FAILED, refund due',
+    );
+    return false;
   }
 }
+
+/** Issue attempts before a paid booking is failed and refunded. */
+const ISSUE_ATTEMPTS = 3;

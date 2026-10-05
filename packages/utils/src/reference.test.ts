@@ -6,26 +6,32 @@ import {
 } from './reference';
 
 describe('booking reference', () => {
-  it('generates ZP-YYYY-XXXXXX references', () => {
-    const ref = generateBookingReference(new Date('2026-10-25T08:25:00Z'));
-    expect(ref).toMatch(/^ZP-2026-[0-9A-Z]{6}$/);
-    expect(isBookingReference(ref)).toBe(true);
+  it('generates module-prefixed references with 10 base32 characters', () => {
+    expect(generateBookingReference('BUS')).toMatch(/^ZB[0-9A-Z]{10}$/);
+    expect(generateBookingReference('FLIGHT')).toMatch(/^ZF[0-9A-Z]{10}$/);
+    expect(generateBookingReference('HOTEL')).toMatch(/^ZH[0-9A-Z]{10}$/);
+    expect(isBookingReference(generateBookingReference('BUS'))).toBe(true);
   });
 
-  it('never uses ambiguous characters', () => {
+  it('never uses ambiguous characters and does not repeat', () => {
+    const seen = new Set<string>();
     for (let i = 0; i < 500; i++) {
-      expect(generateBookingReference().slice(8)).not.toMatch(/[ILOU]/);
+      const ref = generateBookingReference('HOTEL');
+      expect(ref.slice(2)).not.toMatch(/[ILOU]/);
+      seen.add(ref);
     }
+    expect(seen.size).toBe(500);
   });
 
   it('validates format', () => {
-    expect(isBookingReference('ZP-2026-7K3QX9')).toBe(true);
-    expect(isBookingReference('ZP-2026-7K3QXO')).toBe(false);
-    expect(isBookingReference('ZP78456231')).toBe(false);
+    expect(isBookingReference('ZB7K3QX9M2PA')).toBe(true);
+    expect(isBookingReference('ZB7K3QX9M2PO')).toBe(false);
+    expect(isBookingReference('ZX7K3QX9M2PA')).toBe(false);
+    expect(isBookingReference('ZP-2026-7K3QX9')).toBe(false);
   });
 
   it('normalises user input', () => {
-    expect(normalizeBookingReference(' zp-2026-7k3qxo ')).toBe('ZP-2026-7K3QX0');
-    expect(normalizeBookingReference('ZP-2026-L1ABCD')).toBe('ZP-2026-11ABCD');
+    expect(normalizeBookingReference(' zb7k3qx9m2po ')).toBe('ZB7K3QX9M2P0');
+    expect(normalizeBookingReference('ZH-L1AB CD12 34')).toBe('ZH11ABCD1234');
   });
 });

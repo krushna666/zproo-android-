@@ -113,7 +113,7 @@ describe('static engine: flights', () => {
         key,
       ),
     );
-    expect(booking).toMatchObject({ status: 'PENDING_PAYMENT', serviceType: 'FLIGHT' });
+    expect(booking).toMatchObject({ status: 'HELD', serviceType: 'FLIGHT' });
     const retry = await data<BookingDetails>(
       book(
         '/flights/book',

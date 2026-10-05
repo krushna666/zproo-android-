@@ -125,6 +125,8 @@ export interface BookingDetails {
   paymentStatus: PaymentStatus;
   createdAt: string;
   holdExpiresAt: string | null;
+  /** Server clock when this was sent; hold countdowns use it to avoid client clock skew. */
+  serverNow: string;
   confirmedAt: string | null;
   cancelledAt: string | null;
   travelDate: string;
@@ -159,4 +161,6 @@ export interface PaymentOrder {
   publicKey: string | null;
   bookingReference: string;
   holdExpiresAt: string | null;
+  /** Server clock when this was sent; countdowns use it to avoid client clock skew. */
+  serverNow: string;
 }

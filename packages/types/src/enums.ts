@@ -36,23 +36,32 @@ export const ServiceType = {
 } as const;
 export type ServiceType = (typeof ServiceType)[keyof typeof ServiceType];
 
+/** Booking lifecycle; legal moves are in @zproo/utils `BOOKING_TRANSITIONS`. */
 export const BookingStatus = {
-  INITIATED: 'INITIATED',
-  PENDING_PAYMENT: 'PENDING_PAYMENT',
+  DRAFT: 'DRAFT',
+  HELD: 'HELD',
+  PAYMENT_PENDING: 'PAYMENT_PENDING',
   CONFIRMED: 'CONFIRMED',
+  EXPIRED: 'EXPIRED',
+  FAILED: 'FAILED',
   CANCELLED: 'CANCELLED',
-  COMPLETED: 'COMPLETED',
   REFUND_PENDING: 'REFUND_PENDING',
   REFUNDED: 'REFUNDED',
+  COMPLETED: 'COMPLETED',
 } as const;
 export type BookingStatus = (typeof BookingStatus)[keyof typeof BookingStatus];
 
+/**
+ * REFUND_DUE: money was captured but no ticket may be issued (the hold had expired, or the
+ * supplier could not issue); finance must refund it.
+ */
 export const PaymentStatus = {
   CREATED: 'CREATED',
   PENDING: 'PENDING',
   AUTHORIZED: 'AUTHORIZED',
-  SUCCESS: 'SUCCESS',
+  CAPTURED: 'CAPTURED',
   FAILED: 'FAILED',
+  REFUND_DUE: 'REFUND_DUE',
   REFUNDED: 'REFUNDED',
   PARTIALLY_REFUNDED: 'PARTIALLY_REFUNDED',
   CANCELLED: 'CANCELLED',

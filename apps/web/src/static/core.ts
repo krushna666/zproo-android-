@@ -129,7 +129,7 @@ export interface StoredPayment {
   userId: string;
   orderId: string;
   amountPaise: number;
-  status: 'CREATED' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+  status: 'CREATED' | 'CAPTURED' | 'FAILED' | 'CANCELLED' | 'REFUND_DUE';
 }
 
 export interface Db {
@@ -141,7 +141,8 @@ export interface Db {
   payments: StoredPayment[];
 }
 
-const KEY = 'zproo-go-static-db';
+/** v2: booking lifecycle statuses (HELD, PAYMENT_PENDING, EXPIRED…) and ZB/ZF references. */
+const KEY = 'zproo-go-static-db-v2';
 const empty = (): Db => ({
   users: [],
   sessionUserId: null,

@@ -15,10 +15,10 @@ const get = vi.mocked(apiGet);
 const future = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
 
 const item = (overrides: Partial<BookingListItem>): BookingListItem => ({
-  reference: 'ZP-2026-AAAAAA',
+  reference: 'ZF0000000AAA',
   serviceType: 'FLIGHT',
   status: 'CONFIRMED',
-  paymentStatus: 'SUCCESS',
+  paymentStatus: 'CAPTURED',
   title: 'PNQ → DEL',
   subtitle: '1 traveller · 1 flight',
   travelDate: future,
@@ -34,14 +34,15 @@ beforeEach(() => {
       return [
         item({}),
         item({
-          reference: 'ZP-2026-BBBBBB',
+          reference: 'ZB0000000BBB',
           serviceType: 'BUS',
-          status: 'PENDING_PAYMENT',
+          status: 'HELD',
+          paymentStatus: 'CREATED',
           title: 'Pune → Mumbai',
           subtitle: 'Sahyadri Skyline · Seats L1, L4',
           totalPaise: 94_600,
         }),
-        item({ reference: 'ZP-2026-CCCCCC', status: 'CANCELLED', title: 'BOM → GOI' }),
+        item({ reference: 'ZF0000000CCC', status: 'CANCELLED', title: 'BOM → GOI' }),
       ] satisfies BookingListItem[];
     }
     throw new ApiClientError('Not found', 404, 'NOT_FOUND');
@@ -54,17 +55,17 @@ describe('My bookings', () => {
     renderRoute('/bookings', makeUser());
     expect(await screen.findByRole('link', { name: /PNQ → DEL/ })).toHaveAttribute(
       'href',
-      '/flights/confirmation?ref=ZP-2026-AAAAAA',
+      '/flights/confirmation?ref=ZF0000000AAA',
     );
     expect(screen.getByRole('link', { name: /Pune → Mumbai.*Awaiting payment/ })).toHaveAttribute(
       'href',
-      '/buses/payment?ref=ZP-2026-BBBBBB',
+      '/buses/payment?ref=ZB0000000BBB',
     );
     expect(screen.queryByText('BOM → GOI')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: 'Cancelled' }));
     expect(screen.getByText('BOM → GOI')).toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: 'Past' }));
-    expect(screen.getByText('No past bookings')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Completed' }));
+    expect(screen.getByText('No completed bookings')).toBeInTheDocument();
   });
 });

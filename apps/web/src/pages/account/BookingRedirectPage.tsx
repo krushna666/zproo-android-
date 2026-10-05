@@ -4,6 +4,7 @@ import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useBooking } from '@/features/checkout/api';
 import { confirmationUrl, paymentUrl, serviceOf } from '@/features/checkout/links';
+import { isAwaitingPayment } from '@/features/checkout/status';
 
 /** /bookings/:reference opens the booking's own page (payment if unpaid, otherwise the ticket). */
 export default function BookingRedirectPage() {
@@ -21,7 +22,7 @@ export default function BookingRedirectPage() {
   return (
     <Navigate
       to={
-        data.status === 'PENDING_PAYMENT'
+        isAwaitingPayment(data)
           ? paymentUrl(service, data.reference)
           : confirmationUrl(service, data.reference)
       }

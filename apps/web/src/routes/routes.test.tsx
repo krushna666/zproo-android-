@@ -79,7 +79,7 @@ describe('route guards', () => {
     expect(router.state.location.search).toBe('?next=%2Fbookings%3Ftab%3Dupcoming');
   });
 
-  it.each(['/wallet', '/bookings', '/bookings/ZP-2026-7K3QX9', '/profile'])(
+  it.each(['/wallet', '/bookings', '/bookings/ZF7K3QX9M2PA', '/profile'])(
     'protects the account page %s',
     async (path) => {
       const { router } = renderRoute(path);

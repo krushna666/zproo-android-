@@ -121,7 +121,7 @@ Every `/api/admin/*` route requires `admin:access` plus its own permission.
 | ------ | ------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/api/flights/search`    | —                | `trip`, `from`, `to`, `date`, `return` or `legs=PNQ.DEL.2026-10-25,…`; `adults`, `children`, `infants`, `cabin`. Cached 60 s |
 | GET    | `/api/flights/{offerId}` | —                | Current price and seats for one offer; `adults`, `children`, `infants`                                                       |
-| POST   | `/api/flights/book`      | `booking:create` | Holds seats and creates a `PENDING_PAYMENT` booking. **Requires `Idempotency-Key`**                                          |
+| POST   | `/api/flights/book`      | `booking:create` | Holds seats and creates a `HELD` booking. **Requires `Idempotency-Key`**                                                     |
 
 `POST /api/flights/book` body: `{ offerIds, passengers[], contact: { email, phone }, expectedTotalPaise }`.
 The server re-prices every offer; if the total differs it answers `409 PRICE_CHANGED` and nothing is
@@ -136,7 +136,7 @@ minute on each API instance; the state change is conditional, so instances never
 | GET    | `/api/buses/search`         | —                | `from`, `to` (city codes, e.g. `pune`, `mumbai`), `date`. Departures in time order. Cached 60 s |
 | GET    | `/api/buses/{tripId}`       | —                | Operator, coach, amenities, boarding/dropping points with times, cancellation policy            |
 | GET    | `/api/buses/{tripId}/seats` | —                | Seat layout per deck with live availability and per-seat price incl. GST (never cached)         |
-| POST   | `/api/buses/book`           | `booking:create` | Holds the seats and creates a `PENDING_PAYMENT` booking. **Requires `Idempotency-Key`**         |
+| POST   | `/api/buses/book`           | `booking:create` | Holds the seats and creates a `HELD` booking. **Requires `Idempotency-Key`**                    |
 
 `POST /api/buses/book` body: `{ tripId, boardingPointId, droppingPointId, passengers: [{ seatNumber, firstName, lastName, age, gender }], contact, expectedTotalPaise }`.
 One traveller per seat, up to 6. Ladies-only seats need a female traveller (`400` otherwise). The
@@ -149,7 +149,7 @@ as for flights; booking details carry a `bus` object instead of `flights`.
 | Method | Path                                   | Permission         | Description                                                        |
 | ------ | -------------------------------------- | ------------------ | ------------------------------------------------------------------ |
 | GET    | `/api/bookings`                        | `booking:read:own` | The signed-in user's bookings, newest first                        |
-| GET    | `/api/bookings/{reference}`            | `booking:read:own` | Details. Other users' bookings are `404` unless `booking:read:any` |
+| GET    | `/api/bookings/{reference}`            | `booking:read:own` | Details. Other users' bookings are `403` unless `booking:read:any` |
 | GET    | `/api/bookings/{reference}/ticket.pdf` | `booking:read:own` | E-ticket PDF; `409` until the booking is confirmed                 |
 
 ### Payments
