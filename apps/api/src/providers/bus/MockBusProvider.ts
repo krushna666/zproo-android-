@@ -70,13 +70,14 @@ export class MockBusProvider implements BusProvider {
 
   async hold(tripId: string, seatNumbers: string[], bookingId: string, db: Db) {
     const found = await this.load(tripId, db);
-    if (!found)
-      throw new SeatUnavailableError('This bus is no longer available. Please choose another.');
+    if (!found) throw new SeatUnavailableError(seatNumbers);
     const byNumber = new Map(found.schedule.bus.seats.map((s) => [s.number, s]));
     const chosen = seatNumbers.map((n) => byNumber.get(n));
-    if (chosen.some((s) => !s || this.presold(found.schedule.id, found.date, s.number))) {
-      throw new SeatUnavailableError();
-    }
+    const taken = seatNumbers.filter((_, i) => {
+      const seat = chosen[i];
+      return !seat || this.presold(found.schedule.id, found.date, seat.number);
+    });
+    if (taken.length > 0) throw new SeatUnavailableError(taken);
     const repo = new BusRepository(db);
     const localTripId = await repo.ensureTrip(found.schedule.id, dateOnly(found.date));
     const ok = await repo.takeSeats(
@@ -84,7 +85,7 @@ export class MockBusProvider implements BusProvider {
       chosen.map((s) => (s as { id: string }).id),
       bookingId,
     );
-    if (!ok) throw new SeatUnavailableError();
+    if (!ok) throw new SeatUnavailableError(seatNumbers);
     return { localTripId };
   }
 

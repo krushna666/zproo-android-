@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
-import { ErrorCode, type FieldIssue } from '@zproo/types';
+import { ErrorCode, type ErrorDetails } from '@zproo/types';
 import type { ErrorRequestHandler } from 'express';
 import { ZodError } from 'zod';
-import { AppError } from '../utils/errors';
+import { AppError, RateLimitError, fieldMap } from '../utils/errors';
 import { buildFailure } from '../utils/response';
 import { zodIssues } from '../utils/zod';
 
@@ -10,7 +10,7 @@ interface Failure {
   status: number;
   errorCode: ErrorCode;
   message: string;
-  details?: FieldIssue[] | undefined;
+  details?: ErrorDetails | undefined;
 }
 
 function isBodyParserError(err: unknown): err is { type: string; status: number } {
@@ -28,11 +28,12 @@ export function toFailure(err: unknown): Failure {
     };
   }
   if (err instanceof ZodError) {
+    const issues = zodIssues(err);
     return {
       status: 400,
       errorCode: ErrorCode.VALIDATION_ERROR,
-      message: 'Validation failed',
-      details: zodIssues(err),
+      message: 'Please fix the errors',
+      details: { fields: fieldMap(issues), issues },
     };
   }
   if (isBodyParserError(err)) {
@@ -59,9 +60,17 @@ export function toFailure(err: unknown): Failure {
     };
   }
   if (err instanceof Prisma.PrismaClientInitializationError) {
-    return { status: 503, errorCode: ErrorCode.DATABASE_ERROR, message: 'Database unavailable' };
+    return {
+      status: 503,
+      errorCode: ErrorCode.SERVICE_UNAVAILABLE,
+      message: 'ZPROO GO is having trouble right now. Please try again in a moment.',
+    };
   }
-  return { status: 500, errorCode: ErrorCode.INTERNAL_ERROR, message: 'Something went wrong' };
+  return {
+    status: 500,
+    errorCode: ErrorCode.INTERNAL_ERROR,
+    message: 'Something went wrong. Please try again.',
+  };
 }
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
@@ -70,6 +79,8 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   else req.log.debug({ errorCode: failure.errorCode }, failure.message);
 
   if (res.headersSent) return next(err);
+  if (err instanceof RateLimitError && err.retryAfterSeconds !== undefined)
+    res.setHeader('Retry-After', String(err.retryAfterSeconds));
   res.status(failure.status).json(
     buildFailure(failure.message, failure.errorCode, {
       details: failure.details,

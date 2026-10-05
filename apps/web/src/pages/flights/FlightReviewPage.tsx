@@ -57,10 +57,7 @@ function Review() {
     },
     onError: (err) => {
       if (err instanceof ApiClientError && err.errorCode === 'PRICE_CHANGED') void refetch();
-      if (
-        err instanceof ApiClientError &&
-        (err.errorCode === 'SOLD_OUT' || err.errorCode === 'OFFER_EXPIRED')
-      ) {
+      if (err instanceof ApiClientError && err.errorCode === 'FARE_UNAVAILABLE') {
         setUnavailable(true);
       }
     },

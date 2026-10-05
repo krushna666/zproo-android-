@@ -4,6 +4,7 @@ import { randomInt } from './random';
 import {
   currentUser,
   db,
+  holdExpired,
   notFound,
   randomDigits,
   randomId,
@@ -194,9 +195,7 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
     if (payment.status === 'SUCCESS')
       return { data: { reference: d.reference, status: 'SUCCESS' } };
     if (d.status !== 'PENDING_PAYMENT') {
-      throw new StaticError(
-        409,
-        'BOOKING_EXPIRED',
+      throw holdExpired(
         'Your seat hold expired before payment completed. Any amount debited will be refunded.',
       );
     }

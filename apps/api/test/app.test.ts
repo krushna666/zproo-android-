@@ -5,13 +5,11 @@ import { buildTestApp } from './helpers';
 describe('error handling', () => {
   it('returns the 404 envelope for unknown routes', async () => {
     const res = await request(buildTestApp()).get('/api/does-not-exist').expect(404);
-    expect(res.body).toMatchObject({
-      success: false,
+    expect(res.body.error).toMatchObject({
       message: 'Route GET /api/does-not-exist not found',
-      errorCode: 'NOT_FOUND',
-      data: null,
+      code: 'NOT_FOUND',
     });
-    expect(res.body.requestId).toBe(res.headers['x-request-id']);
+    expect(res.body.error.requestId).toBe(res.headers['x-request-id']);
   });
 
   it('rejects malformed JSON with 400 BAD_REQUEST', async () => {
@@ -20,9 +18,8 @@ describe('error handling', () => {
       .set('Content-Type', 'application/json')
       .send('{"broken":')
       .expect(400);
-    expect(res.body).toMatchObject({
-      success: false,
-      errorCode: 'BAD_REQUEST',
+    expect(res.body.error).toMatchObject({
+      code: 'BAD_REQUEST',
       message: 'Malformed JSON body',
     });
   });
@@ -33,7 +30,7 @@ describe('error handling', () => {
       .set('Content-Type', 'application/json')
       .send(JSON.stringify({ blob: 'x'.repeat(200 * 1024) }))
       .expect(413);
-    expect(res.body.errorCode).toBe('PAYLOAD_TOO_LARGE');
+    expect(res.body.error.code).toBe('PAYLOAD_TOO_LARGE');
   });
 });
 
@@ -88,7 +85,7 @@ describe('security', () => {
     await request(app).get('/api/nope').expect(404);
     await request(app).get('/api/nope').expect(404);
     const res = await request(app).get('/api/nope').expect(429);
-    expect(res.body).toMatchObject({ success: false, errorCode: 'RATE_LIMITED' });
+    expect(res.body.error).toMatchObject({ code: 'RATE_LIMITED' });
     expect(res.headers['ratelimit-policy']).toBeDefined();
   });
 

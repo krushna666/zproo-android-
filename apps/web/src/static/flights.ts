@@ -31,6 +31,9 @@ import { activeHolds, newBooking } from './bookings';
 import {
   currentUser,
   db,
+  fareUnavailable,
+  invalid,
+  priceChanged,
   parse,
   save,
   StaticError,
@@ -228,46 +231,24 @@ export function flightRoutes(req: StaticRequest): StaticResult | null {
     const count = (t: string) => input.passengers.filter((p) => p.type === t).length;
     const pax = { adults: count('ADULT'), children: count('CHILD'), infants: count('INFANT') };
     if (pax.adults < 1) {
-      throw new StaticError(400, 'VALIDATION_ERROR', 'Validation failed', [
-        { path: 'body.passengers', message: 'At least one adult must travel' },
-      ]);
+      throw invalid([{ path: 'body.passengers', message: 'At least one adult must travel' }]);
     }
     const offers = input.offerIds.map((id) => getOffer(id, pax));
-    if (offers.some((o) => !o)) {
-      throw new StaticError(
-        409,
-        'OFFER_EXPIRED',
-        'This fare is no longer available. Please search again.',
-      );
-    }
+    if (offers.some((o) => !o)) throw fareUnavailable();
     const list = offers as FlightOffer[];
     const first = list[0] as FlightOffer;
     const travelDate = localDate(new Date(first.departureAt), first.from.timezone);
     const ages = passengerAgeIssues(input.passengers, travelDate);
     if (ages.length > 0) {
-      throw new StaticError(
-        400,
-        'VALIDATION_ERROR',
-        'Validation failed',
+      throw invalid(
         ages.map((i) => ({ path: `body.passengers.${i.index}.dateOfBirth`, message: i.message })),
       );
     }
     const price = flightPriceBreakdown(list, pax);
-    if (price.totalPaise !== input.expectedTotalPaise) {
-      throw new StaticError(
-        409,
-        'PRICE_CHANGED',
-        'The fare has changed since you selected it. Please review the new price.',
-      );
-    }
+    if (price.totalPaise !== input.expectedTotalPaise)
+      throw priceChanged(input.expectedTotalPaise, price.totalPaise);
     const seats = pax.adults + pax.children;
-    if (list.some((o) => o.seatsLeft < seats)) {
-      throw new StaticError(
-        409,
-        'SOLD_OUT',
-        'Sorry, these seats just sold out. Please choose another flight.',
-      );
-    }
+    if (list.some((o) => o.seatsLeft < seats)) throw fareUnavailable();
     const now = new Date();
     const details = newBooking({
       reference: generateBookingReference(now),
@@ -321,7 +302,7 @@ export function flightRoutes(req: StaticRequest): StaticResult | null {
 export function idempotencyKey(req: StaticRequest): string {
   const key = req.headers['idempotency-key'] ?? '';
   if (key.length < 8) {
-    throw new StaticError(400, 'VALIDATION_ERROR', 'Validation failed', [
+    throw invalid([
       {
         path: 'headers.idempotency-key',
         message: 'Send a unique Idempotency-Key header (e.g. a UUID)',

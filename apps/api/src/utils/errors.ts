@@ -1,4 +1,4 @@
-import { ErrorCode, type FieldIssue } from '@zproo/types';
+import { ErrorCode, type CouponRejection, type ErrorDetails, type FieldIssue } from '@zproo/types';
 import { formatMoney } from '@zproo/utils';
 
 /** Base class for errors whose message is safe to show to API clients. */
@@ -7,7 +7,7 @@ export class AppError extends Error {
     message: string,
     readonly statusCode: number,
     readonly errorCode: ErrorCode,
-    readonly details?: FieldIssue[],
+    readonly details?: ErrorDetails,
   ) {
     super(message);
     this.name = new.target.name;
@@ -20,9 +20,25 @@ export class BadRequestError extends AppError {
   }
 }
 
+/**
+ * Field paths in `details.fields` drop the request part (`body.`, `query.`, `params.`), so they
+ * match the form field names the web app uses. The first message per field wins.
+ */
+export function fieldMap(issues: FieldIssue[]): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const issue of issues) {
+    const key = issue.path.replace(/^(body|query|params|headers)\.?/, '') || '_';
+    fields[key] ??= issue.message;
+  }
+  return fields;
+}
+
 export class ValidationError extends AppError {
-  constructor(details: FieldIssue[], message = 'Validation failed') {
-    super(message, 400, ErrorCode.VALIDATION_ERROR, details);
+  constructor(
+    readonly issues: FieldIssue[],
+    message = 'Please fix the errors',
+  ) {
+    super(message, 400, ErrorCode.VALIDATION_ERROR, { fields: fieldMap(issues), issues });
   }
 }
 
@@ -62,45 +78,83 @@ export class ProviderNotConfiguredError extends AppError {
   }
 }
 
+/** Seat list in a sentence: "L4", "L4 and L5", "L4, L5 and L6". */
+function seatList(seats: string[]): string {
+  if (seats.length <= 1) return seats[0] ?? '';
+  return `${seats.slice(0, -1).join(', ')} and ${seats.at(-1) ?? ''}`;
+}
+
 export class SeatUnavailableError extends AppError {
-  constructor(
-    message = 'Some of the seats you chose were just booked by someone else. Please pick other seats.',
-  ) {
-    super(message, 409, ErrorCode.SEAT_UNAVAILABLE);
-  }
-}
-
-export class SoldOutError extends AppError {
-  constructor(message = 'Sorry, these seats just sold out. Please choose another flight.') {
-    super(message, 409, ErrorCode.SOLD_OUT);
-  }
-}
-
-export class OfferExpiredError extends AppError {
-  constructor(message = 'This fare is no longer available. Please search again.') {
-    super(message, 409, ErrorCode.OFFER_EXPIRED);
-  }
-}
-
-export class PriceChangedError extends AppError {
-  constructor(readonly newTotalPaise: number) {
+  constructor(readonly seats: string[] = []) {
     super(
-      'The fare has changed since you selected it. Please review the new price.',
+      seats.length > 0
+        ? `Seat ${seatList(seats)} was just booked by someone else. Please choose another seat.`
+        : 'These seats were just booked by someone else. Please choose other seats.',
       409,
-      ErrorCode.PRICE_CHANGED,
-      [
-        {
-          path: 'body.expectedTotalPaise',
-          message: `The new total is ${formatMoney(newTotalPaise)}`,
-        },
-      ],
+      ErrorCode.SEAT_UNAVAILABLE,
+      { seats },
     );
   }
 }
 
-export class BookingExpiredError extends AppError {
-  constructor(message = 'Your seat hold has expired. Please search again.') {
-    super(message, 409, ErrorCode.BOOKING_EXPIRED);
+export class RoomUnavailableError extends AppError {
+  constructor(roomTypeId?: string) {
+    super(
+      'This room just sold out. Please choose another room.',
+      409,
+      ErrorCode.ROOM_UNAVAILABLE,
+      roomTypeId ? { roomTypeId } : undefined,
+    );
+  }
+}
+
+export class FareUnavailableError extends AppError {
+  constructor(message = 'This fare is no longer available. Please choose another flight or fare.') {
+    super(message, 409, ErrorCode.FARE_UNAVAILABLE);
+  }
+}
+
+export class PriceChangedError extends AppError {
+  constructor(
+    readonly oldTotalPaise: number,
+    readonly newTotalPaise: number,
+  ) {
+    super(
+      `The fare changed from ${formatMoney(oldTotalPaise)} to ${formatMoney(newTotalPaise)}.`,
+      409,
+      ErrorCode.PRICE_CHANGED,
+      { oldTotal: oldTotalPaise, newTotal: newTotalPaise },
+    );
+  }
+}
+
+export class HoldExpiredError extends AppError {
+  constructor(message = 'Your hold has expired. Please start again.') {
+    super(message, 410, ErrorCode.HOLD_EXPIRED);
+  }
+}
+
+export class BookingClosedError extends AppError {
+  constructor(message = 'Booking for this bus has closed') {
+    super(message, 409, ErrorCode.BOOKING_CLOSED);
+  }
+}
+
+export class CouponInvalidError extends AppError {
+  constructor(readonly reason: CouponRejection) {
+    super("This coupon can't be used for this booking.", 422, ErrorCode.COUPON_INVALID, {
+      reason,
+    });
+  }
+}
+
+export class IdempotencyConflictError extends AppError {
+  constructor() {
+    super(
+      'This Idempotency-Key was already used for a different request.',
+      409,
+      ErrorCode.IDEMPOTENCY_CONFLICT,
+    );
   }
 }
 
@@ -129,8 +183,16 @@ export class ConflictError extends AppError {
 }
 
 export class RateLimitError extends AppError {
-  constructor(message = 'Too many requests, please try again later') {
-    super(message, 429, ErrorCode.RATE_LIMITED);
+  constructor(
+    message = 'Too many requests, please try again later',
+    readonly retryAfterSeconds?: number,
+  ) {
+    super(
+      message,
+      429,
+      ErrorCode.RATE_LIMITED,
+      retryAfterSeconds === undefined ? undefined : { retryAfter: retryAfterSeconds },
+    );
   }
 }
 
@@ -142,7 +204,7 @@ export class PaymentError extends AppError {
 
 export class ProviderError extends AppError {
   constructor(
-    message = 'An upstream provider is unavailable',
+    message = "We couldn't reach the operator right now. Please try again.",
     readonly provider?: string,
   ) {
     super(message, 502, ErrorCode.PROVIDER_ERROR);
@@ -150,7 +212,7 @@ export class ProviderError extends AppError {
 }
 
 export class ServiceUnavailableError extends AppError {
-  constructor(message = 'Service temporarily unavailable') {
+  constructor(message = 'ZPROO GO is having trouble right now. Please try again in a moment.') {
     super(message, 503, ErrorCode.SERVICE_UNAVAILABLE);
   }
 }

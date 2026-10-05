@@ -105,8 +105,8 @@ describe('mobile OTP sign-up', () => {
       .post('/api/auth/verify-otp')
       .send({ phone, otp: wrong })
       .expect(400);
-    expect(res.body).toMatchObject({
-      errorCode: 'INVALID_OTP',
+    expect(res.body.error).toMatchObject({
+      code: 'INVALID_OTP',
       message: 'Incorrect code. 4 attempts left.',
     });
   });
@@ -124,8 +124,8 @@ describe('mobile OTP sign-up', () => {
       .post('/api/auth/verify-otp')
       .send({ phone, otp: code })
       .expect(400);
-    expect(res.body).toMatchObject({
-      errorCode: 'OTP_EXPIRED',
+    expect(res.body.error).toMatchObject({
+      code: 'OTP_EXPIRED',
       message: 'Too many incorrect attempts. Request a new code.',
     });
   });
@@ -140,7 +140,7 @@ describe('mobile OTP sign-up', () => {
       .post('/api/auth/verify-otp')
       .send({ phone, otp })
       .expect(400);
-    expect(res.body.errorCode).toBe('OTP_EXPIRED');
+    expect(res.body.error.code).toBe('OTP_EXPIRED');
   });
 
   it('only accepts the most recent code', async () => {
@@ -168,8 +168,8 @@ describe('mobile OTP sign-up', () => {
       .post('/api/auth/verify-otp')
       .send({ phone, otp: ctx.sms.lastCodeFor(phone) })
       .expect(400);
-    expect(res.body).toMatchObject({
-      errorCode: 'OTP_EXPIRED',
+    expect(res.body.error).toMatchObject({
+      code: 'OTP_EXPIRED',
       message: 'This code has expired. Request a new one.',
     });
   });
@@ -188,8 +188,8 @@ describe('mobile OTP sign-up', () => {
     const phone = uniquePhone();
     await request(ctx.app).post('/api/auth/send-otp').send({ phone }).expect(200);
     const res = await request(ctx.app).post('/api/auth/send-otp').send({ phone }).expect(429);
-    expect(res.body).toMatchObject({
-      errorCode: 'RATE_LIMITED',
+    expect(res.body.error).toMatchObject({
+      code: 'RATE_LIMITED',
       message: 'Please wait a minute before requesting another code.',
     });
     expect(ctx.sms.sent).toHaveLength(1);
@@ -203,7 +203,7 @@ describe('mobile OTP sign-up', () => {
       .post('/api/auth/send-otp')
       .send({ phone: '12345' })
       .expect(400);
-    expect(res.body.details).toEqual([
+    expect(res.body.error.details.issues).toEqual([
       { path: 'body.phone', message: 'Enter a valid 10-digit mobile number' },
     ]);
   });
@@ -230,7 +230,7 @@ describe('POST /api/auth/register', () => {
       .post('/api/auth/register')
       .send({ signupToken: 'x'.repeat(40), fullName: 'Amit Sharma' })
       .expect(401);
-    expect(res.body.errorCode).toBe('UNAUTHENTICATED');
+    expect(res.body.error.code).toBe('UNAUTHENTICATED');
   });
 
   it('cannot register the same number twice with one token', async () => {
@@ -243,7 +243,7 @@ describe('POST /api/auth/register', () => {
     const body = { signupToken: verify.body.data.signupToken, fullName: 'Amit Sharma' };
     await request(ctx.app).post('/api/auth/register').send(body).expect(201);
     const res = await request(ctx.app).post('/api/auth/register').send(body).expect(409);
-    expect(res.body.message).toBe('This mobile number is already registered. Please log in.');
+    expect(res.body.error.message).toBe('This mobile number is already registered. Please log in.');
   });
 
   it('rejects an email that belongs to another account', async () => {
@@ -262,7 +262,7 @@ describe('POST /api/auth/register', () => {
         email: 'TAKEN@example.com',
       })
       .expect(409);
-    expect(res.body.message).toBe('This email is already linked to another account.');
+    expect(res.body.error.message).toBe('This email is already linked to another account.');
   });
 
   it('hashes passwords with argon2id', async () => {

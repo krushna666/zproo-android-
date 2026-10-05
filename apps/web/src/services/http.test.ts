@@ -17,22 +17,25 @@ describe('toApiClientError', () => {
   it('maps the API error envelope', () => {
     const error = toApiClientError(
       axiosErrorWith(400, {
-        success: false,
-        message: 'Validation failed',
-        errorCode: 'VALIDATION_ERROR',
-        data: null,
-        details: [{ path: 'body.phone', message: 'Enter a valid 10-digit mobile number' }],
-        requestId: 'req-12345678',
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Please fix the errors',
+          requestId: 'req-12345678',
+          details: {
+            fields: { phone: 'Enter a valid 10-digit mobile number' },
+            issues: [{ path: 'body.phone', message: 'Enter a valid 10-digit mobile number' }],
+          },
+        },
       }),
     );
     expect(error).toBeInstanceOf(ApiClientError);
     expect(error).toMatchObject({
       status: 400,
       errorCode: 'VALIDATION_ERROR',
-      message: 'Validation failed',
+      message: 'Please fix the errors',
       requestId: 'req-12345678',
     });
-    expect(error.details).toHaveLength(1);
+    expect(error.fieldErrors).toEqual({ phone: 'Enter a valid 10-digit mobile number' });
   });
 
   it('maps network failures', () => {
@@ -51,7 +54,21 @@ describe('toApiClientError', () => {
     expect(error).toMatchObject({
       status: 502,
       errorCode: 'INTERNAL_ERROR',
-      message: 'Something went wrong',
+      message: 'Something went wrong. Please try again.',
     });
+  });
+
+  it('reads Retry-After on 429', () => {
+    const config = { headers: new AxiosHeaders() };
+    const error = toApiClientError(
+      new AxiosError('limited', 'ERR_BAD_REQUEST', config, null, {
+        status: 429,
+        statusText: '',
+        headers: { 'retry-after': '37' },
+        config,
+        data: { error: { code: 'RATE_LIMITED', message: 'Too many requests' } },
+      }),
+    );
+    expect(error).toMatchObject({ errorCode: 'RATE_LIMITED', retryAfter: 37 });
   });
 });

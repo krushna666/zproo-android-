@@ -34,7 +34,7 @@ function mockServer(handler: Handler) {
 
 const unauthenticated = {
   status: 401,
-  data: { success: false, message: 'Please sign in', errorCode: 'UNAUTHENTICATED', data: null },
+  data: { error: { code: 'UNAUTHENTICATED', message: 'Please sign in' } },
 };
 const ok = (data: unknown) => ({ status: 200, data: { success: true, message: 'Success', data } });
 

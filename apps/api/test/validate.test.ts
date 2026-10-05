@@ -49,8 +49,8 @@ describe('validate middleware', () => {
       .post('/items/a?limit=1000')
       .send({ phone: '123' })
       .expect(400);
-    expect(res.body.errorCode).toBe('VALIDATION_ERROR');
-    expect(res.body.details.map((d: { path: string }) => d.path)).toEqual([
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(res.body.error.details.issues.map((d: { path: string }) => d.path)).toEqual([
       'params.id',
       'query.limit',
       'body.phone',

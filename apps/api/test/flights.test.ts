@@ -128,8 +128,8 @@ describe('GET /api/flights/search', () => {
       .get('/api/flights/search')
       .query({ from: 'PNQ', to: 'PNQ', date: daysAhead(20) })
       .expect(400);
-    expect(res.body.errorCode).toBe('VALIDATION_ERROR');
-    expect(res.body.details).toEqual(
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(res.body.error.details.issues).toEqual(
       expect.arrayContaining([expect.objectContaining({ path: 'query.legs.0.to' })]),
     );
   });
@@ -155,7 +155,7 @@ describe('GET /api/flights/:offerId', () => {
     const res = await request(createTestContext().app)
       .get('/api/flights/mk_nope_20300101_E')
       .expect(404);
-    expect(res.body.success).toBe(false);
+    expect(res.body.error.code).toBe('NOT_FOUND');
   });
 });
 
@@ -170,7 +170,7 @@ describe('POST /api/flights/book', () => {
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ offerIds: [offer?.id] })
       .expect(400);
-    expect(res.body.details).toEqual([
+    expect(res.body.error.details.issues).toEqual([
       expect.objectContaining({ path: 'headers.idempotency-key' }),
     ]);
   });
@@ -225,11 +225,10 @@ describe('POST /api/flights/book', () => {
     const res = await book(ctx, accessToken, offer, {
       expectedTotalPaise: offer.totalPaise - 100,
     }).expect(409);
-    expect(res.body).toMatchObject({
-      errorCode: 'PRICE_CHANGED',
-      details: [
-        { path: 'body.expectedTotalPaise', message: expect.stringMatching(/^The new total is ₹/) },
-      ],
+    expect(res.body.error).toMatchObject({
+      code: 'PRICE_CHANGED',
+      message: expect.stringMatching(/^The fare changed from ₹[\d,]+ to ₹[\d,]+\.$/),
+      details: { oldTotal: offer.totalPaise - 100, newTotal: offer.totalPaise },
     });
     expect(await prisma.booking.count()).toBe(0);
   });
@@ -240,7 +239,7 @@ describe('POST /api/flights/book', () => {
     const [offer] = await searchOffers(ctx);
     if (!offer) throw new Error('No offers');
     const res = await book(ctx, accessToken, { ...offer, id: 'mk_missing_20300101_E' }).expect(409);
-    expect(res.body.errorCode).toBe('OFFER_EXPIRED');
+    expect(res.body.error.code).toBe('FARE_UNAVAILABLE');
   });
 
   it('checks passenger ages against the travel date', async () => {
@@ -257,7 +256,7 @@ describe('POST /api/flights/book', () => {
       dateOfBirth: '1990-01-01',
     };
     const res = await book(ctx, accessToken, offer, { passengers: [adult, child] }).expect(400);
-    expect(res.body.details).toEqual([
+    expect(res.body.error.details.issues).toEqual([
       {
         path: 'body.passengers.1.dateOfBirth',
         message: 'On the travel date this passenger is an adult (12+)',
@@ -279,7 +278,7 @@ describe('POST /api/flights/book', () => {
     const users = await Promise.all([signUp(ctx), signUp(ctx), signUp(ctx)]);
     const results = await Promise.all(users.map((u) => book(ctx, u.accessToken, offer)));
     expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409]);
-    expect(results.find((r) => r.status === 409)?.body.errorCode).toBe('SOLD_OUT');
+    expect(results.find((r) => r.status === 409)?.body.error.code).toBe('FARE_UNAVAILABLE');
     expect((await prisma.flightInventory.findFirstOrThrow()).sold).toBe(10);
   });
 });
@@ -360,7 +359,7 @@ describe('payments', () => {
         signature: 'a'.repeat(64),
       })
       .expect(402);
-    expect(res.body.errorCode).toBe('PAYMENT_ERROR');
+    expect(res.body.error.code).toBe('PAYMENT_ERROR');
     expect((await prisma.booking.findFirstOrThrow()).status).toBe('PENDING_PAYMENT');
     expect(await prisma.auditLog.count({ where: { action: 'PAYMENT_SIGNATURE_INVALID' } })).toBe(1);
   });
@@ -390,8 +389,8 @@ describe('payments', () => {
       .post('/api/payments/mock/complete')
       .set('Authorization', `Bearer ${user.accessToken}`)
       .send({ paymentId: order.body.data.paymentId, outcome: 'success' })
-      .expect(409);
-    expect(res.body.errorCode).toBe('BOOKING_EXPIRED');
+      .expect(410);
+    expect(res.body.error.code).toBe('HOLD_EXPIRED');
     expect(await prisma.payment.findFirstOrThrow()).toMatchObject({
       status: 'FAILED',
       failureReason: expect.stringMatching(/refund due/),
@@ -400,7 +399,7 @@ describe('payments', () => {
       .post('/api/payments/create')
       .set('Authorization', `Bearer ${user.accessToken}`)
       .send({ bookingReference: reference })
-      .expect(409);
+      .expect(410);
   });
 
   it('cancels expired holds and returns their seats', async () => {

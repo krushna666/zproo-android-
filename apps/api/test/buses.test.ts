@@ -121,7 +121,7 @@ describe('GET /api/buses/search', () => {
       .get('/api/buses/search')
       .query({ from: 'pune', to: 'pune' })
       .expect(400);
-    expect(same.body.details).toEqual(
+    expect(same.body.error.details.issues).toEqual(
       expect.arrayContaining([expect.objectContaining({ path: 'query.to' })]),
     );
     await request(ctx.app)
@@ -169,7 +169,7 @@ describe('POST /api/buses/book', () => {
       .set('Authorization', `Bearer ${accessToken}`)
       .send({})
       .expect(400);
-    expect(res.body.details).toEqual([
+    expect(res.body.error.details.issues).toEqual([
       expect.objectContaining({ path: 'headers.idempotency-key' }),
     ]);
   });
@@ -224,7 +224,7 @@ describe('POST /api/buses/book', () => {
     const users = await Promise.all([signUp(ctx), signUp(ctx), signUp(ctx)]);
     const results = await Promise.all(users.map((u) => book(ctx, u.accessToken, trip, seats)));
     expect(results.map((r) => r.status).sort()).toEqual([201, 409, 409]);
-    expect(results.find((r) => r.status === 409)?.body.errorCode).toBe('SEAT_UNAVAILABLE');
+    expect(results.find((r) => r.status === 409)?.body.error.code).toBe('SEAT_UNAVAILABLE');
     expect(await prisma.busSeatBooking.count()).toBe(1);
   });
 
@@ -237,7 +237,7 @@ describe('POST /api/buses/book', () => {
       const male = await book(ctx, accessToken, trip, [seat], {
         passengers: [traveller(seat, 0)],
       }).expect(400);
-      expect(male.body.details).toEqual([
+      expect(male.body.error.details.issues).toEqual([
         { path: 'body.passengers.0.gender', message: `Seat ${seat.number} is reserved for women` },
       ]);
       await book(ctx, accessToken, trip, [seat], {
@@ -256,11 +256,11 @@ describe('POST /api/buses/book', () => {
     const price = await book(ctx, accessToken, trip, seats, {
       expectedTotalPaise: seat.pricePaise - 100,
     }).expect(409);
-    expect(price.body.errorCode).toBe('PRICE_CHANGED');
+    expect(price.body.error.code).toBe('PRICE_CHANGED');
     const point = await book(ctx, accessToken, trip, seats, { boardingPointId: 'nope' }).expect(
       400,
     );
-    expect(point.body.details).toEqual([
+    expect(point.body.error.details.issues).toEqual([
       { path: 'body.boardingPointId', message: 'Choose a boarding point' },
     ]);
     await book(ctx, accessToken, trip, seats, {

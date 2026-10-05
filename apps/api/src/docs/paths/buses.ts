@@ -161,6 +161,6 @@ registry.registerPath({
     201: { description: 'Booking created (see BookingDetails)' },
     400: error('Invalid travellers, seats or points, or missing Idempotency-Key'),
     401: error('Not signed in'),
-    409: error('OFFER_EXPIRED, PRICE_CHANGED or SEAT_UNAVAILABLE'),
+    409: error('PRICE_CHANGED or SEAT_UNAVAILABLE'),
   },
 });

@@ -7,8 +7,8 @@ beforeEach(resetUsers);
 describe('/api/me', () => {
   it('requires sign-in', async () => {
     const res = await request(createTestContext().app).get('/api/me').expect(401);
-    expect(res.body).toMatchObject({
-      errorCode: 'UNAUTHENTICATED',
+    expect(res.body.error).toMatchObject({
+      code: 'UNAUTHENTICATED',
       message: 'Please sign in to continue',
     });
   });

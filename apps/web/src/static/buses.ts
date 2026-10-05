@@ -33,6 +33,9 @@ import { activeHolds, newBooking } from './bookings';
 import {
   currentUser,
   db,
+  invalid,
+  priceChanged,
+  seatUnavailable,
   parse,
   save,
   StaticError,
@@ -235,7 +238,7 @@ export function busRoutes(req: StaticRequest): StaticResult | null {
     const found = load(input.tripId);
     const trip = found && buildTrip(found.schedule, found.date);
     const map = trip && seatMap(input.tripId);
-    if (!found || !trip || !map) throw new StaticError(409, 'OFFER_EXPIRED', GONE);
+    if (!found || !trip || !map) throw new StaticError(404, 'NOT_FOUND', GONE);
 
     const boarding = trip.boardingPoints.find((p) => p.id === input.boardingPointId);
     const dropping = trip.droppingPoints.find((p) => p.id === input.droppingPointId);
@@ -260,25 +263,14 @@ export function busRoutes(req: StaticRequest): StaticResult | null {
       }
       return seat;
     });
-    if (issues.length > 0)
-      throw new StaticError(400, 'VALIDATION_ERROR', 'Validation failed', issues);
-    if (seats.some((x) => !x?.available)) {
-      throw new StaticError(
-        409,
-        'SEAT_UNAVAILABLE',
-        'Some of the seats you chose were just booked by someone else. Please pick other seats.',
-      );
-    }
+    if (issues.length > 0) throw invalid(issues);
+    const taken = input.passengers.filter((_, i) => !seats[i]?.available).map((p) => p.seatNumber);
+    if (taken.length > 0) throw seatUnavailable(taken);
     const basePaise = seats.reduce((sum, x) => sum + (x?.basePaise ?? 0), 0);
     const taxPaise = seats.reduce((sum, x) => sum + (x?.taxPaise ?? 0), 0);
     const totalPaise = basePaise + taxPaise;
-    if (totalPaise !== input.expectedTotalPaise) {
-      throw new StaticError(
-        409,
-        'PRICE_CHANGED',
-        'The fare has changed since you selected it. Please review the new price.',
-      );
-    }
+    if (totalPaise !== input.expectedTotalPaise)
+      throw priceChanged(input.expectedTotalPaise, totalPaise);
     const n = seats.length;
     const seatNumbers = input.passengers.map((p) => p.seatNumber);
     const details = newBooking({

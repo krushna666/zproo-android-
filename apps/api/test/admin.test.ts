@@ -30,7 +30,7 @@ describe('admin authorization', () => {
       .get('/api/admin/users')
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(403);
-    expect(res.body).toMatchObject({ errorCode: 'FORBIDDEN' });
+    expect(res.body.error).toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it('forbids staff without the specific permission', async () => {

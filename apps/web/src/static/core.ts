@@ -1,12 +1,14 @@
 import type {
   BookingDetails,
   ErrorCode,
+  ErrorDetails,
   FieldIssue,
   Permission,
   PublicUser,
   RoleName,
 } from '@zproo/types';
 import { ROLE_PERMISSIONS } from '@zproo/types';
+import { formatMoney } from '@zproo/utils';
 import type { z } from 'zod';
 
 /**
@@ -15,15 +17,56 @@ import type { z } from 'zod';
  */
 
 export class StaticError extends Error {
+  readonly details: ErrorDetails | undefined;
+  /** `details` may be validation issues (mapped to `fields` + `issues`, as the API does). */
   constructor(
     readonly status: number,
     readonly errorCode: ErrorCode,
     message: string,
-    readonly details?: FieldIssue[],
+    details?: FieldIssue[] | ErrorDetails,
   ) {
     super(message);
+    this.details = Array.isArray(details) ? validationDetails(details) : details;
   }
 }
+
+function validationDetails(issues: FieldIssue[]): ErrorDetails {
+  const fields: Record<string, string> = {};
+  for (const issue of issues) {
+    const key = issue.path.replace(/^(body|query|params|headers)\.?/, '') || '_';
+    fields[key] ??= issue.message;
+  }
+  return { fields, issues };
+}
+
+export const invalid = (issues: FieldIssue[]) =>
+  new StaticError(400, 'VALIDATION_ERROR', 'Please fix the errors', issues);
+
+export const priceChanged = (oldTotal: number, newTotal: number) =>
+  new StaticError(
+    409,
+    'PRICE_CHANGED',
+    `The fare changed from ${formatMoney(oldTotal)} to ${formatMoney(newTotal)}.`,
+    { oldTotal, newTotal },
+  );
+
+export const seatUnavailable = (seats: string[]) =>
+  new StaticError(
+    409,
+    'SEAT_UNAVAILABLE',
+    `Seat ${seats.length <= 1 ? (seats[0] ?? '') : `${seats.slice(0, -1).join(', ')} and ${seats.at(-1) ?? ''}`} was just booked by someone else. Please choose another seat.`,
+    { seats },
+  );
+
+export const fareUnavailable = () =>
+  new StaticError(
+    409,
+    'FARE_UNAVAILABLE',
+    'This fare is no longer available. Please choose another flight or fare.',
+  );
+
+export const holdExpired = (message = 'Your hold has expired. Please start again.') =>
+  new StaticError(410, 'HOLD_EXPIRED', message);
 
 export const notFound = (message = 'Not found') => new StaticError(404, 'NOT_FOUND', message);
 export const unauthenticated = () =>
@@ -48,10 +91,7 @@ export interface StaticResult {
 export function parse<S extends z.ZodType>(schema: S, input: unknown, prefix: string): z.output<S> {
   const result = schema.safeParse(input);
   if (!result.success) {
-    throw new StaticError(
-      400,
-      'VALIDATION_ERROR',
-      'Validation failed',
+    throw invalid(
       result.error.issues.map((i) => ({
         path: [prefix, ...i.path.map(String)].join('.'),
         message: i.message,

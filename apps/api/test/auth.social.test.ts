@@ -70,7 +70,7 @@ describe('social sign-in', () => {
       .post('/api/auth/social/google')
       .send({ idToken: 'forged-token-000000000000' })
       .expect(401);
-    expect(res.body.message).toBe('Could not verify your sign-in. Please try again.');
+    expect(res.body.error.message).toBe('Could not verify your sign-in. Please try again.');
   });
 
   it('reports providers that are not configured', async () => {
@@ -79,8 +79,8 @@ describe('social sign-in', () => {
       .post('/api/auth/social/apple')
       .send({ idToken: 'x'.repeat(30) })
       .expect(400);
-    expect(res.body).toMatchObject({
-      errorCode: 'PROVIDER_NOT_CONFIGURED',
+    expect(res.body.error).toMatchObject({
+      code: 'PROVIDER_NOT_CONFIGURED',
       message: 'Sign in with Apple is not available',
     });
     await request(ctx.app)

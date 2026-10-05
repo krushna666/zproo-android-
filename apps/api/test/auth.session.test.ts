@@ -33,7 +33,7 @@ describe('refresh token rotation', () => {
       .post('/api/auth/refresh')
       .set('Cookie', cookie)
       .expect(401);
-    expect(replay.body.message).toBe('Your session has ended. Please sign in again.');
+    expect(replay.body.error.message).toBe('Your session has ended. Please sign in again.');
     // … so the legitimate newer token is revoked too.
     await request(ctx.app)
       .post('/api/auth/refresh')
@@ -93,7 +93,7 @@ describe('refresh token rotation', () => {
     const { cookie, body } = await signUp(ctx);
     await prisma.user.update({ where: { id: body.data.user.id }, data: { status: 'SUSPENDED' } });
     const res = await request(ctx.app).post('/api/auth/refresh').set('Cookie', cookie).expect(403);
-    expect(res.body.errorCode).toBe('ACCOUNT_DISABLED');
+    expect(res.body.error.code).toBe('ACCOUNT_DISABLED');
     expect(await prisma.refreshToken.count({ where: { revokedAt: null } })).toBe(0);
   });
 });
@@ -153,7 +153,7 @@ describe('access tokens', () => {
         .get('/api/me')
         .set('Authorization', `Bearer ${bad}`)
         .expect(401);
-      expect(res.body.errorCode).toBe('UNAUTHENTICATED');
+      expect(res.body.error.code).toBe('UNAUTHENTICATED');
     }
   });
 

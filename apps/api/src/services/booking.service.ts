@@ -9,8 +9,8 @@ import type { FlightProvider } from '../providers/flight';
 import { BookingRepository, type BookingRecord } from '../repositories/booking.repository';
 import { PaymentRepository } from '../repositories/payment.repository';
 import {
+  FareUnavailableError,
   NotFoundError,
-  OfferExpiredError,
   PriceChangedError,
   SeatUnavailableError,
   ValidationError,
@@ -73,7 +73,7 @@ export class BookingService {
     const offers: FlightOffer[] = [];
     for (const id of input.offerIds) {
       const offer = await this.deps.flights.getOffer(id, pax);
-      if (!offer) throw new OfferExpiredError();
+      if (!offer) throw new FareUnavailableError();
       offers.push(offer);
     }
     this.checkItinerary(offers);
@@ -93,7 +93,7 @@ export class BookingService {
 
     const price = flightPriceBreakdown(offers, pax);
     if (price.totalPaise !== input.expectedTotalPaise)
-      throw new PriceChangedError(price.totalPaise);
+      throw new PriceChangedError(input.expectedTotalPaise, price.totalPaise);
 
     const seats = pax.adults + pax.children; // infants travel on a lap
     return this.createHeld(userId, 'FLIGHT', ctx, async (reference, tx) => {
@@ -162,7 +162,7 @@ export class BookingService {
     const unavailable = 'This bus is no longer available. Please choose another.';
     const trip = await this.deps.buses.getTrip(input.tripId);
     const seatMap = trip && (await this.deps.buses.seatMap(input.tripId));
-    if (!trip || !seatMap) throw new OfferExpiredError(unavailable);
+    if (!trip || !seatMap) throw new NotFoundError(unavailable);
 
     const boarding = trip.boardingPoints.find((p) => p.id === input.boardingPointId);
     const dropping = trip.droppingPoints.find((p) => p.id === input.droppingPointId);
@@ -189,12 +189,14 @@ export class BookingService {
       return seat;
     });
     if (issues.length > 0) throw new ValidationError(issues);
-    if (seats.some((s) => !s?.available)) throw new SeatUnavailableError();
+    const taken = input.passengers.filter((_, i) => !seats[i]?.available).map((p) => p.seatNumber);
+    if (taken.length > 0) throw new SeatUnavailableError(taken);
 
     const basePaise = seats.reduce((sum, s) => sum + (s?.basePaise ?? 0), 0);
     const taxPaise = seats.reduce((sum, s) => sum + (s?.taxPaise ?? 0), 0);
     const totalPaise = basePaise + taxPaise;
-    if (totalPaise !== input.expectedTotalPaise) throw new PriceChangedError(totalPaise);
+    if (totalPaise !== input.expectedTotalPaise)
+      throw new PriceChangedError(input.expectedTotalPaise, totalPaise);
 
     const seatNumbers = input.passengers.map((p) => p.seatNumber);
     return this.createHeld(userId, 'BUS', ctx, async (reference, tx) => {

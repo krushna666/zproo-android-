@@ -212,7 +212,7 @@ registry.registerPath({
     201: ok('Booking created', BookingDetails),
     400: error('Invalid passengers or missing Idempotency-Key'),
     401: error('Not signed in'),
-    409: error('OFFER_EXPIRED, PRICE_CHANGED or SOLD_OUT'),
+    409: error('PRICE_CHANGED or FARE_UNAVAILABLE'),
   },
 });
 

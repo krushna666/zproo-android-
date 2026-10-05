@@ -6,12 +6,7 @@ import type { FlightProvider } from '../providers/flight';
 import { MockPaymentProvider, type PaymentProvider } from '../providers/payment';
 import { BookingRepository } from '../repositories/booking.repository';
 import { PaymentRepository } from '../repositories/payment.repository';
-import {
-  BookingExpiredError,
-  InvalidStateError,
-  NotFoundError,
-  PaymentError,
-} from '../utils/errors';
+import { HoldExpiredError, InvalidStateError, NotFoundError, PaymentError } from '../utils/errors';
 import type { AuditService, RequestContext } from './audit.service';
 import type { BookingService } from './booking.service';
 
@@ -47,8 +42,7 @@ export class PaymentService {
     const booking = await this.deps.bookings.get(reference, { userId, canReadAny: false });
     if (booking.status !== 'PENDING_PAYMENT')
       throw new InvalidStateError('This booking is not awaiting payment');
-    if (booking.holdExpiresAt && booking.holdExpiresAt <= this.now())
-      throw new BookingExpiredError();
+    if (booking.holdExpiresAt && booking.holdExpiresAt <= this.now()) throw new HoldExpiredError();
 
     const payments = new PaymentRepository(this.deps.prisma);
     const payment =
@@ -186,7 +180,7 @@ export class PaymentService {
     try {
       bookingId = await this.capture(paymentId, providerPaymentId, method);
     } catch (err) {
-      if (!(err instanceof BookingExpiredError)) throw err;
+      if (!(err instanceof HoldExpiredError)) throw err;
       const current = await new PaymentRepository(this.deps.prisma).findById(paymentId);
       // A concurrent verify of the same payment confirmed the booking first.
       if (current?.status === 'SUCCESS') return;
@@ -221,7 +215,7 @@ export class PaymentService {
         { holdExpiresAt: { gt: now } },
       );
       if (!confirmed)
-        throw new BookingExpiredError(
+        throw new HoldExpiredError(
           'Your seat hold expired before payment completed. Any amount debited will be refunded.',
         );
       const captured = await new PaymentRepository(tx).transition(

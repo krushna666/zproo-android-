@@ -31,8 +31,14 @@ function limiter(storeFactory: RateLimitStoreFactory, options: LimiterOptions) {
       // Fall back to the client IP when the request carries no key (validation will reject it anyway).
       keyGenerator: (req: Request) => options.key?.(req) ?? ipKeyGenerator(req.ip ?? ''),
     }),
-    handler: (_req, _res, next) => next(new RateLimitError(options.message)),
+    handler: (req, _res, next) => next(new RateLimitError(options.message, retryAfter(req))),
   });
+}
+
+/** Whole seconds until the caller's window resets (at least 1). */
+function retryAfter(req: Request): number {
+  const reset = (req as Request & { rateLimit?: { resetTime?: Date } }).rateLimit?.resetTime;
+  return reset ? Math.max(1, Math.ceil((reset.getTime() - Date.now()) / 1000)) : 60;
 }
 
 /** Global per-IP limiter for the whole API. */

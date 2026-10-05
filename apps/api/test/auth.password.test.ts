@@ -40,12 +40,12 @@ describe('password login', () => {
       .post('/api/auth/login')
       .send({ identifier: uniquePhone(), password: 'travel2026' })
       .expect(401);
-    expect(wrong.body).toMatchObject({
-      errorCode: 'INVALID_CREDENTIALS',
+    expect(wrong.body.error).toMatchObject({
+      code: 'INVALID_CREDENTIALS',
       message: 'Incorrect mobile number, email or password',
     });
-    expect(unknown.body.message).toBe(wrong.body.message);
-    expect(unknown.body.errorCode).toBe(wrong.body.errorCode);
+    expect(unknown.body.error.message).toBe(wrong.body.error.message);
+    expect(unknown.body.error.code).toBe(wrong.body.error.code);
   });
 
   it('cannot log in with a password on an OTP-only account', async () => {
@@ -65,7 +65,7 @@ describe('password login', () => {
       .post('/api/auth/login')
       .send({ identifier: phone, password: 'travel2026' })
       .expect(403);
-    expect(res.body.errorCode).toBe('ACCOUNT_DISABLED');
+    expect(res.body.error.code).toBe('ACCOUNT_DISABLED');
   });
 
   it('limits repeated attempts against one account', async () => {
@@ -81,7 +81,7 @@ describe('password login', () => {
       .post('/api/auth/login')
       .send({ identifier: phone, password: 'travel2026' })
       .expect(429);
-    expect(res.body.errorCode).toBe('RATE_LIMITED');
+    expect(res.body.error.code).toBe('RATE_LIMITED');
   });
 });
 
@@ -148,7 +148,7 @@ describe('password reset', () => {
       .post('/api/auth/reset-password')
       .send({ identifier: 'ghost@example.com', otp: '123456', newPassword: 'newjourney9' })
       .expect(400);
-    expect(res.body.errorCode).toBe('OTP_EXPIRED');
+    expect(res.body.error.code).toBe('OTP_EXPIRED');
   });
 
   it('does not accept a sign-in code as a reset code', async () => {
@@ -168,7 +168,7 @@ describe('password reset', () => {
       .post('/api/auth/reset-password')
       .send({ identifier: '9876543210', otp: '123456', newPassword: 'password' })
       .expect(400);
-    expect(res.body.details[0]).toEqual({
+    expect(res.body.error.details.issues[0]).toEqual({
       path: 'body.newPassword',
       message: 'Password must contain letters and numbers',
     });

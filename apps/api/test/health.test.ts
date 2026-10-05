@@ -46,11 +46,9 @@ describe('GET /api/health/ready', () => {
   it('returns 503 with the error envelope when a dependency is down', async () => {
     const app = buildTestApp({ checks: [down('database'), up('redis')] });
     const res = await request(app).get('/api/health/ready').expect(503);
-    expect(res.body).toMatchObject({
-      success: false,
-      errorCode: 'SERVICE_UNAVAILABLE',
+    expect(res.body.error).toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
       message: 'Dependencies unavailable: database',
-      data: null,
     });
   });
 });

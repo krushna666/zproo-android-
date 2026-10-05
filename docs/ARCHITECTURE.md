@@ -49,8 +49,11 @@ Request pipeline: `request ID + log → Helmet → CORS → JSON body (100 kB) �
 router → validate → controller → service → repository`, with `notFound` and `errorHandler`
 last. Express 5 forwards rejected promises from async handlers to the error handler.
 
-Every response uses the envelope `{ success, message, data }`; failures add `errorCode`,
-optional `details` (validation) and `requestId`.
+Successful responses use the envelope `{ success, message, data }`. Every error is
+`{ "error": { "code", "message", "requestId", "details"? } }`; `details` is an object whose keys
+depend on the code (`fields` for validation, `oldTotal`/`newTotal` for PRICE_CHANGED, `seats` for
+SEAT_UNAVAILABLE, `reason` for COUPON_INVALID, `retryAfter` for RATE_LIMITED). The web app maps
+codes to the SOP copy in one place (`apps/web/src/lib/apiErrors.ts`).
 
 ## Web (`apps/web`)
 

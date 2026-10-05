@@ -5,7 +5,7 @@ import { FlightRepository, type FlightSchedule } from '../../repositories/flight
 import { offerTotal, quoteFare, unitHash, type PaxCounts } from '../../services/flightPricing';
 import { randomInt } from 'node:crypto';
 import { randomDigits } from '../../utils/crypto';
-import { SoldOutError } from '../../utils/errors';
+import { FareUnavailableError } from '../../utils/errors';
 import {
   addDaysIso,
   daysBetweenIso,
@@ -94,7 +94,7 @@ export class MockFlightProvider implements FlightProvider {
   async hold(offerId: string, seats: number, db: Db): Promise<void> {
     const parsed = this.parse(offerId);
     const flight = parsed && (await new FlightRepository(db).findById(parsed.flightId));
-    if (!parsed || !flight) throw new SoldOutError();
+    if (!parsed || !flight) throw new FareUnavailableError();
     const available =
       capacity(flight, parsed.cabin) - this.presold(flight, parsed.date, parsed.cabin);
     const ok = await new FlightRepository(db).takeSeats(
@@ -104,7 +104,7 @@ export class MockFlightProvider implements FlightProvider {
       available,
       seats,
     );
-    if (!ok) throw new SoldOutError();
+    if (!ok) throw new FareUnavailableError();
   }
 
   async release(offerId: string, seats: number, db: Db): Promise<void> {

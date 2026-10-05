@@ -96,11 +96,11 @@ export async function staticAdapter(config: InternalAxiosRequestConfig): Promise
         : new StaticError(500, 'INTERNAL_ERROR', 'Something went wrong. Please try again.');
     if (!(err instanceof StaticError)) console.error(err);
     const response = respond(e.status, {
-      success: false,
-      message: e.message,
-      errorCode: e.errorCode,
-      data: null,
-      ...(e.details && { details: e.details }),
+      error: {
+        code: e.errorCode,
+        message: e.message,
+        ...(e.details && { details: e.details }),
+      },
     });
     throw new AxiosError(e.message, undefined, config, null, response);
   }

@@ -72,11 +72,11 @@ describe('static engine: accounts', () => {
   it('rejects a wrong code and validates input like the API', async () => {
     await api.post('/auth/send-otp', { phone: '9876543210' });
     const wrong = await fail(api.post('/auth/verify-otp', { phone: '9876543210', otp: '000000' }));
-    expect(wrong.body).toMatchObject({ errorCode: 'INVALID_OTP' });
+    expect(wrong.body.error).toMatchObject({ code: 'INVALID_OTP' });
     const bad = await fail(api.post('/auth/send-otp', { phone: '123' }));
-    expect(bad.body).toMatchObject({
-      errorCode: 'VALIDATION_ERROR',
-      details: [{ path: 'body.phone' }],
+    expect(bad.body.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      details: { fields: { phone: expect.any(String) }, issues: [{ path: 'body.phone' }] },
     });
   });
 });
@@ -100,7 +100,10 @@ describe('static engine: flights', () => {
     const changed = await fail(
       book('/flights/book', { offerIds: [offer.id], passengers, contact, expectedTotalPaise: 100 }),
     );
-    expect(changed.body).toMatchObject({ errorCode: 'PRICE_CHANGED' });
+    expect(changed.body.error).toMatchObject({
+      code: 'PRICE_CHANGED',
+      details: { oldTotal: 100, newTotal: offer.totalPaise },
+    });
 
     const key = crypto.randomUUID();
     const booking = await data<BookingDetails>(
@@ -184,8 +187,9 @@ describe('static engine: buses', () => {
     expect(
       held.decks.flatMap((d) => d.seats).find((s) => s.number === seat.number)?.available,
     ).toBe(false);
-    expect((await fail(book('/buses/book', body))).body).toMatchObject({
-      errorCode: 'SEAT_UNAVAILABLE',
+    expect((await fail(book('/buses/book', body))).body.error).toMatchObject({
+      code: 'SEAT_UNAVAILABLE',
+      details: { seats: [seat.number] },
     });
 
     const order = await data<PaymentOrder>(
@@ -223,14 +227,12 @@ describe('static engine: buses', () => {
           expectedTotalPaise: seat.pricePaise,
         }),
       );
-      expect(res.body).toMatchObject({
-        details: [
-          {
-            path: 'body.passengers.0.gender',
-            message: `Seat ${seat.number} is reserved for women`,
-          },
-        ],
-      });
+      expect(res.body.error.details.issues).toEqual([
+        {
+          path: 'body.passengers.0.gender',
+          message: `Seat ${seat.number} is reserved for women`,
+        },
+      ]);
       return;
     }
     throw new Error('no ladies seat found');

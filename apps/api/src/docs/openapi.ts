@@ -20,12 +20,23 @@ export const successEnvelope = <T extends z.ZodType>(data: T) =>
 export const ErrorResponse = registry.register(
   'ErrorResponse',
   z.object({
-    success: z.literal(false),
-    message: z.string().openapi({ example: 'Something went wrong' }),
-    errorCode: z.enum(Object.values(ErrorCode) as [ErrorCode, ...ErrorCode[]]),
-    data: z.null(),
-    details: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
-    requestId: z.string().optional(),
+    error: z.object({
+      code: z.enum(Object.values(ErrorCode) as [ErrorCode, ...ErrorCode[]]),
+      message: z.string().openapi({ example: 'Something went wrong. Please try again.' }),
+      requestId: z.string().optional(),
+      details: z
+        .object({
+          fields: z.record(z.string(), z.string()).optional(),
+          issues: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
+          oldTotal: z.number().int().optional(),
+          newTotal: z.number().int().optional(),
+          seats: z.array(z.string()).optional(),
+          roomTypeId: z.string().optional(),
+          reason: z.enum(['expired', 'not_applicable', 'min_amount', 'usage_limit']).optional(),
+          retryAfter: z.number().int().optional(),
+        })
+        .optional(),
+    }),
   }),
 );
 
@@ -93,7 +104,7 @@ export function buildOpenApiDocument(version: string) {
       version,
       description:
         'Unified Mobility & Travel Super App. Every response uses the envelope ' +
-        '`{ success, message, data }`; errors add `errorCode`.',
+        '`{ success, message, data }`; errors are `{ error: { code, message, requestId, details } }`.',
     },
     servers: [{ url: '/api' }],
   });
