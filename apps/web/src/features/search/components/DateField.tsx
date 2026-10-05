@@ -21,6 +21,7 @@ interface DateFieldProps {
   /** Shown when empty, e.g. "Add return" for an optional date. */
   emptyHint?: string;
   testId?: string;
+  disabled?: boolean;
 }
 
 /**
@@ -38,6 +39,7 @@ export function DateField({
   className,
   emptyHint,
   testId,
+  disabled,
 }: DateFieldProps) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -49,6 +51,7 @@ export function DateField({
         id={id}
         type="date"
         data-testid={testId}
+        disabled={disabled}
         value={value}
         min={min}
         max={max}

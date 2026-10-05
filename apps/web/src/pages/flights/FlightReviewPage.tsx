@@ -1,207 +1,170 @@
-import { useMutation } from '@tanstack/react-query';
-import type { FlightOffer } from '@zproo/types';
+import type { BookingDetails } from '@zproo/types';
 import { Button, Card, CardContent, CardHeader, CardTitle, FormAlert, Skeleton } from '@zproo/ui';
-import { flightPriceBreakdown } from '@zproo/utils';
-import { ArrowRight, Lock, Mail, Phone } from 'lucide-react';
-import { useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router';
-import { errorMessage } from '@/features/auth/errors';
-import { flightsApi, useItineraryOffers } from '@/features/flights/api';
-import { CheckoutShell, NothingSelected } from '@/features/checkout/CheckoutShell';
+import { Mail, Phone } from 'lucide-react';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
+import { useBooking } from '@/features/checkout/api';
+import { CheckoutShell } from '@/features/checkout/CheckoutShell';
+import { CouponBox } from '@/features/checkout/CouponBox';
 import { DemoBanner } from '@/features/checkout/DemoBanner';
-import { ItinerarySummary } from '@/features/flights/components/ItinerarySummary';
+import { HoldExpired, HoldTimer } from '@/features/checkout/HoldTimer';
+import { paymentUrl } from '@/features/checkout/links';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
+import { isAwaitingPayment } from '@/features/checkout/status';
+import { TermsAndProceed } from '@/features/checkout/TermsAndProceed';
+import { ItinerarySummary } from '@/features/flights/components/ItinerarySummary';
 import { useFlightDraft } from '@/features/flights/draft';
 import { inr } from '@/features/flights/format';
-import { paymentUrl } from '@/features/checkout/links';
-import { ApiClientError } from '@/services/http';
+import { useCountdown } from '@/hooks/useCountdown';
+import { userMessage } from '@/lib/apiErrors';
 
-const TITLE = { MR: 'Mr', MRS: 'Mrs', MS: 'Ms', MSTR: 'Master', MISS: 'Miss' } as const;
+const TITLE: Record<string, string> = {
+  MR: 'Mr',
+  MRS: 'Mrs',
+  MS: 'Ms',
+  MSTR: 'Master',
+  MISS: 'Miss',
+};
 
 export default function FlightReviewPage() {
-  const draft = useFlightDraft();
-  if (!draft.itinerary) return <NothingSelected />;
-  if (!draft.passengers || !draft.contact) return <Navigate to="/flights/booking" replace />;
-  return <Review />;
+  const [params] = useSearchParams();
+  const draftRef = useFlightDraft((s) => s.reference);
+  const reference = params.get('ref') ?? draftRef;
+  const { data: booking, isPending, error, refetch } = useBooking(reference);
+
+  if (!reference) return <Navigate to="/flights" replace />;
+  if (isPending) {
+    return (
+      <CheckoutShell step={2} service="flight" title="Review your booking">
+        <Skeleton className="h-96 rounded-[14px]" />
+      </CheckoutShell>
+    );
+  }
+  if (error || !booking || booking.flights.length === 0) {
+    return (
+      <CheckoutShell step={2} service="flight" title="Review your booking">
+        <div role="alert" className="space-y-3">
+          <FormAlert>{userMessage(error)}</FormAlert>
+          <Button variant="outline" onClick={() => void refetch()}>
+            Retry
+          </Button>
+        </div>
+      </CheckoutShell>
+    );
+  }
+  return <Review booking={booking} />;
 }
 
-function Review() {
+function Review({ booking }: { booking: BookingDetails }) {
   const navigate = useNavigate();
-  const draft = useFlightDraft();
-  const itinerary = draft.itinerary as NonNullable<typeof draft.itinerary>;
-  const passengers = draft.passengers ?? [];
-  const contact = draft.contact as NonNullable<typeof draft.contact>;
-  const {
-    offers,
-    isPending,
-    error: offersError,
-    refetch,
-  } = useItineraryOffers(itinerary.offerIds, itinerary.pax);
-  const [unavailable, setUnavailable] = useState(false);
-
-  const book = useMutation({
-    mutationFn: () =>
-      flightsApi.book(
-        {
-          offerIds: itinerary.offerIds,
-          passengers,
-          contact,
-          expectedTotalPaise: itinerary.expectedTotalPaise,
-        },
-        draft.idempotencyKey,
-      ),
-    onSuccess: (booking) => {
-      draft.setReference(booking.reference);
-      void navigate(paymentUrl('flight', booking.reference));
-    },
-    onError: (err) => {
-      if (err instanceof ApiClientError && err.errorCode === 'PRICE_CHANGED') void refetch();
-      if (err instanceof ApiClientError && err.errorCode === 'FARE_UNAVAILABLE') {
-        setUnavailable(true);
-      }
-    },
-  });
-
-  const currentTotal = offers?.reduce((sum, o) => sum + o.totalPaise, 0);
-  const priceMoved = currentTotal !== undefined && currentTotal !== itinerary.expectedTotalPaise;
-  const bookingError =
-    book.error instanceof ApiClientError && book.error.errorCode === 'PRICE_CHANGED'
-      ? null
-      : book.error;
-
-  const continueToPayment = () => {
-    // Already booked from this draft (e.g. came back from payment): don't book again.
-    if (draft.reference) return void navigate(paymentUrl('flight', draft.reference));
-    book.mutate();
-  };
+  const secondsLeft = useCountdown(booking.holdExpiresAt ? Date.parse(booking.holdExpiresAt) : 0);
+  const expired = !isAwaitingPayment(booking) || secondsLeft === 0;
+  const offerUrl = useFlightDraft((s) => s.selection?.offerUrl);
 
   return (
     <CheckoutShell
       step={2}
+      service="flight"
       title="Review your booking"
       back={{ to: '/flights/booking', label: 'Edit travellers' }}
       aside={
-        offers ? (
-          <>
-            <PriceSummary price={flightPriceBreakdown(offers, itinerary.pax)} />
-            {priceMoved ? (
-              <PriceChanged
-                from={itinerary.expectedTotalPaise}
-                to={currentTotal}
-                onAccept={() => {
-                  draft.acceptPrice(currentTotal);
-                  book.reset();
-                }}
-              />
-            ) : (
-              <Button
-                size="lg"
-                className="w-full"
-                disabled={book.isPending || unavailable}
-                onClick={continueToPayment}
-              >
-                <Lock aria-hidden />{' '}
-                {book.isPending ? 'Holding your seats...' : 'Continue to payment'}
-                {!book.isPending && <ArrowRight aria-hidden />}
-              </Button>
-            )}
-            <p className="text-center text-xs text-muted">
-              By continuing you agree to the fare rules, our{' '}
-              <Link to="/terms" className="underline">
-                Terms
-              </Link>{' '}
-              and{' '}
-              <Link to="/refund-policy" className="underline">
-                Refund Policy
-              </Link>
-              .
-            </p>
-          </>
-        ) : (
-          <Skeleton className="h-64 rounded-2xl" />
-        )
+        <>
+          <PriceSummary price={booking.price} />
+          {!expired && <CouponBox booking={booking} />}
+          {!expired && (
+            <TermsAndProceed
+              totalPaise={booking.price.totalPaise}
+              policy="the airline fare rules"
+              onProceed={() => void navigate(paymentUrl('flight', booking.reference))}
+            />
+          )}
+        </>
       }
     >
-      {offers?.some((o) => o.provider === 'mock') && <DemoBanner />}
-      {unavailable && (
-        <FormAlert>
-          {errorMessage(book.error)}{' '}
-          <Link to={itinerary.searchUrl} className="underline">
-            Choose another flight
-          </Link>
-        </FormAlert>
-      )}
-      {bookingError && !unavailable && <FormAlert>{errorMessage(bookingError)}</FormAlert>}
-      {offersError && !unavailable && (
-        <FormAlert>
-          {errorMessage(offersError)}{' '}
-          <Link to={itinerary.searchUrl} className="underline">
-            Choose another flight
-          </Link>
-        </FormAlert>
-      )}
+      {booking.demo && <DemoBanner service="flight" />}
+      {expired ? <HoldExpired searchHref="/flights" /> : <HoldTimer secondsLeft={secondsLeft} />}
 
       <section aria-labelledby="itinerary-heading" className="space-y-3">
-        <h2 id="itinerary-heading" className="text-lg font-bold">
-          Itinerary
-        </h2>
-        {isPending || !offers ? (
-          <Skeleton className="h-48 rounded-2xl" />
-        ) : (
-          <ItinerarySummary offers={offers as FlightOffer[]} detailed />
-        )}
+        <div className="flex items-center justify-between">
+          <h2 id="itinerary-heading" className="text-lg font-bold">
+            Itinerary
+          </h2>
+          {!expired && offerUrl && (
+            <Link to={offerUrl} className="text-sm font-semibold text-primary hover:underline">
+              Change fare
+            </Link>
+          )}
+        </div>
+        <ItinerarySummary legs={booking.flights} detailed />
       </section>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Fare benefits</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {booking.flights.map((leg) => (
+            <div key={leg.sequence}>
+              <p className="font-semibold">
+                {booking.flights.length > 1 ? (leg.sequence === 1 ? 'Outbound: ' : 'Return: ') : ''}
+                {leg.fare.name}
+              </p>
+              <p className="text-muted">
+                Cabin {leg.fare.cabinBaggageKg} kg · Check-in {leg.fare.checkinBaggageKg} kg ·{' '}
+                {leg.fare.changeFee === 0
+                  ? 'free date change'
+                  : `change fee ${inr(leg.fare.changeFee)}`}{' '}
+                ·{' '}
+                {leg.fare.cancellationFee === null
+                  ? 'non-refundable'
+                  : leg.fare.cancellationFee === 0
+                    ? 'free cancellation'
+                    : `cancellation fee ${inr(leg.fare.cancellationFee)}`}{' '}
+                · meal {leg.fare.meal === 'INCLUDED' ? 'included' : 'at a charge'}
+              </p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex-row items-center justify-between pb-3">
           <CardTitle className="text-base">Travellers</CardTitle>
-          <Link
-            to="/flights/booking"
-            className="text-sm font-semibold text-primary hover:underline"
-          >
-            Edit
-          </Link>
+          {!expired && (
+            <Link
+              to="/flights/booking"
+              className="text-sm font-semibold text-primary hover:underline"
+            >
+              Edit
+            </Link>
+          )}
         </CardHeader>
         <CardContent>
           <ol className="divide-y divide-border text-sm">
-            {passengers.map((p, i) => (
-              <li key={i} className="flex justify-between gap-3 py-2">
+            {booking.passengers.map((p) => (
+              <li key={p.id} className="flex flex-wrap justify-between gap-3 py-2">
                 <span className="font-semibold">
-                  {TITLE[p.title]} {p.firstName} {p.lastName}
+                  {TITLE[p.title] ?? p.title} {p.firstName} {p.lastName}
                 </span>
                 <span className="text-muted">
                   {p.type.charAt(0) + p.type.slice(1).toLowerCase()}
-                  {p.dateOfBirth && ` · born ${p.dateOfBirth}`}
+                  {p.dateOfBirth ? ` · born ${p.dateOfBirth}` : ''}
+                  {p.travellingWith !== null && booking.passengers[p.travellingWith]
+                    ? ` · with ${booking.passengers[p.travellingWith]?.firstName ?? ''}`
+                    : ''}
                 </span>
               </li>
             ))}
           </ol>
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 border-t border-border pt-4 text-sm text-muted">
             <span className="inline-flex items-center gap-1.5">
-              <Mail aria-hidden className="size-4" /> {contact.email}
+              <Mail aria-hidden className="size-4" /> {booking.contact.email}
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <Phone aria-hidden className="size-4" /> +91 {contact.phone.replace(/^\+91/, '')}
+              <Phone aria-hidden className="size-4" /> {booking.contact.phone}
             </span>
           </div>
         </CardContent>
       </Card>
     </CheckoutShell>
-  );
-}
-
-function PriceChanged({ from, to, onAccept }: { from: number; to: number; onAccept: () => void }) {
-  return (
-    <div
-      role="alert"
-      className="space-y-3 rounded-2xl border border-warning/50 bg-warning/10 p-4 text-sm"
-    >
-      <p>
-        <strong>The fare has changed</strong> from {inr(from)} to {inr(to)} since you selected it.
-      </p>
-      <Button className="w-full" onClick={onAccept}>
-        Continue with {inr(to)}
-      </Button>
-    </div>
   );
 }

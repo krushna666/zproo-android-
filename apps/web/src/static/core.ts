@@ -119,7 +119,7 @@ export interface StoredBooking {
   details: BookingDetails;
   /** Inventory held by the booking (flight seats per offer, or bus seats) */
   holds:
-    | { kind: 'flight'; offerId: string; seats: number }[]
+    | { kind: 'flight'; itineraryKey: string; seats: number }[]
     | { kind: 'bus'; tripId: string; seats: { seatNo: string; female: boolean }[] }[];
 }
 
@@ -151,8 +151,8 @@ export interface Db {
   payments: StoredPayment[];
 }
 
-/** v3: generated bus trips (trp_ ids), seat holds with the traveller's gender, cancellations. */
-const KEY = 'zproo-go-static-db-v3';
+/** v4: generated flights (signed offers, fare families) and bus trips; holds per itinerary/seat. */
+const KEY = 'zproo-go-static-db-v4';
 const empty = (): Db => ({
   users: [],
   sessionUserId: null,

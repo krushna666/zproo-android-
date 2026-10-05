@@ -1,8 +1,6 @@
 import type { BookingDetails } from '@zproo/types';
 import { Button, Card, CardContent, CardHeader, CardTitle, FormAlert, Skeleton } from '@zproo/ui';
-import { formatMoney } from '@zproo/utils';
-import { Lock, Mail, Phone } from 'lucide-react';
-import { useId, useState } from 'react';
+import { Mail, Phone } from 'lucide-react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
 import { BusTripSummary } from '@/features/buses/components/BusTripSummary';
 import { useBusDraft } from '@/features/buses/draft';
@@ -13,6 +11,7 @@ import { CouponBox } from '@/features/checkout/CouponBox';
 import { DemoBanner } from '@/features/checkout/DemoBanner';
 import { HoldExpired, HoldTimer } from '@/features/checkout/HoldTimer';
 import { paymentUrl } from '@/features/checkout/links';
+import { TermsAndProceed } from '@/features/checkout/TermsAndProceed';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
 import { isAwaitingPayment } from '@/features/checkout/status';
 import { useCountdown } from '@/hooks/useCountdown';
@@ -51,22 +50,10 @@ export default function BusReviewPage() {
 
 function Review({ booking }: { booking: BookingDetails }) {
   const navigate = useNavigate();
-  const termsId = useId();
-  const [accepted, setAccepted] = useState(false);
-  const [termsError, setTermsError] = useState(false);
   const bus = booking.bus as NonNullable<BookingDetails['bus']>;
   const seatsUrl = `/buses/${encodeURIComponent(bus.trip.tripId)}/seats`;
   const secondsLeft = useCountdown(booking.holdExpiresAt ? Date.parse(booking.holdExpiresAt) : 0);
   const expired = !isAwaitingPayment(booking) || secondsLeft === 0;
-
-  const proceed = () => {
-    if (!accepted) {
-      setTermsError(true);
-      document.getElementById(termsId)?.focus();
-      return;
-    }
-    void navigate(paymentUrl('bus', booking.reference));
-  };
 
   return (
     <CheckoutShell
@@ -79,48 +66,10 @@ function Review({ booking }: { booking: BookingDetails }) {
           <PriceSummary price={booking.price} />
           {!expired && <CouponBox booking={booking} />}
           {!expired && (
-            <div className="space-y-3">
-              <div>
-                <label className="flex min-h-11 cursor-pointer items-start gap-3 text-sm">
-                  <input
-                    id={termsId}
-                    type="checkbox"
-                    data-testid="checkout-terms"
-                    checked={accepted}
-                    aria-invalid={termsError || undefined}
-                    aria-describedby={termsError ? `${termsId}-error` : undefined}
-                    onChange={(e) => {
-                      setAccepted(e.target.checked);
-                      if (e.target.checked) setTermsError(false);
-                    }}
-                    className="mt-0.5 size-4 accent-primary"
-                  />
-                  <span>
-                    I agree to the operator's cancellation policy, the{' '}
-                    <Link to="/terms" className="font-semibold text-primary underline">
-                      Terms
-                    </Link>{' '}
-                    and the{' '}
-                    <Link to="/refund-policy" className="font-semibold text-primary underline">
-                      Refund Policy
-                    </Link>
-                    .
-                  </span>
-                </label>
-                {termsError && (
-                  <p
-                    id={`${termsId}-error`}
-                    data-testid="field-error-terms"
-                    className="text-xs font-semibold text-danger"
-                  >
-                    Please accept the terms to continue
-                  </p>
-                )}
-              </div>
-              <Button size="lg" className="w-full" data-testid="checkout-proceed" onClick={proceed}>
-                <Lock aria-hidden /> Proceed to pay {formatMoney(booking.price.totalPaise)}
-              </Button>
-            </div>
+            <TermsAndProceed
+              totalPaise={booking.price.totalPaise}
+              onProceed={() => void navigate(paymentUrl('bus', booking.reference))}
+            />
           )}
         </>
       }

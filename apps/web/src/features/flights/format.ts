@@ -1,56 +1,34 @@
 import { formatMoney } from '@zproo/utils';
+import type { FlightLayover, FlightSlice } from '@zproo/types';
 
 /** Money in paise → "₹5,320". */
 export const inr = (paise: number) => formatMoney(paise);
 
-const timeFormatters = new Map<string, Intl.DateTimeFormat>();
-const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+/*
+ * Flight times come as local ISO strings with the airport's offset
+ * ("2026-10-20T21:30:00+05:30"), so the wall-clock time and date are read straight from them.
+ */
 
-/** "06:45" in the airport's own time zone (flight times are always local to the airport). */
-export function localTime(iso: string, timeZone: string): string {
-  let fmt = timeFormatters.get(timeZone);
-  if (!fmt) {
-    fmt = new Intl.DateTimeFormat('en-GB', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone,
-    });
-    timeFormatters.set(timeZone, fmt);
-  }
-  return fmt.format(new Date(iso));
+/** "21:30" (local to the airport) */
+export const clockTime = (iso: string) => iso.slice(11, 16);
+/** Hour of day (0–23), local to the airport, for time-of-day filters */
+export const localHourOf = (iso: string) => Number(iso.slice(11, 13));
+/** YYYY-MM-DD, local to the airport */
+export const localDateOf = (iso: string) => iso.slice(0, 10);
+
+/** Calendar days between a local departure and a local arrival (0, +1, +2…). */
+export function dayShift(departure: string, arrival: string): number {
+  return Math.round(
+    (Date.parse(`${localDateOf(arrival)}T00:00:00Z`) -
+      Date.parse(`${localDateOf(departure)}T00:00:00Z`)) /
+      86_400_000,
+  );
 }
 
-/** "Sat, 25 Oct" in the airport's time zone. */
-export function localDay(iso: string, timeZone: string): string {
-  let fmt = dateFormatters.get(timeZone);
-  if (!fmt) {
-    fmt = new Intl.DateTimeFormat('en-IN', {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      timeZone,
-    });
-    dateFormatters.set(timeZone, fmt);
-  }
-  return fmt.format(new Date(iso));
-}
-
-/** Hour of day (0–23) in the airport's time zone, for time-of-day filters. */
-export function localHour(iso: string, timeZone: string): number {
-  return Number(localTime(iso, timeZone).slice(0, 2));
-}
-
-/** Calendar days between departure and arrival, each in its own airport's time zone. */
-export function dayShift(
-  departureAt: string,
-  depTz: string,
-  arrivalAt: string,
-  arrTz: string,
-): number {
-  const day = (iso: string, tz: string) =>
-    Date.parse(new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(iso)));
-  return Math.round((day(arrivalAt, arrTz) - day(departureAt, depTz)) / 86_400_000);
+/** "06:15 +1" */
+export function arrivalLabel(departure: string, arrival: string): string {
+  const shift = dayShift(departure, arrival);
+  return shift > 0 ? `${clockTime(arrival)} +${shift}` : clockTime(arrival);
 }
 
 /** 135 → "2h 15m". */
@@ -61,7 +39,7 @@ export function duration(minutes: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-/** "2026-10-25" → "Sat, 25 Oct 2026" (a travel date, not an instant: no time-zone shift). */
+/** "2026-10-25" → "Sun, 25 Oct 2026" (a travel date: no time-zone shift). */
 export function travelDate(date: string): string {
   return new Intl.DateTimeFormat('en-IN', {
     weekday: 'short',
@@ -72,8 +50,32 @@ export function travelDate(date: string): string {
   }).format(new Date(`${date}T00:00:00Z`));
 }
 
-export const stopsLabel = (stops: number) =>
-  stops === 0 ? 'Non-stop' : `${stops} stop${stops > 1 ? 's' : ''}`;
+/** "Sun, 25 Oct" */
+export function shortDay(date: string): string {
+  return new Intl.DateTimeFormat('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(new Date(`${date}T00:00:00Z`));
+}
+
+/** "Non-stop", "1 stop via BLR (1h 25m)", "2 stops via BLR, HYD" */
+export function stopsLabel(slice: Pick<FlightSlice, 'stops' | 'layovers'>): string {
+  if (slice.stops === 0) return 'Non-stop';
+  if (slice.stops === 1 && slice.layovers[0])
+    return `1 stop via ${slice.layovers[0].airport} (${duration(slice.layovers[0].durationMin)})`;
+  return `${slice.stops} stops via ${slice.layovers.map((l) => l.airport).join(', ')}`;
+}
+
+/** Warnings for a connection, in the order shown. */
+export function layoverWarnings(l: FlightLayover): string[] {
+  return [
+    ...(l.changeOfTerminal ? ['Change of terminal'] : []),
+    ...(l.selfTransfer ? ['Self-transfer'] : []),
+    ...(l.overnight ? ['Overnight layover'] : []),
+  ];
+}
 
 export function travellersLabel(p: { adults: number; children: number; infants: number }): string {
   const parts = [`${p.adults} adult${p.adults > 1 ? 's' : ''}`];
@@ -82,9 +84,27 @@ export function travellersLabel(p: { adults: number; children: number; infants: 
   return parts.join(', ');
 }
 
-/** The travel date (YYYY-MM-DD) in the departure airport's time zone; ages are checked on it. */
-export function departureDate(offer: { departureAt: string; from: { timezone: string } }): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: offer.from.timezone }).format(
-    new Date(offer.departureAt),
-  );
+/** Departure (local) of a slice */
+export const sliceDeparture = (slice: FlightSlice) => slice.segments[0]?.departure ?? '';
+/** Arrival (local) of a slice */
+export const sliceArrival = (slice: FlightSlice) => slice.segments.at(-1)?.arrival ?? '';
+
+/** "06:45" of an instant in a time zone (for instants such as booking times). */
+export function localTime(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone,
+  }).format(new Date(iso));
+}
+
+/** "Sat, 25 Oct" of an instant in a time zone. */
+export function localDay(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone,
+  }).format(new Date(iso));
 }

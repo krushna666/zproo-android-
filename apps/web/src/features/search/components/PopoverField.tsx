@@ -10,6 +10,8 @@ interface PopoverFieldProps {
   error?: string | undefined;
   className?: string;
   children: ReactNode;
+  /** data-testids of the trigger and the Done button */
+  testIds?: { open: string; done: string };
 }
 
 /** A field card that opens a panel (travellers, guests). */
@@ -21,6 +23,7 @@ export function PopoverField({
   error,
   className,
   children,
+  testIds,
 }: PopoverFieldProps) {
   const id = useId();
   return (
@@ -28,6 +31,7 @@ export function PopoverField({
       <Popover>
         <PopoverTrigger
           id={id}
+          data-testid={testIds?.open}
           aria-describedby={error ? `${id}-error` : undefined}
           className={cn(
             'flex h-full min-h-[4.25rem] w-full items-start gap-3 rounded-2xl border bg-card px-4 py-2.5 text-left transition-colors hover:border-foreground/25 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20',
@@ -47,7 +51,7 @@ export function PopoverField({
         <PopoverContent aria-label={label}>
           {children}
           <PopoverClose asChild>
-            <Button className="mt-3 w-full" size="sm">
+            <Button className="mt-3 w-full" size="sm" data-testid={testIds?.done}>
               Done
             </Button>
           </PopoverClose>

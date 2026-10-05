@@ -7,12 +7,14 @@ interface StepperProps {
   min: number;
   max: number;
   onChange: (value: number) => void;
+  /** e.g. flight-pax-adults → flight-pax-adults-inc / -dec */
+  testIdPrefix?: string;
 }
 
 /** −/+ counter with a live value for screen readers. */
-export function Stepper({ label, hint, value, min, max, onChange }: StepperProps) {
+export function Stepper({ label, hint, value, min, max, onChange, testIdPrefix }: StepperProps) {
   const button =
-    'grid size-9 place-items-center rounded-full border border-border text-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-35';
+    'grid size-11 place-items-center rounded-full border border-border text-foreground transition-colors hover:border-primary hover:text-primary disabled:pointer-events-none disabled:opacity-35';
   return (
     <div className="flex items-center justify-between gap-4 py-2.5">
       <div>
@@ -23,6 +25,7 @@ export function Stepper({ label, hint, value, min, max, onChange }: StepperProps
         <button
           type="button"
           className={button}
+          data-testid={testIdPrefix && `${testIdPrefix}-dec`}
           onClick={() => onChange(value - 1)}
           disabled={value <= min}
           aria-label={`Fewer ${label.toLowerCase()}`}
@@ -39,6 +42,7 @@ export function Stepper({ label, hint, value, min, max, onChange }: StepperProps
         <button
           type="button"
           className={button}
+          data-testid={testIdPrefix && `${testIdPrefix}-inc`}
           onClick={() => onChange(value + 1)}
           disabled={value >= max}
           aria-label={`More ${label.toLowerCase()}`}

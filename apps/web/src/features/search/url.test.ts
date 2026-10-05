@@ -1,15 +1,16 @@
-import { addDays, flightSearchSchema, todayIso } from '@zproo/validation';
+import { addDays, flightSearchSchema, todayInIst } from '@zproo/validation';
 import { describe, expect, it } from 'vitest';
 import { busesUrl, flightsUrl, hotelsUrl, parseFlightSearch, trainsUrl } from './url';
 
-const d = (n: number) => addDays(todayIso(), n);
+const d = (n: number) => addDays(todayInIst(), n);
 const query = (url: string) => new URLSearchParams(url.split('?')[1]);
 
 describe('flight search URLs', () => {
   it('round-trips a round trip through the URL', () => {
     const search = flightSearchSchema.parse({
-      tripType: 'ROUND_TRIP',
-      legs: [{ from: 'PNQ', to: 'DEL', date: d(7) }],
+      from: 'PNQ',
+      to: 'DEL',
+      date: d(7),
       returnDate: d(10),
       adults: 2,
       children: 1,
@@ -17,46 +18,23 @@ describe('flight search URLs', () => {
     });
     const url = flightsUrl(search);
     expect(url).toBe(
-      `/flights/results?trip=ROUND_TRIP&from=PNQ&to=DEL&date=${d(7)}&return=${d(10)}&adults=2&children=1&cabin=BUSINESS`,
+      `/flights/search?from=PNQ&to=DEL&date=${d(7)}&returnDate=${d(10)}&adults=2&children=1&infants=0&cabin=BUSINESS`,
     );
     expect(flightSearchSchema.parse(parseFlightSearch(query(url)))).toEqual(search);
   });
 
-  it('encodes multi-city legs compactly', () => {
-    const search = flightSearchSchema.parse({
-      tripType: 'MULTI_CITY',
-      legs: [
-        { from: 'PNQ', to: 'DEL', date: d(5) },
-        { from: 'DEL', to: 'GOI', date: d(8) },
-      ],
-      adults: 1,
-    });
-    const url = flightsUrl(search);
-    expect(query(url).get('legs')).toBe(`PNQ.DEL.${d(5)},DEL.GOI.${d(8)}`);
-    expect(flightSearchSchema.parse(parseFlightSearch(query(url)))).toEqual(search);
-  });
-
-  it('drops the return date for one-way trips', () => {
-    const url = flightsUrl(
-      flightSearchSchema.parse({
-        tripType: 'ONE_WAY',
-        legs: [{ from: 'BOM', to: 'GOI', date: d(3) }],
-        returnDate: d(9),
-        adults: 1,
-      }),
-    );
-    expect(query(url).has('return')).toBe(false);
+  it('has no return date for one-way trips', () => {
+    const url = flightsUrl(flightSearchSchema.parse({ from: 'BOM', to: 'GOI', date: d(3) }));
+    expect(query(url).has('returnDate')).toBe(false);
   });
 });
 
 describe('date-free deal links', () => {
   it('defaults the departure date when the link has none', () => {
     const parsed = flightSearchSchema.parse(
-      parseFlightSearch(
-        query('/flights/results?trip=ONE_WAY&from=PNQ&to=DEL&adults=1&cabin=ECONOMY'),
-      ),
+      parseFlightSearch(query('/flights/search?from=PNQ&to=DEL&adults=1&cabin=ECONOMY')),
     );
-    expect(parsed.legs[0]?.date).toBe(d(14));
+    expect(parsed.date).toBe(addDays(todayInIst(), 14));
   });
 });
 

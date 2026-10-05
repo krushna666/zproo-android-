@@ -1,3 +1,4 @@
+import { findMockAirline } from '@zproo/catalog';
 import { CABIN_CLASS_LABELS, type BookingDetails } from '@zproo/types';
 import { Button, FormAlert } from '@zproo/ui';
 import { formatMoney } from '@zproo/utils';
@@ -10,7 +11,14 @@ import { errorMessage } from '@/features/auth/errors';
 import { IST } from '@/features/buses/format';
 import { useBooking } from '@/features/checkout/api';
 import { ReferenceQr } from '@/features/checkout/ReferenceQr';
-import { duration, localDay, localTime } from '@/features/flights/format';
+import {
+  arrivalLabel,
+  clockTime,
+  duration,
+  localDateOf,
+  localDay,
+  localTime,
+} from '@/features/flights/format';
 
 const TITLE: Record<string, string> = {
   MR: 'Mr',
@@ -146,42 +154,46 @@ function Ticket({ booking }: { booking: BookingDetails }) {
               <p className="mt-3 text-sm font-bold">Seats: {bus.seats.join(', ')}</p>
             </div>
           ) : (
-            booking.flights.map((leg) => (
-              <div key={leg.sequence} className="rounded-xl border border-border p-4">
-                <div className="flex justify-between gap-3">
-                  <p className="font-bold">
-                    {leg.offer.airline.name} · {leg.offer.flightNumber}
-                  </p>
-                  <p className="font-bold text-primary">PNR {leg.pnr}</p>
-                </div>
-                <p className="text-xs text-muted">
-                  {localDay(leg.offer.departureAt, leg.offer.from.timezone)} ·{' '}
-                  {CABIN_CLASS_LABELS[leg.offer.cabin]} ({leg.offer.fareFamily})
-                </p>
-                <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-start gap-3">
-                  <div>
-                    <p className="text-2xl font-extrabold">
-                      {localTime(leg.offer.departureAt, leg.offer.from.timezone)}
+            booking.flights.map((leg) => {
+              const slice = leg.offer.slices[0];
+              const departure = slice?.segments[0]?.departure ?? '';
+              return (
+                <div key={leg.sequence} className="rounded-xl border border-border p-4">
+                  <div className="flex justify-between gap-3">
+                    <p className="font-bold">
+                      {slice?.segments[0]?.from} → {slice?.segments.at(-1)?.to} ·{' '}
+                      {leg.offer.carrier.name}
                     </p>
-                    <p className="text-sm">
-                      {leg.offer.from.code} · {leg.offer.from.city}
-                    </p>
+                    <p className="font-mono font-bold text-primary">PNR {leg.pnr}</p>
                   </div>
-                  <p className="pt-2 text-xs text-muted">
-                    {duration(leg.offer.durationMinutes)} ·{' '}
-                    {leg.offer.stops === 0 ? 'Non-stop' : `${leg.offer.stops} stop`}
+                  <p className="text-xs text-muted">
+                    {localDateOf(departure)} · {CABIN_CLASS_LABELS[leg.offer.cabin]} (
+                    {leg.fare.name}) · Baggage: cabin {leg.fare.cabinBaggageKg} kg, check-in{' '}
+                    {leg.fare.checkinBaggageKg} kg
                   </p>
-                  <div className="text-right">
-                    <p className="text-2xl font-extrabold">
-                      {localTime(leg.offer.arrivalAt, leg.offer.to.timezone)}
-                    </p>
-                    <p className="text-sm">
-                      {leg.offer.to.code} · {leg.offer.to.city}
-                    </p>
-                  </div>
+                  <ol className="mt-3 space-y-2">
+                    {slice?.segments.map((seg, i) => (
+                      <li
+                        key={`${seg.flightNo}-${i}`}
+                        className="grid grid-cols-[6rem_1fr_1fr] gap-3 text-sm"
+                      >
+                        <span className="font-bold">{seg.flightNo}</span>
+                        <span>
+                          <strong className="tabular-nums">{clockTime(seg.departure)}</strong>{' '}
+                          {seg.from} · Terminal {seg.terminalFrom}
+                        </span>
+                        <span>
+                          <strong className="tabular-nums">
+                            {arrivalLabel(seg.departure, seg.arrival)}
+                          </strong>{' '}
+                          {seg.to} · Terminal {seg.terminalTo} · {duration(seg.durationMin)}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </section>
 
@@ -263,9 +275,18 @@ function Ticket({ booking }: { booking: BookingDetails }) {
               <>
                 <li>Carry a valid government photo ID. Names must match the ID.</li>
                 <li>
-                  Check-in closes 45 minutes before domestic and 60 minutes before international
-                  departures.
+                  Web check-in opens 48 hours and closes 60 minutes before departure — check in on
+                  the airline website or app. Counters close 45 minutes before domestic departures.
                 </li>
+                {[...new Set(booking.flights.map((f) => f.offer.carrier.code))].map((code) => {
+                  const airline = findMockAirline(code);
+                  return (
+                    <li key={code}>
+                      {airline?.name ?? code} helpline:{' '}
+                      {airline?.phone ?? 'see the airline website'}
+                    </li>
+                  );
+                })}
                 <li>Cancellations and changes follow the airline fare rules shown at booking.</li>
               </>
             )}

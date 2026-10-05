@@ -1,26 +1,16 @@
 import { BUS_AMENITY_LABELS } from '@zproo/types';
 import { Button, cn, Input } from '@zproo/ui';
 import { formatMoney } from '@zproo/utils';
-import { Moon, Sun, Sunrise, Sunset } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
-import { Check, Group } from '@/components/filters/FilterControls';
+import { Check, Group, SlotGroup } from '@/components/filters/FilterControls';
 import { toggle } from '@/lib/list';
 import {
   activeBusFilterCount,
   BUS_TYPES,
   EMPTY_BUS_FILTERS,
-  TIME_SLOTS,
   type BusFacets,
   type BusFilters,
-  type TimeSlot,
 } from '../filters';
-
-const SLOT_ICONS: Record<TimeSlot, typeof Sun> = {
-  early: Sunrise,
-  morning: Sun,
-  afternoon: Sunset,
-  night: Moon,
-};
 
 interface BusFiltersPanelProps {
   facets: BusFacets;
@@ -56,47 +46,6 @@ function Chip({
     >
       {children}
     </button>
-  );
-}
-
-function SlotGroup({
-  title,
-  prefix,
-  selected,
-  onToggle,
-}: {
-  title: string;
-  prefix: 'dep' | 'arr';
-  selected: TimeSlot[];
-  onToggle: (slot: TimeSlot) => void;
-}) {
-  return (
-    <Group title={title}>
-      <div className="grid grid-cols-2 gap-2">
-        {TIME_SLOTS.map((slot) => {
-          const Icon = SLOT_ICONS[slot.id];
-          const on = selected.includes(slot.id);
-          return (
-            <button
-              key={slot.id}
-              type="button"
-              aria-pressed={on}
-              data-testid={`bus-filter-${prefix}-${slot.id}`}
-              onClick={() => onToggle(slot.id)}
-              className={cn(
-                'flex min-h-11 flex-col items-center gap-1 rounded-xl border px-2 py-2 text-xs font-medium transition-colors',
-                on
-                  ? 'border-primary bg-primary-light text-primary'
-                  : 'border-border hover:border-foreground/30',
-              )}
-            >
-              <Icon aria-hidden className="size-4" />
-              {slot.label}
-            </button>
-          );
-        })}
-      </div>
-    </Group>
   );
 }
 
@@ -152,13 +101,13 @@ export function BusFiltersPanel({
 
       <SlotGroup
         title={`Departure from ${fromCity}`}
-        prefix="dep"
+        testIdPrefix="bus-filter-dep"
         selected={value.departure}
         onToggle={(s) => set({ departure: toggle(value.departure, s) })}
       />
       <SlotGroup
         title={`Arrival at ${toCity}`}
-        prefix="arr"
+        testIdPrefix="bus-filter-arr"
         selected={value.arrival}
         onToggle={(s) => set({ arrival: toggle(value.arrival, s) })}
       />

@@ -1,31 +1,34 @@
-import { airportTimezone, findAirport } from '@zproo/config';
 import {
-  addDaysIso,
-  buildTimetable,
-  daysBetweenIso,
-  isoWeekday,
-  localDate,
-  MOCK_AIRLINES,
-  planSeats,
-  quoteFare,
-  unitHash,
-  zonedTimeToUtc,
+  FLIGHT_AIRPORT_CODES,
+  FLIGHT_HOLD_MINUTES,
+  fareFamiliesFor,
+  flightOfferDetails,
+  flightOfferSummary,
+  flightPlan,
+  flightPlans,
+  flightSearchFilters,
+  isInternationalAirport,
+  istDate,
+  parseFlightOfferId,
+  seatsNeeded,
+  staticOfferSigner,
   type FlightPlan,
 } from '@zproo/catalog';
+import { searchAirports } from '@zproo/config';
 import type {
-  AirportInfo,
-  CabinClass,
-  FlightOffer,
-  FlightSearchResult,
-  FlightSegmentInfo,
+  AirportSuggestion,
+  FareFamily,
+  FlightBookResponse,
+  FlightOfferSummary,
+  FlightSearchResponse,
   PaxCounts,
 } from '@zproo/types';
-import { flightPriceBreakdown, generateBookingReference, offerTotal } from '@zproo/utils';
+import { flightPriceBreakdown, generateBookingReference } from '@zproo/utils';
 import {
   bookFlightSchema,
+  flightAgeIssues,
   flightSearchInputFromParams,
   flightSearchSchema,
-  passengerAgeIssues,
 } from '@zproo/validation';
 import { activeHolds, newBooking } from './bookings';
 import {
@@ -33,189 +36,125 @@ import {
   db,
   fareUnavailable,
   invalid,
-  priceChanged,
   parse,
+  priceChanged,
   save,
-  StaticError,
   type StaticRequest,
   type StaticResult,
 } from './core';
 
-const CABIN_CODE: Record<CabinClass, string> = {
-  ECONOMY: 'E',
-  PREMIUM_ECONOMY: 'P',
-  BUSINESS: 'B',
-  FIRST: 'F',
-};
-const CODE_CABIN = Object.fromEntries(Object.entries(CABIN_CODE).map(([k, v]) => [v, k])) as Record<
-  string,
-  CabinClass
->;
-const OFFER_ID = /^mk_(f\d+)_(\d{4})(\d{2})(\d{2})_([EPBF])$/;
-const CUTOFF_MS = 2 * 60 * 60 * 1000;
+/** Sales close this long before departure (as the API's mock airline). */
+const SALES_CUTOFF_MS = 2 * 60 * 60 * 1000;
+const sign = staticOfferSigner;
 
-interface Service {
-  id: string;
-  plan: FlightPlan;
-}
-
-let services: Service[] | null = null;
-const timetable = () =>
-  (services ??= buildTimetable().map((plan, i) => ({ id: `f${i + 1}`, plan })));
-
-function airport(code: string): AirportInfo {
-  const a = findAirport(code);
-  if (!a) throw new Error(`Unknown airport ${code}`);
-  return {
-    code: a.code,
-    city: a.city,
-    name: a.name,
-    country: a.country,
-    timezone: airportTimezone(a),
-  };
-}
-
-const airlineName = (code: string) => MOCK_AIRLINES.find((a) => a.code === code)?.name ?? code;
-
-/** Seats this browser's bookings hold on a service. */
-function heldSeats(offerKey: string): number {
+/** Seats held or booked in this browser per itinerary (the static mode's flight_seat_holds). */
+function heldSeats(itineraryKey: string): number {
   return activeHolds()
-    .flatMap((h) => (h.kind === 'flight' && h.offerId === offerKey ? [h.seats] : []))
-    .reduce((a, b) => a + b, 0);
+    .filter(
+      (h): h is { kind: 'flight'; itineraryKey: string; seats: number } => h.kind === 'flight',
+    )
+    .filter((h) => h.itineraryKey === itineraryKey)
+    .reduce((sum, h) => sum + h.seats, 0);
 }
 
-function buildOffer(
-  service: Service,
-  date: string,
-  cabin: CabinClass,
-  pax: PaxCounts,
-): FlightOffer | null {
-  const { plan } = service;
-  const total = planSeats(plan)[cabin];
-  if (total === 0) return null;
-  const first = plan.segments[0];
-  const last = plan.segments.at(-1);
-  if (!first || !last) return null;
-  const origin = airport(first.from);
-  const now = new Date();
-  const segments: FlightSegmentInfo[] = plan.segments.map((s) => {
-    const from = airport(s.from);
-    const departure = zonedTimeToUtc(addDaysIso(date, s.dayOffset), s.departureTime, from.timezone);
-    return {
-      airline: { code: plan.airline, name: airlineName(plan.airline) },
-      flightNumber: plan.flightNumber,
-      from,
-      to: airport(s.to),
-      departureAt: departure.toISOString(),
-      arrivalAt: new Date(departure.getTime() + s.durationMinutes * 60_000).toISOString(),
-      durationMinutes: s.durationMinutes,
-      aircraft: plan.aircraft,
-    };
-  });
-  const firstSeg = segments[0] as FlightSegmentInfo;
-  const lastSeg = segments.at(-1) as FlightSegmentInfo;
-  if (Date.parse(firstSeg.departureAt) - now.getTime() < CUTOFF_MS) return null;
+const sellable = (plan: FlightPlan, now: Date) =>
+  (plan.segments[0]?.departureMs ?? 0) - now.getTime() > SALES_CUTOFF_MS;
 
-  const daysAhead = Math.max(0, daysBetweenIso(localDate(now, origin.timezone), date));
-  const key = `${service.id}:${date}:${cabin}`;
-  const load = Math.min(0.97, 0.35 + 0.5 * unitHash(`${key}:load`) + (daysAhead <= 3 ? 0.15 : 0));
-  const id = `mk_${service.id}_${date.replaceAll('-', '')}_${CABIN_CODE[cabin]}`;
-  const seatsLeft = total - Math.floor(total * load) - heldSeats(id);
-  const quote = quoteFare({
-    key,
-    baseFarePaise: plan.baseFareRupees * 100,
-    cabin,
-    daysAhead,
-    weekday: isoWeekday(date),
-    international: origin.country !== airport(last.to).country,
-  });
-  return {
-    id,
-    provider: 'mock',
-    airline: { code: plan.airline, name: airlineName(plan.airline) },
-    flightNumber: plan.flightNumber,
-    from: firstSeg.from,
-    to: lastSeg.to,
-    departureAt: firstSeg.departureAt,
-    arrivalAt: lastSeg.arrivalAt,
-    durationMinutes: Math.round(
-      (Date.parse(lastSeg.arrivalAt) - Date.parse(firstSeg.departureAt)) / 60_000,
-    ),
-    stops: segments.length - 1,
-    segments,
-    layovers: segments.slice(1).map((s, i) => ({
-      airport: s.from,
-      minutes: Math.round(
-        (Date.parse(s.departureAt) - Date.parse(segments[i]?.arrivalAt ?? s.departureAt)) / 60_000,
-      ),
-    })),
-    cabin,
-    fareFamily: quote.fareFamily,
-    refundable: quote.refundable,
-    cancellationFeePaise: quote.cancellationFeePaise,
-    baggage: quote.baggage,
-    seatsLeft: Math.max(0, seatsLeft),
-    fares: quote.fares,
-    totalPaise: offerTotal(quote.fares, pax),
-  };
-}
-
-function searchLeg(
+function search(
   from: string,
   to: string,
   date: string,
-  cabin: CabinClass,
+  cabin: FlightPlan['key']['cabin'],
   pax: PaxCounts,
-): FlightOffer[] {
-  const needed = pax.adults + pax.children;
-  return timetable()
-    .filter(
-      ({ plan }) =>
-        plan.segments[0]?.from === from &&
-        plan.segments.at(-1)?.to === to &&
-        plan.daysOfWeek.includes(isoWeekday(date)),
+  now: Date,
+) {
+  return flightPlans(from, to, date, cabin)
+    .filter((p) => sellable(p, now))
+    .map((p) =>
+      flightOfferSummary(p, {
+        pax,
+        heldSeats: heldSeats(p.itineraryKey),
+        issuedAtMs: now.getTime(),
+        sign,
+        today: istDate(now),
+      }),
     )
-    .map((s) => buildOffer(s, date, cabin, pax))
-    .filter((o): o is FlightOffer => o !== null && o.seatsLeft >= needed)
-    .sort((a, b) => a.totalPaise - b.totalPaise);
+    .filter((o) => o.seatsLeft >= seatsNeeded(pax));
 }
 
-function getOffer(offerId: string, pax: PaxCounts): FlightOffer | null {
-  const m = OFFER_ID.exec(offerId);
-  const cabin = m?.[5] ? CODE_CABIN[m[5]] : undefined;
-  const service = m && timetable().find((s) => s.id === m[1]);
-  if (!m || !cabin || !service) return null;
-  const date = `${m[2]}-${m[3]}-${m[4]}`;
-  if (!service.plan.daysOfWeek.includes(isoWeekday(date))) return null;
-  return buildOffer(service, date, cabin, pax);
+interface Quote {
+  plan: FlightPlan;
+  offer: FlightOfferSummary;
+  fare: FareFamily;
+  pax: PaxCounts;
+  date: string;
 }
 
-const count = (v: string | undefined, fallback: number) => {
-  const n = Number(v ?? fallback);
-  return Number.isInteger(n) && n >= 0 && n <= 9 ? n : fallback;
-};
+/** Same rules as the API's mock: expired, gone or sold out → null; a foreign fare → 'BAD_FARE'. */
+function quote(offerId: string, fareId: string, now: Date): Quote | 'BAD_FARE' | null {
+  const parsed = parseFlightOfferId(offerId, sign);
+  if (!parsed || now.getTime() >= parsed.expiresAtMs) return null;
+  const plan = flightPlan(parsed);
+  if (!plan || !sellable(plan, now)) return null;
+  const held = heldSeats(plan.itineraryKey);
+  if (plan.seats - held < seatsNeeded(parsed.pax)) return null;
+  const fare = fareFamiliesFor(plan, parsed.pax, istDate(now)).find((f) => f.fareId === fareId);
+  if (!fare) return 'BAD_FARE';
+  return {
+    plan,
+    offer: {
+      ...flightOfferSummary(plan, {
+        pax: parsed.pax,
+        heldSeats: held,
+        issuedAtMs: parsed.issuedAtMs,
+        sign,
+        today: istDate(now),
+      }),
+      offerId,
+    },
+    fare,
+    pax: parsed.pax,
+    date: parsed.date,
+  };
+}
 
 export function flightRoutes(req: StaticRequest): StaticResult | null {
   const { method, path, params } = req;
+  const now = new Date();
+
+  if (method === 'GET' && path === '/flights/airports') {
+    const q = (params.q ?? '').trim();
+    if (!/^[A-Za-z ]{1,40}$/.test(q))
+      throw invalid([{ path: 'query.q', message: 'Type a city or airport' }]);
+    const airports: AirportSuggestion[] = searchAirports(q, { only: FLIGHT_AIRPORT_CODES }).map(
+      (a) => ({ iata: a.code, city: a.city, name: a.name, country: a.country }),
+    );
+    return { data: airports };
+  }
 
   if (method === 'GET' && path === '/flights/search') {
-    const search = parse(
+    const s = parse(
       flightSearchSchema,
-      flightSearchInputFromParams({ get: (name) => params[name] ?? null }),
+      flightSearchInputFromParams({ get: (n) => params[n] ?? null }),
       'query',
     );
-    const pax = { adults: search.adults, children: search.children, infants: search.infants };
-    const legs =
-      search.tripType === 'ROUND_TRIP' && search.returnDate && search.legs[0]
-        ? [
-            search.legs[0],
-            { from: search.legs[0].to, to: search.legs[0].from, date: search.returnDate },
-          ]
-        : search.legs;
-    const result: FlightSearchResult = {
-      legs: legs.map((l) => ({ ...l, offers: searchLeg(l.from, l.to, l.date, search.cabin, pax) })),
-      passengers: pax,
-      cabin: search.cabin,
+    if (isInternationalAirport(s.from) || isInternationalAirport(s.to))
+      throw invalid([{ path: 'query.to', message: 'International flights are coming soon' }]);
+    const pax = { adults: s.adults, children: s.children, infants: s.infants };
+    const offers = search(s.from, s.to, s.date, s.cabin, pax, now);
+    const returnOffers = s.returnDate ? search(s.to, s.from, s.returnDate, s.cabin, pax, now) : [];
+    const result: FlightSearchResponse = {
+      searchId: `srch_static_${s.from}${s.to}_${s.date}`,
+      serverNow: now.toISOString(),
+      from: s.from,
+      to: s.to,
+      date: s.date,
+      returnDate: s.returnDate ?? null,
+      pax,
+      cabin: s.cabin,
+      offers,
+      returnOffers,
+      filters: flightSearchFilters([...offers, ...returnOffers]),
       demo: true,
     };
     return { data: result };
@@ -226,74 +165,136 @@ export function flightRoutes(req: StaticRequest): StaticResult | null {
     const key = idempotencyKey(req);
     const input = parse(bookFlightSchema, req.body, 'body');
     const existing = db().bookings.find((b) => b.userId === user.id && b.idempotencyKey === key);
-    if (existing) return { status: 201, data: existing.details };
+    if (existing) {
+      const replay: FlightBookResponse = {
+        bookingRef: existing.details.reference,
+        status: 'HELD',
+        holdExpiresAt: existing.details.holdExpiresAt ?? now.toISOString(),
+        serverNow: now.toISOString(),
+        priceBreakdown: existing.details.price,
+      };
+      return { status: 201, data: replay };
+    }
 
-    const count = (t: string) => input.passengers.filter((p) => p.type === t).length;
-    const pax = { adults: count('ADULT'), children: count('CHILD'), infants: count('INFANT') };
-    if (pax.adults < 1) {
-      throw invalid([{ path: 'body.passengers', message: 'At least one adult must travel' }]);
-    }
-    const offers = input.offerIds.map((id) => getOffer(id, pax));
-    if (offers.some((o) => !o)) throw fareUnavailable();
-    const list = offers as FlightOffer[];
-    const first = list[0] as FlightOffer;
-    const travelDate = localDate(new Date(first.departureAt), first.from.timezone);
-    const ages = passengerAgeIssues(input.passengers, travelDate);
-    if (ages.length > 0) {
-      throw invalid(
-        ages.map((i) => ({ path: `body.passengers.${i.index}.dateOfBirth`, message: i.message })),
-      );
-    }
-    const price = flightPriceBreakdown(list, pax);
-    if (price.totalPaise !== input.expectedTotalPaise)
-      throw priceChanged(input.expectedTotalPaise, price.totalPaise);
-    const seats = pax.adults + pax.children;
-    if (list.some((o) => o.seatsLeft < seats)) throw fareUnavailable();
-    const details = newBooking({
-      reference: generateBookingReference('FLIGHT'),
-      serviceType: 'FLIGHT',
-      price,
-      travelDate,
-      contact: input.contact,
-      passengers: input.passengers.map((p, i) => ({
-        id: `p${i + 1}`,
-        type: p.type,
-        title: p.title,
-        firstName: p.firstName,
-        lastName: p.lastName,
-        dateOfBirth: p.dateOfBirth ?? null,
-        age: null,
-        gender: p.gender,
-        seatNumber: null,
-      })),
-      flights: list.map((offer, i) => ({ sequence: i + 1, offer, pnr: null, tickets: [] })),
-      bus: null,
-    });
+    const leg = (offerId: string, fareId: string, field: string) => {
+      const q = quote(offerId, fareId, now);
+      if (q === null) throw fareUnavailable();
+      if (q === 'BAD_FARE') throw invalid([{ path: `body.${field}`, message: 'Invalid fare' }]);
+      return q;
+    };
+    const outbound = leg(input.offerId, input.fareId, 'fareId');
+    const inbound =
+      input.returnOfferId && input.returnFareId
+        ? leg(input.returnOfferId, input.returnFareId, 'returnFareId')
+        : null;
+    const legs = inbound ? [outbound, inbound] : [outbound];
+    const pax = outbound.pax;
+
+    const issues: { path: string; message: string }[] = [];
+    if (
+      inbound &&
+      (inbound.plan.key.from !== outbound.plan.key.to ||
+        inbound.plan.key.to !== outbound.plan.key.from ||
+        inbound.date < outbound.date ||
+        JSON.stringify(inbound.pax) !== JSON.stringify(pax))
+    )
+      issues.push({ path: 'body.returnOfferId', message: 'Choose a return flight for this trip' });
+    const count = (t: string) => input.travellers.filter((p) => p.type === t).length;
+    if (
+      count('ADULT') !== pax.adults ||
+      count('CHILD') !== pax.children ||
+      count('INFANT') !== pax.infants
+    )
+      issues.push({ path: 'body.travellers', message: 'Travellers must match your search' });
+    for (const issue of flightAgeIssues(input.travellers, outbound.date, istDate(now)))
+      issues.push({ path: `body.travellers.${issue.index}.dob`, message: issue.message });
+    if (issues.length > 0) throw invalid(issues);
+
+    const price = flightPriceBreakdown(
+      legs.map((l) => l.fare),
+      pax,
+    );
+    if (price.totalPaise !== input.expectedTotal)
+      throw priceChanged(input.expectedTotal, price.totalPaise);
+
+    const holdMinutes = Math.min(
+      FLIGHT_HOLD_MINUTES,
+      ...legs.map((l) => l.plan.airlineTimeLimitMin),
+    );
+    const details = newBooking(
+      {
+        reference: generateBookingReference('FLIGHT'),
+        serviceType: 'FLIGHT',
+        price,
+        travelDate: outbound.date,
+        contact: { email: input.contact.email, phone: input.contact.mobile },
+        // Static mode stores no passport details at all.
+        passengers: input.travellers.map((t, i) => ({
+          id: `p${i + 1}`,
+          type: t.type,
+          title: t.title,
+          firstName: t.firstName,
+          lastName: t.lastName,
+          dateOfBirth: t.dob ?? null,
+          travellingWith: t.infantOfIndex ?? null,
+          age: null,
+          gender: t.gender,
+          seatNumber: null,
+        })),
+        flights: legs.map((l, i) => ({
+          sequence: i + 1,
+          offer: l.offer,
+          fare: l.fare,
+          pnr: null,
+          tickets: [],
+        })),
+        bus: null,
+      },
+      holdMinutes,
+    );
     db().bookings.push({
       userId: user.id,
       idempotencyKey: key,
       details,
-      holds: list.map((o) => ({ kind: 'flight' as const, offerId: o.id, seats })),
+      holds: legs.map((l) => ({
+        kind: 'flight' as const,
+        itineraryKey: l.plan.itineraryKey,
+        seats: seatsNeeded(pax),
+      })),
     });
     save();
-    return { status: 201, data: details, message: 'Booking created. Complete payment to confirm.' };
+    const result: FlightBookResponse = {
+      bookingRef: details.reference,
+      status: 'HELD',
+      holdExpiresAt: details.holdExpiresAt ?? now.toISOString(),
+      serverNow: now.toISOString(),
+      priceBreakdown: details.price,
+    };
+    return { status: 201, data: result, message: 'Seats held. Complete payment to confirm.' };
   }
 
   const offerMatch = /^\/flights\/([^/]+)$/.exec(path);
   if (method === 'GET' && offerMatch) {
-    const pax = {
-      adults: Math.max(1, count(params.adults, 1)),
-      children: count(params.children, 0),
-      infants: count(params.infants, 0),
+    const offerId = decodeURIComponent(offerMatch[1] as string);
+    const parsed = parseFlightOfferId(offerId, sign);
+    if (!parsed) throw fareUnavailable();
+    const expired = now.getTime() >= parsed.expiresAtMs;
+    if (expired && params.reprice !== '1') throw fareUnavailable();
+    const plan = flightPlan(parsed);
+    if (!plan || !sellable(plan, now)) throw fareUnavailable();
+    const held = heldSeats(plan.itineraryKey);
+    if (plan.seats - held < seatsNeeded(parsed.pax)) throw fareUnavailable();
+    return {
+      data: flightOfferDetails(plan, {
+        pax: parsed.pax,
+        heldSeats: held,
+        issuedAtMs: expired ? now.getTime() : parsed.issuedAtMs,
+        sign,
+        today: istDate(now),
+        serverNow: now.toISOString(),
+        replacesOfferId: expired ? offerId : null,
+      }),
     };
-    const offer = getOffer(decodeURIComponent(offerMatch[1] as string), pax);
-    if (!offer)
-      throw new StaticError(
-        404,
-        'NOT_FOUND',
-        'This fare is no longer available. Please search again.',
-      );
-    return { data: offer };
   }
   return null;
 }

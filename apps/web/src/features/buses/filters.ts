@@ -1,5 +1,6 @@
 import type { BusAmenity, BusTripSummary } from '@zproo/types';
 import { BUS_AMENITY_LABELS } from '@zproo/types';
+import { inSlots, listParam, TIME_SLOTS, type TimeSlot } from '@/components/filters/timeSlots';
 import { istHour } from './format';
 
 /*
@@ -25,13 +26,7 @@ export const BUS_TYPES = [
 ] as const;
 export type BusTypeFilter = (typeof BUS_TYPES)[number]['id'];
 
-export const TIME_SLOTS = [
-  { id: 'early', label: 'Before 6 AM', from: 0, to: 6 },
-  { id: 'morning', label: '6 AM–12 PM', from: 6, to: 12 },
-  { id: 'afternoon', label: '12 PM–6 PM', from: 12, to: 18 },
-  { id: 'night', label: 'After 6 PM', from: 18, to: 24 },
-] as const;
-export type TimeSlot = (typeof TIME_SLOTS)[number]['id'];
+export { TIME_SLOTS, type TimeSlot };
 
 export const AMENITY_FILTERS = Object.keys(BUS_AMENITY_LABELS) as BusAmenity[];
 
@@ -58,11 +53,7 @@ export const EMPTY_BUS_FILTERS: BusFilters = {
   tracking: false,
 };
 
-const list = <T extends string>(value: string | null, allowed: readonly T[]): T[] =>
-  (value ?? '')
-    .split(',')
-    .filter((v): v is T => (allowed as readonly string[]).includes(v))
-    .filter((v, i, all) => all.indexOf(v) === i);
+const list = listParam;
 
 /** Reads filters and sort from the URL; unknown values are ignored. */
 export function readBusFilters(params: URLSearchParams): { filters: BusFilters; sort: BusSortId } {
@@ -138,10 +129,6 @@ function matchesType(trip: BusTripSummary, type: BusTypeFilter): boolean {
       return trip.busType.seater;
   }
 }
-
-const inSlots = (hour: number, slots: TimeSlot[]) =>
-  slots.length === 0 ||
-  TIME_SLOTS.some((s) => slots.includes(s.id) && hour >= s.from && hour < s.to);
 
 /**
  * AC and Non AC are alternatives (either matches), as are Sleeper and Seater; the two groups

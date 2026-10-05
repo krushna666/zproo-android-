@@ -195,6 +195,7 @@ export function busRoutes(req: StaticRequest): StaticResult | null {
         title: busTitle(t.gender, t.age),
         ...splitName(t.name),
         dateOfBirth: null,
+        travellingWith: null,
         age: t.age,
         gender: t.gender,
         seatNumber: t.seatNo,

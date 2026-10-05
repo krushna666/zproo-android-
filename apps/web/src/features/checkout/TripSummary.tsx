@@ -20,5 +20,5 @@ export function TripSummary({
       />
     );
   }
-  return <ItinerarySummary offers={booking.flights.map((f) => f.offer)} detailed={detailed} />;
+  return <ItinerarySummary legs={booking.flights} detailed={detailed} />;
 }

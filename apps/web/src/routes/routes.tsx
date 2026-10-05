@@ -34,8 +34,13 @@ export const routes: RouteObject[] = [
       { path: '/privacy', lazy: page(() => import('@/pages/company/PrivacyPage')) },
       { path: '/refund-policy', lazy: page(() => import('@/pages/company/RefundPolicyPage')) },
       { path: '/flights', lazy: page(() => import('@/pages/flights/FlightsPage')) },
+      { path: '/flights/search', lazy: page(() => import('@/pages/flights/FlightResultsPage')) },
+      // Old results URL (shared links): same page.
       { path: '/flights/results', lazy: page(() => import('@/pages/flights/FlightResultsPage')) },
-      { path: '/flights/:id', lazy: page(() => import('@/pages/flights/FlightDetailsPage')) },
+      {
+        path: '/flights/offer/:offerId',
+        lazy: page(() => import('@/pages/flights/FlightDetailsPage')),
+      },
       { path: '/buses', lazy: page(() => import('@/pages/buses/BusesPage')) },
       { path: '/buses/search', lazy: page(() => import('@/pages/buses/BusResultsPage')) },
       // Old results URL (shared links): same page.

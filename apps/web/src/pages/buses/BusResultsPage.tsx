@@ -1,6 +1,7 @@
 import { findCity } from '@zproo/config';
 import {
   addDays,
+  BUS_MAX_DAYS_AHEAD,
   busSearchInputFromParams,
   busSearchSchema,
   todayInIst,
@@ -9,7 +10,6 @@ import {
 import {
   Badge,
   Button,
-  cn,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -26,7 +26,8 @@ import { Seo } from '@/components/seo/Seo';
 import { useBusSearch } from '@/features/buses/api';
 import { BusCard } from '@/features/buses/components/BusCard';
 import { BusFiltersPanel } from '@/features/buses/components/BusFiltersPanel';
-import { DateStrip } from '@/features/buses/components/DateStrip';
+import { DateStrip } from '@/components/results/DateStrip';
+import { SortChips } from '@/components/results/SortChips';
 import {
   activeBusFilterCount,
   activeChips,
@@ -89,31 +90,6 @@ function InvalidSearch({
   );
 }
 
-function SortChips({ sort, onChange }: { sort: BusSortId; onChange: (s: BusSortId) => void }) {
-  return (
-    <div role="radiogroup" aria-label="Sort buses" className="flex gap-2 overflow-x-auto pb-1">
-      {BUS_SORTS.map((s) => (
-        <button
-          key={s.id}
-          type="button"
-          role="radio"
-          aria-checked={sort === s.id}
-          data-testid={`bus-sort-${s.id}`}
-          onClick={() => onChange(s.id)}
-          className={cn(
-            'min-h-11 shrink-0 rounded-full border px-4 text-sm font-semibold transition-colors',
-            sort === s.id
-              ? 'border-primary bg-primary text-primary-foreground'
-              : 'border-border bg-card hover:border-foreground/30',
-          )}
-        >
-          {s.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function Results({ search }: { search: BusSearch }) {
   const [params, setParams] = useSearchParams();
   const { data, isPending, error, refetch, isFetching } = useBusSearch(search);
@@ -169,6 +145,8 @@ function Results({ search }: { search: BusSearch }) {
 
       <div className="mt-4">
         <DateStrip
+          testIdPrefix="bus-date-strip"
+          maxDaysAhead={BUS_MAX_DAYS_AHEAD}
           date={search.date}
           hrefFor={hrefFor}
           prices={data && trips.length > 0 ? { [search.date]: data.filters.priceMin } : {}}
@@ -267,7 +245,13 @@ function Results({ search }: { search: BusSearch }) {
             </Button>
           </div>
 
-          <SortChips sort={sort} onChange={(s) => update(filters, s)} />
+          <SortChips
+            options={BUS_SORTS}
+            value={sort}
+            onChange={(s) => update(filters, s)}
+            label="Sort buses"
+            testIdPrefix="bus-sort"
+          />
 
           {chips.length > 0 && (
             <ul className="flex flex-wrap gap-2" aria-label="Active filters">

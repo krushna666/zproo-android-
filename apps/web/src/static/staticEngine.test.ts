@@ -8,7 +8,9 @@ import type {
   BusSeatMap,
   BusTripDetails,
   CancellationQuote,
-  FlightSearchResult,
+  FlightBookResponse,
+  FlightOfferDetails,
+  FlightSearchResponse,
   OtpSent,
   PaymentOrder,
   VerifyOtpResult,
@@ -96,70 +98,81 @@ describe('static engine: accounts', () => {
 });
 
 describe('static engine: flights', () => {
-  it('searches, books, pays and issues tickets', async () => {
-    const search = await data<FlightSearchResult>(
-      api.get('/flights/search', { params: { from: 'PNQ', to: 'DEL', date: day(20), adults: 1 } }),
+  it('searches, re-prices, books, pays, issues tickets and cancels', async () => {
+    const search = await data<FlightSearchResponse>(
+      api.get('/flights/search', { params: { from: 'PNQ', to: 'DEL', date: day(20), adults: 2 } }),
     );
-    expect(search.demo).toBe(true);
-    const [offer] = search.legs[0]?.offers ?? [];
+    expect(search).toMatchObject({ from: 'PNQ', to: 'DEL', demo: true, returnDate: null });
+    expect(search.offers.length).toBeGreaterThanOrEqual(10);
+    const offer = search.offers.find((o) => o.seatsLeft >= 4);
     if (!offer) throw new Error('no offers');
-    expect(offer).toMatchObject({ from: { code: 'PNQ' }, to: { code: 'DEL' } });
+    const details = await data<FlightOfferDetails>(api.get(`/flights/${offer.offerId}`));
+    const flexi = details.fareFamilies[1];
+    if (!flexi) throw new Error('no fare');
 
     expect((await fail(book('/flights/book', {}))).status).toBe(401);
     await signUp();
-    const passengers = [
+    const travellers = [
       { type: 'ADULT', title: 'MR', firstName: 'Amit', lastName: 'Sharma', gender: 'MALE' },
+      { type: 'ADULT', title: 'MS', firstName: 'Priya', lastName: 'Sharma', gender: 'FEMALE' },
     ];
-    const contact = { email: 'amit@example.com', phone: '9876543210' };
-    const changed = await fail(
-      book('/flights/book', { offerIds: [offer.id], passengers, contact, expectedTotalPaise: 100 }),
-    );
+    const contact = { email: 'amit@example.com', mobile: '9876543210' };
+    const body = { offerId: offer.offerId, fareId: flexi.fareId, travellers, contact };
+    const changed = await fail(book('/flights/book', { ...body, expectedTotal: 100 }));
     expect(changed.body.error).toMatchObject({
       code: 'PRICE_CHANGED',
-      details: { oldTotal: 100, newTotal: offer.totalPaise },
+      details: { oldTotal: 100, newTotal: flexi.total },
     });
+    const wrongFare = await fail(
+      book('/flights/book', { ...body, fareId: 'fare_000000_flexi', expectedTotal: flexi.total }),
+    );
+    expect(wrongFare.body.error.details.issues).toEqual([
+      { path: 'body.fareId', message: 'Invalid fare' },
+    ]);
 
     const key = crypto.randomUUID();
-    const booking = await data<BookingDetails>(
-      book(
-        '/flights/book',
-        { offerIds: [offer.id], passengers, contact, expectedTotalPaise: offer.totalPaise },
-        key,
-      ),
+    const held = await data<FlightBookResponse>(
+      book('/flights/book', { ...body, expectedTotal: flexi.total }, key),
     );
-    expect(booking).toMatchObject({ status: 'HELD', serviceType: 'FLIGHT' });
-    const retry = await data<BookingDetails>(
-      book(
-        '/flights/book',
-        { offerIds: [offer.id], passengers, contact, expectedTotalPaise: offer.totalPaise },
-        key,
-      ),
+    expect(held).toMatchObject({ status: 'HELD', priceBreakdown: { totalPaise: flexi.total } });
+    const retry = await data<FlightBookResponse>(
+      book('/flights/book', { ...body, expectedTotal: flexi.total }, key),
     );
-    expect(retry.reference).toBe(booking.reference);
+    expect(retry.bookingRef).toBe(held.bookingRef);
+    const after = await data<FlightOfferDetails>(api.get(`/flights/${offer.offerId}`));
+    expect(after.seatsLeft).toBe(details.seatsLeft - 2);
 
-    const order = await data<PaymentOrder>(
-      api.post('/payments/create', { bookingRef: booking.reference }),
-    );
-    expect(order.amount).toBe(offer.totalPaise);
-    await api.post('/payments/mock/complete', { orderId: order.orderId, outcome: 'failure' });
-    await pay(booking.reference);
-
-    const confirmed = await data<BookingDetails>(api.get(`/bookings/${booking.reference}`));
+    await pay(held.bookingRef);
+    const confirmed = await data<BookingDetails>(api.get(`/bookings/${held.bookingRef}`));
     expect(confirmed.status).toBe('CONFIRMED');
     expect(confirmed.flights[0]?.pnr).toMatch(/^[A-Z0-9]{6}$/);
+    expect(confirmed.flights[0]?.tickets).toHaveLength(2);
+    expect(confirmed.flights[0]?.tickets[0]?.segmentKey).toBe('PNQ-DEL');
     const list = await data<BookingListItem[]>(api.get('/bookings'));
     expect(list).toEqual([
-      expect.objectContaining({ reference: booking.reference, title: 'PNQ → DEL' }),
+      expect.objectContaining({ reference: held.bookingRef, title: 'PNQ → DEL' }),
     ]);
+
+    const quote = await data<CancellationQuote>(
+      api.get(`/bookings/${held.bookingRef}/cancellation`),
+    );
+    expect(quote).toMatchObject({
+      cancellable: true,
+      refundAmount: flexi.total - 2 * (flexi.cancellationFee ?? 0) - 30_000,
+    });
+    const cancelled = await data<{ status: string }>(
+      api.post(`/flights/${held.bookingRef}/cancel`),
+    );
+    expect(cancelled.status).toBe('REFUND_PENDING');
   });
 
-  it('returns both legs for a round trip', async () => {
-    const search = await data<FlightSearchResult>(
+  it('returns return offers for a round trip', async () => {
+    const search = await data<FlightSearchResponse>(
       api.get('/flights/search', {
-        params: { trip: 'ROUND_TRIP', from: 'BOM', to: 'GOI', date: day(20), return: day(24) },
+        params: { from: 'BOM', to: 'GOI', date: day(20), returnDate: day(24) },
       }),
     );
-    expect(search.legs.map((l) => `${l.from}-${l.to}`)).toEqual(['BOM-GOI', 'GOI-BOM']);
+    expect(search.returnOffers[0]?.slices[0]?.segments[0]?.from).toBe('GOI');
   });
 });
 

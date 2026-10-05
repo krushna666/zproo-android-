@@ -24,29 +24,19 @@ const qs = (params: Record<string, string | number | undefined>) => {
 };
 
 // ───────── Flights ─────────
-// One-way / round trip: ?trip=ROUND_TRIP&from=PNQ&to=DEL&date=…&return=…
-// Multi-city:           ?trip=MULTI_CITY&legs=PNQ.DEL.2026-10-25,DEL.GOI.2026-10-28
+// /flights/search?from=PNQ&to=DEL&date=…[&returnDate=…]&adults=1&children=0&infants=0&cabin=ECONOMY
 
-export function flightsUrl(s: FlightSearch): string {
-  const travellers = {
+export function flightsUrl(s: FlightSearch, extra = ''): string {
+  return `/flights/search?${qs({
+    from: s.from,
+    to: s.to,
+    date: s.date,
+    returnDate: s.returnDate,
     adults: s.adults,
-    children: s.children || undefined,
-    infants: s.infants || undefined,
+    children: s.children,
+    infants: s.infants,
     cabin: s.cabin,
-  };
-  if (s.tripType === 'MULTI_CITY') {
-    const legs = s.legs.map((l) => `${l.from}.${l.to}.${l.date}`).join(',');
-    return `/flights/results?${qs({ trip: s.tripType, legs, ...travellers })}`;
-  }
-  const [leg] = s.legs;
-  return `/flights/results?${qs({
-    trip: s.tripType,
-    from: leg?.from,
-    to: leg?.to,
-    date: leg?.date,
-    return: s.tripType === 'ROUND_TRIP' ? s.returnDate : undefined,
-    ...travellers,
-  })}`;
+  })}${extra ? `&${extra}` : ''}`;
 }
 
 /** Parsing lives in @zproo/validation so the API reads search URLs exactly like the web app. */
@@ -87,7 +77,7 @@ export const parcelUrl = (s: ParcelQuote) =>
 // ───────── Date-free links for prerendered merchandising ─────────
 
 export const flightDealUrl = (from: string, to: string) =>
-  `/flights/results?${qs({ trip: 'ONE_WAY', from, to, adults: 1, cabin: 'ECONOMY' })}`;
+  `/flights/search?${qs({ from, to, adults: 1, cabin: 'ECONOMY' })}`;
 export const busRouteUrl = (from: string, to: string) => `/buses/search?${qs({ from, to })}`;
 export const trainRouteUrl = (from: string, to: string) => `/trains/results?${qs({ from, to })}`;
 export const hotelCityUrl = (city: string) =>

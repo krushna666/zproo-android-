@@ -128,7 +128,7 @@ export default function MyBookingsPage() {
                     <ChevronRight aria-hidden className="ml-auto size-4 text-muted" />
                   </span>
                 </Link>
-                {b.serviceType === 'BUS' && b.status === 'CONFIRMED' && tab === 'upcoming' && (
+                {b.status === 'CONFIRMED' && tab === 'upcoming' && (
                   <div className="flex justify-end">
                     <CancelBooking booking={b} />
                   </div>

@@ -1,4 +1,9 @@
-import { busRefund } from '@zproo/catalog';
+import {
+  busRefund,
+  FLIGHT_CANCEL_CUTOFF_HOURS,
+  findMockAirline,
+  flightRefund,
+} from '@zproo/catalog';
 import { DEMO_COUPONS, findCity, type DemoCoupon } from '@zproo/config';
 import type {
   BookingDetails,
@@ -52,14 +57,14 @@ const withClock = (d: BookingDetails): BookingDetails => ({
   serverNow: new Date().toISOString(),
 });
 
-export function newBooking(input: NewBooking): BookingDetails {
+export function newBooking(input: NewBooking, minutes: number = holdMinutes): BookingDetails {
   const now = Date.now();
   return {
     ...input,
     status: 'HELD',
     paymentStatus: 'CREATED',
     createdAt: new Date(now).toISOString(),
-    holdExpiresAt: new Date(now + holdMinutes * 60_000).toISOString(),
+    holdExpiresAt: new Date(now + minutes * 60_000).toISOString(),
     serverNow: new Date(now).toISOString(),
     coupon: null,
     demo: true,
@@ -186,18 +191,16 @@ function listItem(b: StoredBooking): BookingListItem {
       createdAt: d.createdAt,
     };
   }
-  const first = d.flights[0]?.offer;
-  const last = d.flights.at(-1)?.offer;
-  const roundTrip = d.flights.length === 2 && first?.from.code === last?.to.code;
+  const first = d.flights[0]?.offer.slices[0];
+  const origin = first?.segments[0]?.from;
+  const destination = first?.segments.at(-1)?.to;
+  const roundTrip = d.flights.length === 2;
   return {
     reference: d.reference,
     serviceType: 'FLIGHT',
     status: d.status,
     paymentStatus: d.paymentStatus,
-    title:
-      first && last
-        ? `${first.from.code} ${roundTrip ? '⇄' : '→'} ${roundTrip ? first.to.code : last.to.code}`
-        : 'Booking',
+    title: origin && destination ? `${origin} ${roundTrip ? '⇄' : '→'} ${destination}` : 'Booking',
     subtitle: `${n} traveller${n === 1 ? '' : 's'} · ${d.flights.length} flight${d.flights.length === 1 ? '' : 's'}`,
     travelDate: d.travelDate,
     totalPaise: d.price.totalPaise,
@@ -208,14 +211,20 @@ function listItem(b: StoredBooking): BookingListItem {
 /** Airline-style PNR and ticket numbers, or an operator PNR for buses. */
 function issueTickets(d: BookingDetails): void {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  d.flights = d.flights.map((leg) => ({
-    ...leg,
-    pnr: Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join(''),
-    tickets: d.passengers.map((p) => ({
-      passengerId: p.id,
-      ticketNumber: `999${randomDigits(10)}`,
-    })),
-  }));
+  d.flights = d.flights.map((leg) => {
+    const slice = leg.offer.slices[0];
+    const segmentKey = `${slice?.segments[0]?.from ?? ''}-${slice?.segments.at(-1)?.to ?? ''}`;
+    const prefix = findMockAirline(leg.offer.carrier.code)?.ticketPrefix ?? '980';
+    return {
+      ...leg,
+      pnr: Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join(''),
+      tickets: d.passengers.map((p) => ({
+        passengerId: p.id,
+        ticketNumber: `${prefix}${randomDigits(10)}`,
+        segmentKey,
+      })),
+    };
+  });
   if (d.bus) d.bus = { ...d.bus, pnr: `${d.bus.trip.operator.code}${randomDigits(7)}` };
 }
 
@@ -224,6 +233,28 @@ function cancellationQuote(d: BookingDetails): CancellationQuote {
   const base = { bookingRef: d.reference, refundAmount: 0, refundPercent: 0 };
   if (d.status !== 'CONFIRMED')
     return { ...base, cancellable: false, reason: 'Only confirmed bookings can be cancelled.' };
+  const firstLeg = d.flights[0];
+  if (firstLeg) {
+    const departure = firstLeg.offer.slices[0]?.segments[0]?.departure ?? '';
+    if ((Date.parse(departure) - Date.now()) / 3_600_000 < FLIGHT_CANCEL_CUTOFF_HOURS)
+      return {
+        ...base,
+        cancellable: false,
+        reason: 'Cancellation is closed for this flight. Please contact the airline.',
+      };
+    const count = (t: string) => d.passengers.filter((p) => p.type === t).length;
+    const refund = flightRefund(
+      d.flights,
+      { adults: count('ADULT'), children: count('CHILD'), infants: count('INFANT') },
+      d.price.totalPaise,
+    );
+    return {
+      ...base,
+      cancellable: true,
+      refundAmount: refund,
+      refundPercent: d.price.totalPaise > 0 ? Math.floor((refund * 100) / d.price.totalPaise) : 0,
+    };
+  }
   if (!d.bus)
     return {
       ...base,
@@ -275,11 +306,12 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
     return { data: { bookingRef: d.reference, status: 'EXPIRED' }, message: 'Hold released' };
   }
 
-  const cancel = /^\/buses\/([^/]+)\/cancel$/.exec(path);
+  const cancel = /^\/(buses|flights)\/([^/]+)\/cancel$/.exec(path);
   if (method === 'POST' && cancel) {
-    const booking = ownBooking(cancel[1] as string);
+    const booking = ownBooking(cancel[2] as string);
     const d = booking.details;
-    if (d.serviceType !== 'BUS') throw notFound('Booking not found');
+    if (d.serviceType !== (cancel[1] === 'buses' ? 'BUS' : 'FLIGHT'))
+      throw notFound('Booking not found');
     const q = cancellationQuote(d);
     if (!q.cancellable)
       throw new StaticError(409, 'INVALID_STATE', q.reason ?? 'This booking can’t be cancelled');

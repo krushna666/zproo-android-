@@ -1,14 +1,15 @@
-import { dayShift, duration, localHour, localTime } from '@/features/flights/format';
+import { clockTime, dayShift, duration, localHourOf } from '@/features/flights/format';
 
 export const IST = 'Asia/Kolkata';
 
+/* Bus times are local ISO strings with the +05:30 offset, so wall-clock values are read directly. */
+
 /** "21:30" in India time. */
-export const istTime = (iso: string) => localTime(iso, IST);
-export const istHour = (iso: string) => localHour(iso, IST);
+export const istTime = clockTime;
+export const istHour = localHourOf;
 
 /** Calendar days between departure and arrival in IST (0, +1, +2…). */
-export const busDayShift = (departure: string, arrival: string) =>
-  dayShift(departure, IST, arrival, IST);
+export const busDayShift = dayShift;
 
 /** "06:15 +1" — arrival time with the day shift the SOP asks for. */
 export function arrivalLabel(departure: string, arrival: string): string {

@@ -1,4 +1,4 @@
-import { addDays, todayInIst, todayIso } from '@zproo/validation';
+import { addDays, todayInIst } from '@zproo/validation';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
@@ -18,16 +18,18 @@ function renderWidget() {
   return { router, location };
 }
 
-const inDays = (n: number) => addDays(todayIso(), n);
+const inDays = (n: number) => addDays(todayInIst(), n);
 
 describe('SearchWidget — flights', () => {
+  const search = () => screen.getByRole('button', { name: 'Search flights' });
+
   it('submits the default Pune → Delhi one-way search', async () => {
     const user = userEvent.setup();
     const { location } = renderWidget();
-    await user.click(screen.getByRole('button', { name: 'Search Flights' }));
+    await user.click(search());
     expect(await screen.findByText('results page')).toBeInTheDocument();
     expect(location()).toBe(
-      `/flights/results?trip=ONE_WAY&from=PNQ&to=DEL&date=${inDays(7)}&adults=1&cabin=ECONOMY`,
+      `/flights/search?from=PNQ&to=DEL&date=${inDays(7)}&adults=1&children=0&infants=0&cabin=ECONOMY`,
     );
   });
 
@@ -40,11 +42,11 @@ describe('SearchWidget — flights', () => {
     expect(to).toHaveAttribute('aria-expanded', 'true');
     expect(
       within(screen.getByRole('listbox', { name: 'To' })).getAllByRole('option')[0],
-    ).toHaveTextContent('Goa');
+    ).toHaveTextContent('Goa (GOI)');
     await user.keyboard('{Enter}');
-    expect(to).toHaveValue('Goa');
+    expect(to).toHaveValue('Goa (GOI)');
     expect(to).toHaveAttribute('aria-expanded', 'false');
-    await user.click(screen.getByRole('button', { name: 'Search Flights' }));
+    await user.click(search());
     await screen.findByText('results page');
     expect(location()).toContain('from=PNQ&to=GOI');
   });
@@ -52,9 +54,9 @@ describe('SearchWidget — flights', () => {
   it('swaps origin and destination', async () => {
     const user = userEvent.setup();
     const { location } = renderWidget();
-    await user.click(screen.getByRole('button', { name: 'Swap origin and destination' }));
-    expect(screen.getByRole('combobox', { name: 'From' })).toHaveValue('New Delhi');
-    await user.click(screen.getByRole('button', { name: 'Search Flights' }));
+    await user.click(screen.getByRole('button', { name: 'Swap airports' }));
+    expect(screen.getByRole('combobox', { name: 'From' })).toHaveValue('New Delhi (DEL)');
+    await user.click(search());
     await screen.findByText('results page');
     expect(location()).toContain('from=DEL&to=PNQ');
   });
@@ -65,55 +67,39 @@ describe('SearchWidget — flights', () => {
     const to = screen.getByRole('combobox', { name: 'To' });
     await user.click(to);
     await user.type(to, 'pnq{Enter}');
-    await user.click(screen.getByRole('button', { name: 'Search Flights' }));
-    expect(await screen.findByText('From and To must be different')).toBeInTheDocument();
+    await user.click(search());
+    expect(
+      await screen.findByText('Choose different airports for From and To'),
+    ).toBeInTheDocument();
     expect(to).toHaveAttribute('aria-invalid', 'true');
     expect(location()).toBe('/');
   });
 
-  it('becomes a round trip when a return date is added', async () => {
+  it('becomes a round trip with a return date', async () => {
     const user = userEvent.setup();
     const { location } = renderWidget();
+    expect(screen.getByLabelText('Return')).toBeDisabled();
+    await user.click(screen.getByRole('radio', { name: 'Round-trip' }));
     fireEvent.change(screen.getByLabelText('Return'), { target: { value: inDays(12) } });
-    expect(screen.getByRole('radio', { name: 'Round Trip' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    );
-    await user.click(screen.getByRole('button', { name: 'Search Flights' }));
+    await user.click(search());
     await screen.findByText('results page');
-    expect(location()).toContain(`trip=ROUND_TRIP`);
-    expect(location()).toContain(`return=${inDays(12)}`);
+    expect(location()).toContain(`date=${inDays(7)}&returnDate=${inDays(12)}`);
   });
 
   it('adds travellers and cabin class', async () => {
     const user = userEvent.setup();
     const { location } = renderWidget();
-    await user.click(screen.getByRole('button', { name: /Travellers & Class/ }));
+    await user.click(screen.getByRole('button', { name: /Travellers & class/ }));
     await user.click(screen.getByRole('button', { name: 'More adults' }));
     await user.click(screen.getByRole('button', { name: 'More infants' }));
     await user.click(screen.getByRole('radio', { name: 'Business' }));
     await user.click(screen.getByRole('button', { name: 'Done' }));
-    expect(screen.getByRole('button', { name: /Travellers & Class/ })).toHaveTextContent(
+    expect(screen.getByRole('button', { name: /Travellers & class/ })).toHaveTextContent(
       '3 Travellers',
     );
-    await user.click(screen.getByRole('button', { name: 'Search Flights' }));
+    await user.click(search());
     await screen.findByText('results page');
-    expect(location()).toContain('adults=2&infants=1&cabin=BUSINESS');
-  });
-
-  it('builds a multi-city trip', async () => {
-    const user = userEvent.setup();
-    const { location } = renderWidget();
-    await user.click(screen.getByRole('radio', { name: 'Multi City' }));
-    expect(screen.getAllByRole('group', { name: /Flight \d/ })).toHaveLength(2);
-    const secondTo = screen.getAllByRole('combobox', { name: 'To' })[1] as HTMLElement;
-    await user.click(secondTo);
-    await user.type(secondTo, 'goi{Enter}');
-    await user.click(screen.getByRole('button', { name: 'Search Flights' }));
-    await screen.findByText('results page');
-    expect(decodeURIComponent(location())).toContain(
-      `legs=PNQ.DEL.${inDays(7)},DEL.GOI.${inDays(10)}`,
-    );
+    expect(location()).toContain('adults=2&children=0&infants=1&cabin=BUSINESS');
   });
 });
 

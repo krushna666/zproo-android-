@@ -1,6 +1,13 @@
 import { findAirport } from '@zproo/config';
-import { CABIN_CLASS_LABELS, type FlightOffer } from '@zproo/types';
-import { addDays, flightSearchSchema, todayIso, type FlightSearch } from '@zproo/validation';
+import { CABIN_CLASS_LABELS, type FlightOfferSummary } from '@zproo/types';
+import {
+  addDays,
+  FLIGHT_MAX_DAYS_AHEAD,
+  flightSearchInputFromParams,
+  flightSearchSchema,
+  todayInIst,
+  type FlightSearch,
+} from '@zproo/validation';
 import {
   Badge,
   Button,
@@ -8,63 +15,73 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  EmptyState,
   FormAlert,
   Sheet,
   SheetContent,
   Skeleton,
 } from '@zproo/ui';
-import {
-  ArrowRight,
-  ChevronLeft,
-  ChevronRight,
-  Pencil,
-  PlaneTakeoff,
-  SlidersHorizontal,
-} from 'lucide-react';
+import { ArrowRight, Pencil, PlaneTakeoff, SearchX, SlidersHorizontal } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
+import { DateStrip } from '@/components/results/DateStrip';
+import { SortChips } from '@/components/results/SortChips';
 import { Seo } from '@/components/seo/Seo';
-import { errorMessage } from '@/features/auth/errors';
-import { useFlightSearch } from '@/features/flights/api';
 import { DemoBanner } from '@/features/checkout/DemoBanner';
+import { useFlightSearch } from '@/features/flights/api';
 import { FiltersPanel } from '@/features/flights/components/FiltersPanel';
-import { FlightCard } from '@/features/flights/components/FlightCard';
-import { useFlightDraft } from '@/features/flights/draft';
+import { FlightCard, SelectButton } from '@/features/flights/components/FlightCard';
 import {
-  activeFilterCount,
-  applyFilters,
-  EMPTY_FILTERS,
-  facets as buildFacets,
-  SORTS,
-  sortOffers,
+  activeFlightFilterCount,
+  applyFlightFilters,
+  EMPTY_FLIGHT_FILTERS,
+  FLIGHT_SORTS,
+  flightFacets,
+  readFlightFilters,
+  sortFlights,
+  writeFlightFilters,
   type FlightFilters,
-  type SortId,
+  type FlightSortId,
 } from '@/features/flights/filters';
-import { inr, travelDate, travellersLabel } from '@/features/flights/format';
+import { inr, shortDay, travellersLabel } from '@/features/flights/format';
 import { offerUrl } from '@/features/flights/links';
 import { FlightSearchForm } from '@/features/search/forms/FlightSearchForm';
-import { flightsUrl, parseFlightSearch } from '@/features/search/url';
+import { flightsUrl } from '@/features/search/url';
+import { userMessage } from '@/lib/apiErrors';
 
-const cityOf = (code: string) => findAirport(code)?.city ?? code;
+const cityName = (code: string) => findAirport(code)?.city ?? code;
 
 export default function FlightResultsPage() {
   const [params] = useSearchParams();
-  const parsed = useMemo(() => flightSearchSchema.safeParse(parseFlightSearch(params)), [params]);
-  const search = parsed.success ? parsed.data : null;
-  // Remount per search so selections and filters start fresh.
-  return search ? <Results key={params.toString()} search={search} /> : <InvalidSearch />;
+  const input = flightSearchInputFromParams(params);
+  // Re-validated on every visit: a date that became "past" at midnight IST is caught here.
+  const parsed = flightSearchSchema.safeParse(input);
+  if (!parsed.success)
+    return <InvalidSearch input={input} messages={parsed.error.issues.map((i) => i.message)} />;
+  const s = parsed.data;
+  return <Results key={flightsUrl(s)} search={s} />;
 }
 
-function InvalidSearch() {
+/** A bad deep link: explain, and pre-fill the widget with what was valid. */
+function InvalidSearch({
+  input,
+  messages,
+}: {
+  input: ReturnType<typeof flightSearchInputFromParams>;
+  messages: string[];
+}) {
+  const from = findAirport(input.from.toUpperCase())?.code;
+  const to = findAirport(input.to.toUpperCase())?.code;
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-6">
-      <Seo title="Flight results" noIndex />
-      <h1 className="text-2xl font-extrabold tracking-tight">Search flights</h1>
-      <FormAlert>
-        That search isn't complete. Choose your cities and dates to see flights.
-      </FormAlert>
+    <div
+      className="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-6"
+      data-testid="flight-results-error"
+    >
+      <Seo title="Search flights" noIndex />
+      <h1 className="text-[28px] font-extrabold tracking-tight">Search flights</h1>
+      <FormAlert>That search can't be shown. {[...new Set(messages)].join('. ')}.</FormAlert>
       <div className="rounded-[1.75rem] border border-border bg-card p-4 shadow-card">
-        <FlightSearchForm />
+        <FlightSearchForm initial={{ ...(from ? { from } : {}), ...(to ? { to } : {}) }} />
       </div>
     </div>
   );
@@ -72,100 +89,118 @@ function InvalidSearch() {
 
 function Results({ search }: { search: FlightSearch }) {
   const navigate = useNavigate();
-  const startDraft = useFlightDraft((s) => s.start);
-  const { data, isPending, error, refetch } = useFlightSearch(search);
-  const [legIndex, setLegIndex] = useState(0);
-  const [selected, setSelected] = useState<(FlightOffer | undefined)[]>([]);
-  const [filters, setFilters] = useState<FlightFilters[]>([]);
-  const [sort, setSort] = useState<SortId>('BEST');
+  const [params, setParams] = useSearchParams();
+  const { data, isPending, error, refetch, isFetching } = useFlightSearch(search);
+  const { filters, sort } = useMemo(() => readFlightFilters(params), [params]);
   const [editing, setEditing] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetFilters, setSheetFilters] = useState<FlightFilters>(filters);
+  const roundTrip = Boolean(search.returnDate);
+  const [outbound, setOutbound] = useState<FlightOfferSummary | null>(null);
+  const [inbound, setInbound] = useState<FlightOfferSummary | null>(null);
+  // Mobile round trip: pick the outbound flight first, then the return.
+  const [step, setStep] = useState<'out' | 'ret'>('out');
 
-  const pax = { adults: search.adults, children: search.children, infants: search.infants };
-  const legs = data?.legs ?? [];
-  const leg = legs[legIndex];
-  const legFilters = filters[legIndex] ?? EMPTY_FILTERS;
-  const facets = useMemo(() => buildFacets(leg?.offers ?? []), [leg]);
+  const update = (next: FlightFilters, nextSort: FlightSortId = sort) =>
+    setParams(writeFlightFilters(params, next, nextSort), {
+      replace: true,
+      preventScrollReset: true,
+    });
+
+  const offers = useMemo(() => data?.offers ?? [], [data]);
+  const returnOffers = useMemo(() => data?.returnOffers ?? [], [data]);
+  const facets = useMemo(() => flightFacets([...offers, ...returnOffers]), [offers, returnOffers]);
   const visible = useMemo(
-    () => sortOffers(applyFilters(leg?.offers ?? [], legFilters), sort),
-    [leg, legFilters, sort],
+    () => sortFlights(applyFlightFilters(offers, filters), sort),
+    [offers, filters, sort],
   );
-  const multiLeg = legs.length > 1;
-  const allChosen = multiLeg && legs.every((_, i) => selected[i]);
-  const total = selected.reduce((sum, o) => sum + (o?.totalPaise ?? 0), 0);
-
-  const setLegFilters = (next: FlightFilters) =>
-    setFilters((all) => {
-      const copy = [...all];
-      copy[legIndex] = next;
-      return copy;
-    });
-
-  const proceed = (offers: FlightOffer[]) => {
-    startDraft({
-      offerIds: offers.map((o) => o.id),
-      pax,
-      expectedTotalPaise: offers.reduce((sum, o) => sum + o.totalPaise, 0),
-      searchUrl: flightsUrl(search),
-    });
-    void navigate('/flights/booking');
-  };
-
-  const choose = (offer: FlightOffer) => {
-    if (!multiLeg) return proceed([offer]);
-    const next = [...selected];
-    next[legIndex] = offer;
-    setSelected(next);
-    const pending = legs.findIndex((_, i) => !next[i]);
-    if (pending !== -1) {
-      setLegIndex(pending);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  };
-
-  const first = search.legs[0];
-  const last = search.legs.at(-1);
-  const title =
-    search.tripType === 'MULTI_CITY'
-      ? search.legs
-          .map((l) => l.from)
-          .concat(last?.to ?? '')
-          .join(' → ')
-      : `${cityOf(first?.from ?? '')} ${search.tripType === 'ROUND_TRIP' ? '⇄' : '→'} ${cityOf(first?.to ?? '')}`;
-  const shiftDate = (days: number) => {
-    if (!first) return;
-    const date = addDays(first.date, days);
-    const returnDate = search.returnDate && search.returnDate < date ? date : search.returnDate;
-    void navigate(flightsUrl({ ...search, legs: [{ ...first, date }], returnDate }));
-  };
-  const canGoEarlier = first ? first.date > todayIso() : false;
-
-  const filterButton = (
-    <Button variant="outline" size="sm" className="lg:hidden" onClick={() => setFiltersOpen(true)}>
-      <SlidersHorizontal aria-hidden /> Filters
-      {activeFilterCount(legFilters) > 0 && (
-        <Badge className="ml-1">{activeFilterCount(legFilters)}</Badge>
-      )}
-    </Button>
+  const visibleReturn = useMemo(
+    () => sortFlights(applyFlightFilters(returnOffers, filters), sort),
+    [returnOffers, filters, sort],
   );
+  const from = cityName(search.from);
+  const to = cityName(search.to);
+  const extra = writeFlightFilters(new URLSearchParams(), filters, sort).toString();
+  const hrefFor = (date: string) =>
+    flightsUrl(
+      {
+        ...search,
+        date,
+        returnDate: search.returnDate && search.returnDate < date ? date : search.returnDate,
+      },
+      extra,
+    );
+  const today = todayInIst();
+  const nearby = [-2, -1, 1, 2].map((n) => addDays(search.date, n)).filter((d) => d >= today);
+  const pax = { adults: search.adults, children: search.children, infants: search.infants };
+
+  const panel = (value: FlightFilters, onChange: (f: FlightFilters) => void) => (
+    <FiltersPanel facets={facets} value={value} onChange={onChange} fromCity={from} toCity={to} />
+  );
+
+  const list = (items: FlightOfferSummary[], leg: 'out' | 'ret') =>
+    items.length === 0 ? (
+      <EmptyState
+        data-testid="flight-results-empty"
+        icon={SearchX}
+        title="No flights match your filters"
+        actions={
+          <Button variant="outline" onClick={() => update(EMPTY_FLIGHT_FILTERS)}>
+            Clear filters
+          </Button>
+        }
+      />
+    ) : (
+      <ul className="space-y-4">
+        {items.map((offer) => {
+          const chosen = (leg === 'out' ? outbound : inbound)?.offerId === offer.offerId;
+          return (
+            <li key={offer.offerId}>
+              <FlightCard
+                offer={offer}
+                selected={roundTrip && chosen}
+                action={
+                  roundTrip ? (
+                    <SelectButton
+                      selected={chosen}
+                      testId={`flight-select-${leg}-${offer.offerId}`}
+                      onSelect={() => {
+                        if (leg === 'out') {
+                          setOutbound(offer);
+                          setStep('ret');
+                        } else setInbound(offer);
+                      }}
+                    />
+                  ) : (
+                    <Button asChild data-testid={`flight-view-fares-${offer.offerId}`}>
+                      <Link to={offerUrl(offer.offerId)}>View fares</Link>
+                    </Button>
+                  )
+                }
+              />
+            </li>
+          );
+        })}
+      </ul>
+    );
 
   return (
-    <div className={cn('mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8', allChosen && 'pb-28')}>
-      <Seo title={`Flights: ${title}`} noIndex />
+    <div className={cn('mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8', roundTrip && 'pb-28')}>
+      <Seo title={`Flights from ${from} to ${to}`} noIndex />
 
-      <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card p-4 shadow-card">
+      <header className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-border bg-card p-4 shadow-card">
         <div className="min-w-0">
-          <h1 className="truncate text-lg font-extrabold tracking-tight sm:text-xl">{title}</h1>
+          <h1 className="truncate text-xl font-extrabold tracking-tight sm:text-[28px]">
+            {from} {roundTrip ? '⇄' : '→'} {to}
+          </h1>
           <p className="text-sm text-muted">
-            {search.tripType === 'MULTI_CITY'
-              ? `${search.legs.length} flights`
-              : `${travelDate(first?.date ?? '')}${search.returnDate ? ` – ${travelDate(search.returnDate)}` : ''}`}
-            {' · '}
-            {travellersLabel(pax)} · {CABIN_CLASS_LABELS[search.cabin]}
+            {shortDay(search.date)}
+            {search.returnDate ? ` – ${shortDay(search.returnDate)}` : ''} · {travellersLabel(pax)}{' '}
+            · {CABIN_CLASS_LABELS[search.cabin]}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-          <Pencil aria-hidden /> Modify search
+          <Pencil aria-hidden /> Modify
         </Button>
       </header>
 
@@ -176,232 +211,224 @@ function Results({ search }: { search: FlightSearch }) {
         </DialogContent>
       </Dialog>
 
+      <div className="mt-4">
+        <DateStrip
+          testIdPrefix="flight-date-strip"
+          maxDaysAhead={FLIGHT_MAX_DAYS_AHEAD}
+          date={search.date}
+          hrefFor={hrefFor}
+          prices={
+            data && offers.length > 0
+              ? { [search.date]: Math.min(...offers.map((o) => o.fromPrice)) }
+              : {}
+          }
+        />
+      </div>
+
       {data?.demo && (
         <div className="mt-4">
-          <DemoBanner />
-        </div>
-      )}
-
-      {multiLeg && (
-        <div
-          role="tablist"
-          aria-label="Flights in this trip"
-          className="mt-4 flex gap-2 overflow-x-auto pb-1"
-        >
-          {legs.map((l, i) => (
-            <button
-              key={`${l.from}-${l.to}-${i}`}
-              role="tab"
-              type="button"
-              aria-selected={i === legIndex}
-              onClick={() => setLegIndex(i)}
-              className={cn(
-                'min-w-[11rem] shrink-0 rounded-2xl border px-4 py-3 text-left transition-colors',
-                i === legIndex
-                  ? 'border-primary bg-primary-light'
-                  : 'border-border bg-card hover:border-foreground/30',
-              )}
-            >
-              <span className="block text-xs font-semibold text-muted">
-                {search.tripType === 'ROUND_TRIP'
-                  ? i === 0
-                    ? 'Departure'
-                    : 'Return'
-                  : `Flight ${i + 1}`}{' '}
-                · {travelDate(l.date)}
-              </span>
-              <span className="block font-bold">
-                {l.from} → {l.to}
-              </span>
-              <span className="block text-xs text-muted">
-                {selected[i]
-                  ? `${selected[i]?.flightNumber} · ${inr(selected[i]?.totalPaise ?? 0)}`
-                  : 'Not selected'}
-              </span>
-            </button>
-          ))}
+          <DemoBanner service="flight" />
         </div>
       )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[17rem_1fr]">
-        <aside className="hidden lg:block">
-          <div className="sticky top-[calc(var(--header-height)+1rem)] rounded-2xl border border-border bg-card p-5 shadow-card">
-            {leg && (
-              <FiltersPanel
-                facets={facets}
-                value={legFilters}
-                onChange={setLegFilters}
-                fromCity={cityOf(leg.from)}
-                toCity={cityOf(leg.to)}
-              />
+        <aside className="hidden lg:block" aria-label="Filters">
+          <div className="sticky top-[calc(var(--header-height)+1rem)] max-h-[calc(100vh-var(--header-height)-2rem)] overflow-y-auto rounded-[14px] border border-border bg-card p-5 shadow-card">
+            {offers.length > 0 ? (
+              panel(filters, (next) => update(next))
+            ) : (
+              <Skeleton className="h-64 rounded-xl" />
             )}
           </div>
         </aside>
 
-        <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+        <Sheet
+          open={sheetOpen}
+          onOpenChange={(open) => {
+            setSheetOpen(open);
+            if (open) setSheetFilters(filters);
+          }}
+        >
           <SheetContent aria-describedby={undefined} className="p-5">
             <DialogTitle className="sr-only">Filters</DialogTitle>
-            {leg && (
-              <FiltersPanel
-                facets={facets}
-                value={legFilters}
-                onChange={setLegFilters}
-                fromCity={cityOf(leg.from)}
-                toCity={cityOf(leg.to)}
-              />
-            )}
-            <Button className="mt-6 w-full" onClick={() => setFiltersOpen(false)}>
-              Show {visible.length} flight{visible.length === 1 ? '' : 's'}
-            </Button>
+            {panel(sheetFilters, setSheetFilters)}
+            <div className="sticky bottom-0 mt-6 flex gap-3 bg-card pt-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setSheetFilters(EMPTY_FLIGHT_FILTERS)}
+              >
+                Clear all
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  update(sheetFilters);
+                  setSheetOpen(false);
+                }}
+              >
+                Apply
+              </Button>
+            </div>
           </SheetContent>
         </Sheet>
 
         <section
           aria-labelledby="results-heading"
-          aria-busy={isPending}
+          aria-busy={isPending || isFetching}
           className="min-w-0 space-y-4"
         >
           <div className="flex flex-wrap items-center gap-2">
             <h2
               id="results-heading"
+              data-testid="flight-results-count"
               className="mr-auto text-sm font-semibold text-muted"
               aria-live="polite"
             >
               {isPending
                 ? 'Searching...'
-                : leg
-                  ? `${visible.length} of ${leg.offers.length} flights · ${cityOf(leg.from)} to ${cityOf(leg.to)}`
-                  : ''}
+                : `${visible.length} flight${visible.length === 1 ? '' : 's'} found`}
             </h2>
-            {filterButton}
+            <Button
+              variant="outline"
+              size="sm"
+              className="lg:hidden"
+              onClick={() => setSheetOpen(true)}
+            >
+              <SlidersHorizontal aria-hidden /> Filters
+              {activeFlightFilterCount(filters) > 0 && (
+                <Badge className="ml-1">{activeFlightFilterCount(filters)}</Badge>
+              )}
+            </Button>
           </div>
 
-          <div
-            role="radiogroup"
-            aria-label="Sort flights"
-            className="flex gap-2 overflow-x-auto pb-1"
-          >
-            {SORTS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                role="radio"
-                aria-checked={sort === s.id}
-                onClick={() => setSort(s.id)}
-                className={cn(
-                  'shrink-0 rounded-full border px-4 py-1.5 text-sm font-semibold transition-colors',
-                  sort === s.id
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-card hover:border-foreground/30',
-                )}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-
-          {search.tripType === 'ONE_WAY' && (
-            <div className="flex items-center justify-between gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={!canGoEarlier}
-                onClick={() => shiftDate(-1)}
-              >
-                <ChevronLeft aria-hidden /> Previous day
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => shiftDate(1)}>
-                Next day <ChevronRight aria-hidden />
-              </Button>
-            </div>
-          )}
+          <SortChips
+            options={FLIGHT_SORTS}
+            value={sort}
+            onChange={(s) => update(filters, s)}
+            label="Sort flights"
+            testIdPrefix="flight-sort"
+          />
 
           {error ? (
-            <div className="space-y-3">
-              <FormAlert>{errorMessage(error)}</FormAlert>
+            <div
+              data-testid="flight-results-error"
+              role="alert"
+              className="space-y-3 rounded-[14px] border border-danger/30 bg-card p-5"
+            >
+              <p className="text-sm font-semibold text-danger">{userMessage(error)}</p>
               <Button variant="outline" onClick={() => void refetch()}>
-                Try again
+                Retry
               </Button>
             </div>
           ) : isPending ? (
-            <ul className="space-y-4" aria-hidden>
+            <ul
+              className="space-y-4"
+              data-testid="flight-results-loading"
+              aria-label="Loading flights"
+            >
               {[0, 1, 2, 3].map((i) => (
                 <li key={i}>
-                  <Skeleton className="h-36 rounded-2xl" />
+                  <Skeleton className="h-40 rounded-[14px]" />
                 </li>
               ))}
             </ul>
-          ) : visible.length === 0 ? (
-            <EmptyResults
-              filtered={(leg?.offers.length ?? 0) > 0}
-              onClear={() => setLegFilters(EMPTY_FILTERS)}
+          ) : offers.length === 0 || (roundTrip && returnOffers.length === 0) ? (
+            <EmptyState
+              data-testid="flight-results-empty"
+              icon={PlaneTakeoff}
+              title="No flights found"
+              description="Try a nearby date:"
+              actions={nearby.map((d) => (
+                <Button key={d} asChild variant="outline" size="sm">
+                  <Link to={hrefFor(d)}>{shortDay(d)}</Link>
+                </Button>
+              ))}
             />
+          ) : roundTrip ? (
+            <>
+              <div role="tablist" aria-label="Choose flights" className="flex gap-2 lg:hidden">
+                {(
+                  [
+                    ['out', `1. ${search.from} → ${search.to}`],
+                    ['ret', `2. ${search.to} → ${search.from}`],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={step === id}
+                    onClick={() => setStep(id)}
+                    className={cn(
+                      'min-h-11 flex-1 rounded-full border px-3 text-sm font-semibold',
+                      step === id
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-border bg-card',
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <section
+                  aria-label="Outbound flights"
+                  className={cn('space-y-3', step !== 'out' && 'hidden lg:block')}
+                >
+                  <h3 className="text-sm font-bold">Outbound · {shortDay(search.date)}</h3>
+                  {list(visible, 'out')}
+                </section>
+                <section
+                  aria-label="Return flights"
+                  className={cn('space-y-3', step !== 'ret' && 'hidden lg:block')}
+                >
+                  <h3 className="text-sm font-bold">
+                    Return · {search.returnDate ? shortDay(search.returnDate) : ''}
+                  </h3>
+                  {list(visibleReturn, 'ret')}
+                </section>
+              </div>
+            </>
           ) : (
-            <ul className="space-y-4">
-              {visible.map((offer) => (
-                <li key={offer.id}>
-                  <FlightCard
-                    offer={offer}
-                    detailsHref={offerUrl(offer.id, pax)}
-                    actionLabel={
-                      multiLeg
-                        ? selected[legIndex]?.id === offer.id
-                          ? 'Selected'
-                          : 'Select'
-                        : 'Book'
-                    }
-                    selected={selected[legIndex]?.id === offer.id}
-                    onAction={() => choose(offer)}
-                  />
-                </li>
-              ))}
-            </ul>
+            list(visible, 'out')
           )}
         </section>
       </div>
 
-      {allChosen && (
-        <div className="fixed inset-x-0 bottom-[var(--bottom-nav-height)] z-30 border-t border-border bg-card/95 backdrop-blur lg:bottom-0">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
-            <div>
-              <p className="text-xs text-muted">Total for {travellersLabel(pax)}</p>
-              <p className="text-xl font-extrabold tabular-nums">{inr(total)}</p>
+      {roundTrip && (
+        <div className="fixed inset-x-0 bottom-[var(--bottom-nav-height)] z-30 border-t border-border bg-card/95 py-3 backdrop-blur lg:bottom-0">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+            <div className="min-w-0 text-sm">
+              <p className="truncate text-muted">
+                {outbound
+                  ? `${outbound.carrier.name} ${outbound.slices[0]?.segments[0]?.flightNo ?? ''}`
+                  : 'Choose an outbound flight'}
+                {' · '}
+                {inbound
+                  ? `${inbound.carrier.name} ${inbound.slices[0]?.segments[0]?.flightNo ?? ''}`
+                  : 'choose a return flight'}
+              </p>
+              <p
+                className="text-xl font-extrabold tabular-nums"
+                data-testid="flight-roundtrip-total"
+              >
+                {inr((outbound?.fromPrice ?? 0) + (inbound?.fromPrice ?? 0))}
+                <span className="ml-1 text-xs font-normal text-muted">per adult</span>
+              </p>
             </div>
-            <Button size="lg" onClick={() => proceed(selected as FlightOffer[])}>
+            <Button
+              size="lg"
+              data-testid="flight-continue"
+              disabled={!outbound || !inbound}
+              onClick={() =>
+                outbound && inbound && void navigate(offerUrl(outbound.offerId, inbound.offerId))
+              }
+            >
               Continue <ArrowRight aria-hidden />
             </Button>
           </div>
         </div>
-      )}
-    </div>
-  );
-}
-
-function EmptyResults({ filtered, onClear }: { filtered: boolean; onClear: () => void }) {
-  return (
-    <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
-      <span className="grid size-12 place-items-center rounded-2xl bg-primary-light text-primary">
-        <PlaneTakeoff aria-hidden className="size-6" />
-      </span>
-      {filtered ? (
-        <>
-          <h3 className="mt-4 text-lg font-bold">No flights match these filters</h3>
-          <p className="mt-1 text-sm text-muted">Try removing a filter to see more options.</p>
-          <Button variant="outline" className="mt-5" onClick={onClear}>
-            Clear filters
-          </Button>
-        </>
-      ) : (
-        <>
-          <h3 className="mt-4 text-lg font-bold">No flights on this date</h3>
-          <p className="mt-1 text-sm text-muted">
-            There are no bookable flights for this route and date. Try a nearby date or another
-            airport.
-          </p>
-          <Button asChild variant="outline" className="mt-5">
-            <Link to="/flights">New search</Link>
-          </Button>
-        </>
       )}
     </div>
   );

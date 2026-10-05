@@ -1,6 +1,7 @@
 import type { BusTravellerInput, TravelContact } from '@zproo/validation';
 import { create } from 'zustand';
-import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import { releaseHold, safeSessionStorage } from '@/features/checkout/safeStorage';
 
 export interface BusSelectedSeat {
   seatNo: string;
@@ -39,42 +40,7 @@ interface BusDraftState {
   clear: () => void;
 }
 
-const safeSessionStorage: StateStorage = {
-  getItem: (name) => {
-    try {
-      return window.sessionStorage.getItem(name);
-    } catch {
-      return null;
-    }
-  },
-  setItem: (name, value) => {
-    try {
-      window.sessionStorage.setItem(name, value);
-    } catch {
-      /* ignore */
-    }
-  },
-  removeItem: (name) => {
-    try {
-      window.sessionStorage.removeItem(name);
-    } catch {
-      /* ignore */
-    }
-  },
-};
-
 const newKey = () => crypto.randomUUID();
-
-/**
- * A changed selection or traveller list replaces any hold made from the old one: release it so
- * the customer isn't blocked by their own seats (best effort; the hold lapses on its own anyway).
- */
-function releasePrevious(reference: string | null): void {
-  if (!reference) return;
-  void import('@/features/checkout/api')
-    .then(({ checkoutApi }) => checkoutApi.releaseHold(reference))
-    .catch(() => undefined);
-}
 
 /**
  * The bus being booked, kept per browser tab in sessionStorage under `zproo:draft:bus` — it
@@ -90,7 +56,7 @@ export const useBusDraft = create<BusDraftState>()(
       reference: null,
       start: (selection) =>
         set((s) => {
-          releasePrevious(s.reference);
+          releaseHold(s.reference);
           return {
             selection,
             // Keep travellers already typed for seats that are still chosen.
@@ -103,7 +69,7 @@ export const useBusDraft = create<BusDraftState>()(
         }),
       setTravellers: (travellers, contact) =>
         set((s) => {
-          releasePrevious(s.reference);
+          releaseHold(s.reference);
           return { travellers, contact, idempotencyKey: newKey(), reference: null };
         }),
       acceptPrice: (total) =>

@@ -1,9 +1,17 @@
-import { addDays, BUS_MAX_DAYS_AHEAD, todayInIst } from '@zproo/validation';
+import { addDays, todayInIst } from '@zproo/validation';
 import { cn } from '@zproo/ui';
 import { formatMoney } from '@zproo/utils';
 import { useRef, type KeyboardEvent } from 'react';
 import { Link } from 'react-router';
-import { shortDate } from '../format';
+
+/** "Mon, 5 Oct" */
+const shortDate = (date: string) =>
+  new Intl.DateTimeFormat('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(new Date(`${date}T00:00:00Z`));
 
 interface DateStripProps {
   date: string;
@@ -11,12 +19,22 @@ interface DateStripProps {
   hrefFor: (date: string) => string;
   /** Lowest fare per date, when known. */
   prices?: Readonly<Record<string, number>>;
+  /** Booking window (days ahead of today, IST) */
+  maxDaysAhead: number;
+  /** e.g. bus-date-strip → bus-date-strip-2026-10-20 */
+  testIdPrefix: string;
 }
 
 /** Selected date ±3 days; arrow keys move along the strip. Dates outside the booking window are off. */
-export function DateStrip({ date, hrefFor, prices = {} }: DateStripProps) {
+export function DateStrip({
+  date,
+  hrefFor,
+  prices = {},
+  maxDaysAhead,
+  testIdPrefix,
+}: DateStripProps) {
   const today = todayInIst();
-  const last = addDays(today, BUS_MAX_DAYS_AHEAD);
+  const last = addDays(today, maxDaysAhead);
   const days = [-3, -2, -1, 0, 1, 2, 3].map((n) => addDays(date, n));
   const list = useRef<HTMLUListElement>(null);
 
@@ -51,7 +69,7 @@ export function DateStrip({ date, hrefFor, prices = {} }: DateStripProps) {
               {disabled ? (
                 <span
                   aria-disabled
-                  data-testid={`bus-date-strip-${d}`}
+                  data-testid={`${testIdPrefix}-${d}`}
                   className="block min-w-24 rounded-xl border border-border px-3 py-2 text-center text-muted opacity-50"
                 >
                   {content}
@@ -59,7 +77,7 @@ export function DateStrip({ date, hrefFor, prices = {} }: DateStripProps) {
               ) : (
                 <Link
                   to={hrefFor(d)}
-                  data-testid={`bus-date-strip-${d}`}
+                  data-testid={`${testIdPrefix}-${d}`}
                   aria-current={current ? 'date' : undefined}
                   onKeyDown={onKeyDown}
                   className={cn(

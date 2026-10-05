@@ -6,11 +6,9 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  cn,
   FormAlert,
   FormField,
   Input,
-  PhoneInput,
   Skeleton,
   toast,
 } from '@zproo/ui';
@@ -33,16 +31,11 @@ import { BusTripSummary } from '@/features/buses/components/BusTripSummary';
 import { useBusDraft, type BusSelection } from '@/features/buses/draft';
 import { busPriceBreakdown } from '@/features/buses/price';
 import { CheckoutShell, NothingSelected } from '@/features/checkout/CheckoutShell';
+import { ContactCard, GenderControl } from '@/features/checkout/ContactCard';
 import { PriceChangedDialog } from '@/features/checkout/PriceChangedDialog';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
 import { userMessage } from '@/lib/apiErrors';
 import { ApiClientError } from '@/services/http';
-
-const GENDERS = [
-  { id: 'MALE', label: 'Male' },
-  { id: 'FEMALE', label: 'Female' },
-  { id: 'OTHER', label: 'Other' },
-] as const;
 
 export default function BusTravellersPage() {
   const selection = useBusDraft((s) => s.selection);
@@ -248,68 +241,26 @@ function TravellerForm({ selection }: { selection: BusSelection }) {
                   {...register(`travellers.${i}.age`)}
                 />
               </FormField>
-              <fieldset
-                className="sm:col-span-2"
-                aria-invalid={e?.gender ? true : undefined}
-                aria-describedby={e?.gender ? `${prefix}-gender-error` : undefined}
-              >
-                <legend className="mb-1.5 text-sm font-semibold">Gender</legend>
-                <div className="inline-flex rounded-xl border border-border bg-background p-1">
-                  {GENDERS.map((g) => (
-                    <label
-                      key={g.id}
-                      className={cn(
-                        'inline-flex min-h-11 min-w-20 cursor-pointer items-center justify-center rounded-lg px-3 text-sm font-semibold transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
-                        genders?.[i]?.gender === g.id
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted hover:text-foreground',
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        value={g.id}
-                        className="sr-only"
-                        data-testid={`${prefix}-gender-${g.id.toLowerCase()}`}
-                        {...register(`travellers.${i}.gender`)}
-                      />
-                      {g.label}
-                    </label>
-                  ))}
-                </div>
-                {e?.gender && (
-                  <p
-                    id={`${prefix}-gender-error`}
-                    data-testid={`field-error-traveller-${i}-gender`}
-                    className="mt-1.5 text-xs font-semibold text-danger"
-                  >
-                    {e.gender.message}
-                  </p>
-                )}
-              </fieldset>
+              <div className="sm:col-span-2">
+                <GenderControl
+                  name={`travellers.${i}.gender`}
+                  value={genders?.[i]?.gender}
+                  register={register(`travellers.${i}.gender`)}
+                  testIdPrefix={prefix}
+                  error={e?.gender?.message}
+                />
+              </div>
             </CardContent>
           </Card>
         );
       })}
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Contact details</CardTitle>
-          <p className="text-sm text-muted">We send the ticket and bus updates here.</p>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Email" name="email" error={errors.contact?.email?.message}>
-            <Input
-              type="email"
-              autoComplete="email"
-              data-testid="checkout-contact-email"
-              {...register('contact.email')}
-            />
-          </FormField>
-          <FormField label="Mobile number" name="mobile" error={errors.contact?.mobile?.message}>
-            <PhoneInput data-testid="checkout-contact-mobile" {...register('contact.mobile')} />
-          </FormField>
-        </CardContent>
-      </Card>
+      <ContactCard
+        email={register('contact.email')}
+        mobile={register('contact.mobile')}
+        errors={{ email: errors.contact?.email?.message, mobile: errors.contact?.mobile?.message }}
+        note="We send the ticket and bus updates here."
+      />
 
       <div className="flex justify-end">
         <Button

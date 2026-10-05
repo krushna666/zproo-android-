@@ -32,10 +32,7 @@ describe('home page', () => {
     renderRoute('/');
     const deal = await screen.findByRole('link', { name: /Search flights from Pune to New Delhi/ });
     // No date in the link: prerendered HTML must not freeze one; the results page defaults it.
-    expect(deal).toHaveAttribute(
-      'href',
-      '/flights/results?trip=ONE_WAY&from=PNQ&to=DEL&adults=1&cabin=ECONOMY',
-    );
+    expect(deal).toHaveAttribute('href', '/flights/search?from=PNQ&to=DEL&adults=1&cabin=ECONOMY');
     expect(screen.getByText(/Indicative lowest one-way fares/)).toBeInTheDocument();
   });
 

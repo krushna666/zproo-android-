@@ -10,13 +10,14 @@ import {
   FormAlert,
   Skeleton,
 } from '@zproo/ui';
+import { formatMoney } from '@zproo/utils';
 import { CircleCheck, Download, Home, Mail, Ticket } from 'lucide-react';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router';
 import { errorMessage } from '@/features/auth/errors';
 import { checkoutApi, useBooking } from '@/features/checkout/api';
 import { CHECKOUT_STEP, type CheckoutService } from '@/features/checkout/steps';
 import { paymentUrl, searchHome, serviceOf } from '@/features/checkout/links';
-import { isAwaitingPayment, isConfirmed } from '@/features/checkout/status';
+import { isAwaitingPayment, isConfirmed, isConfirming } from '@/features/checkout/status';
 import { TripSummary } from '@/features/checkout/TripSummary';
 import { CheckoutShell } from '@/features/checkout/CheckoutShell';
 import { DemoBanner } from '@/features/checkout/DemoBanner';
@@ -65,12 +66,39 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
     : booking.flights.every((f) => f.pnr);
   const demo = booking.demo;
 
+  if (isConfirming(booking)) {
+    return (
+      <CheckoutShell step={step} service={service} title="Payment received">
+        <div
+          role="status"
+          data-testid={`${service}-status-pending`}
+          className="flex items-center gap-3 rounded-[14px] border border-border bg-card p-5"
+        >
+          <span
+            aria-hidden
+            className="size-5 animate-spin rounded-full border-2 border-primary-light border-t-primary"
+          />
+          <span>
+            <strong className="block">
+              Confirming with the {service === 'bus' ? 'operator' : 'airline'}...
+            </strong>
+            <span className="text-sm text-muted">
+              Booking <span className="font-mono">{booking.reference}</span>. This usually takes a
+              few seconds; you can leave this page and check My bookings.
+            </span>
+          </span>
+        </div>
+      </CheckoutShell>
+    );
+  }
   if (!confirmed) {
+    const refundDue = booking.paymentStatus === 'REFUND_DUE';
     return (
       <CheckoutShell step={step} service={service} title="Booking not confirmed">
         <FormAlert>
-          Booking {booking.reference} is {booking.status.toLowerCase().replace('_', ' ')}. If money
-          was debited, it will be refunded to the original payment method.
+          {refundDue
+            ? `We couldn't confirm your ticket with the ${service === 'bus' ? 'operator' : 'airline'}. Your refund of ${formatMoney(booking.price.totalPaise)} has been started.`
+            : `Booking ${booking.reference} is ${booking.status.toLowerCase().replace('_', ' ')}. If money was debited, it will be refunded to the original payment method.`}
         </FormAlert>
         <Button asChild>
           <Link to={searchHome(service)}>Search again</Link>
@@ -158,7 +186,8 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
             booking.flights.map((f) => (
               <div key={f.sequence} className="rounded-xl border border-border px-4 py-2">
                 <p className="text-xs text-muted">
-                  {f.offer.from.code} → {f.offer.to.code} · {f.offer.flightNumber}
+                  {f.offer.slices[0]?.segments[0]?.from} → {f.offer.slices[0]?.segments.at(-1)?.to}{' '}
+                  · {f.offer.slices[0]?.segments.map((s) => s.flightNo).join(', ')}
                 </p>
                 <p
                   className="font-mono text-lg font-bold tracking-widest"

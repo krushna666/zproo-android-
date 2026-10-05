@@ -9,9 +9,24 @@ export const bookingKeys = {
   bookings: ['bookings'] as const,
 };
 
-/** True while a confirmed booking is still waiting for its PNR(s) from the airline or operator. */
+/**
+ * True while a paid booking is still being ticketed ("Confirming with the airline...") or a
+ * confirmed one is still waiting for its PNR(s).
+ */
 const awaitingTickets = (b: BookingDetails | undefined) =>
-  b?.status === 'CONFIRMED' && (b.flights.some((f) => !f.pnr) || (b.bus !== null && !b.bus.pnr));
+  (b?.status === 'PAYMENT_PENDING' && b.paymentStatus === 'CAPTURED') ||
+  (b?.status === 'CONFIRMED' && (b.flights.some((f) => !f.pnr) || (b.bus !== null && !b.bus.pnr)));
+
+/** Status polls: 5 s, then ×1.5 each time (capped at 20 s), for up to 2 minutes in total. */
+export function pollDelay(polls: number): number | false {
+  let elapsed = 0;
+  let delay = 5_000;
+  for (let i = 0; i < polls; i++) {
+    elapsed += delay;
+    delay = Math.min(delay * 1.5, 20_000);
+  }
+  return elapsed + delay > 120_000 ? false : delay;
+}
 
 export function useBooking(reference: string | null, options: { poll?: boolean } = {}) {
   return useQuery({
@@ -24,8 +39,8 @@ export function useBooking(reference: string | null, options: { poll?: boolean }
     enabled: Boolean(reference),
     // Tickets are issued just after payment: poll (for about a minute) until every PNR is in.
     refetchInterval: (query) =>
-      options.poll && awaitingTickets(query.state.data) && query.state.dataUpdateCount < 20
-        ? 3_000
+      options.poll && awaitingTickets(query.state.data)
+        ? pollDelay(Math.max(0, query.state.dataUpdateCount - 1))
         : false,
   });
 }
