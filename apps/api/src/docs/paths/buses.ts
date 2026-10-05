@@ -10,104 +10,169 @@ const ok = (description: string, data: z.ZodType) => ({
 });
 const error = (description: string) => ({ description, content: json(ErrorResponse) });
 const tags = ['Buses'];
+const paise = (description: string) =>
+  z
+    .number()
+    .int()
+    .openapi({ description: `${description} (paise)` });
 
 const BusPoint = registry.register(
   'BusPoint',
   z.object({
     id: z.string(),
     name: z.string().openapi({ example: 'Swargate' }),
+    landmark: z.string(),
     address: z.string(),
-    time: z.iso.datetime(),
+    time: z.string().openapi({ example: '2026-10-25T21:30:00+05:30' }),
   }),
 );
 
-export const BusTripOffer = registry.register(
-  'BusTripOffer',
+const busLayout = z.enum([
+  'SEATER_2_2',
+  'SEATER_2_1',
+  'SLEEPER_2_1',
+  'SEMI_SLEEPER_2_2',
+  'SEATER_SLEEPER_COMBO',
+]);
+const amenity = z.enum([
+  'wifi',
+  'charging',
+  'water',
+  'blanket',
+  'reading_light',
+  'cctv',
+  'tracking',
+  'snacks',
+]);
+
+const tripFields = {
+  tripId: z.string().openapi({ description: 'Opaque trip id; pass back for seats or booking' }),
+  serviceNumber: z.string().openapi({ example: 'SSK 2130' }),
+  operator: z.object({
+    code: z.string(),
+    name: z.string(),
+    rating: z.number(),
+    ratingCount: z.number().int(),
+    phone: z.string(),
+  }),
+  busType: z.object({
+    label: z.string().openapi({ example: 'A/C Sleeper (2+1)' }),
+    layout: busLayout,
+    ac: z.boolean(),
+    sleeper: z.boolean(),
+    seater: z.boolean(),
+  }),
+  from: z.object({ code: z.string().openapi({ example: 'PNQ' }), name: z.string() }),
+  to: z.object({ code: z.string().openapi({ example: 'BOM' }), name: z.string() }),
+  date: z.string().openapi({ description: 'IST date of departure', example: '2026-10-25' }),
+  departure: z.string(),
+  arrival: z.string(),
+  durationMin: z.number().int(),
+  fromPrice: paise('Cheapest open seat, taxes included'),
+  seatsLeft: z.number().int(),
+  amenities: z.array(amenity),
+  boardingCount: z.number().int(),
+  droppingCount: z.number().int(),
+  liveTracking: z.boolean(),
+  cancellable: z.boolean(),
+};
+
+const BusTripSummary = registry.register(
+  'BusTripSummary',
+  z.object({ ...tripFields, photos: z.number().int() }),
+);
+
+const BusTripDetails = registry.register(
+  'BusTripDetails',
   z.object({
-    id: z.string().openapi({ description: 'Opaque trip id; pass back for seats or booking' }),
-    provider: z.string(),
-    serviceNumber: z.string().openapi({ example: 'SSK 2130' }),
-    operator: z.object({
-      code: z.string(),
-      name: z.string(),
-      rating: z.number(),
-      ratingCount: z.number().int(),
-    }),
-    bus: z.object({
-      name: z.string(),
-      type: z.enum(['SEATER', 'SLEEPER', 'SEATER_SLEEPER']),
-      ac: z.boolean(),
-      electric: z.boolean(),
-    }),
-    from: z.object({ code: z.string().openapi({ example: 'pune' }), name: z.string() }),
-    to: z.object({ code: z.string().openapi({ example: 'mumbai' }), name: z.string() }),
-    date: z.string(),
-    departureAt: z.iso.datetime(),
-    arrivalAt: z.iso.datetime(),
-    durationMinutes: z.number().int(),
+    ...tripFields,
+    photos: z.array(z.object({ url: z.string(), alt: z.string() })),
     distanceKm: z.number().int(),
-    amenities: z.array(z.string()),
-    fromPaise: z.number().int().openapi({ description: 'Cheapest open seat, incl. GST (paise)' }),
-    seatsAvailable: z.number().int(),
-    totalSeats: z.number().int(),
     boardingPoints: z.array(BusPoint),
     droppingPoints: z.array(BusPoint),
     cancellationPolicy: z.array(
       z.object({ hoursBefore: z.number().int(), refundPercent: z.number().int() }),
     ),
+    restStops: z.array(
+      z.object({ name: z.string(), time: z.string(), durationMin: z.number().int() }),
+    ),
+    policies: z.object({ luggage: z.string(), pets: z.string(), idProof: z.string() }),
+    bookable: z.boolean().openapi({ description: 'False within 30 minutes of departure' }),
   }),
 );
 
 const BusSeat = z.object({
-  number: z.string().openapi({ example: 'L4' }),
-  deck: z.enum(['LOWER', 'UPPER']),
+  seatNo: z.string().openapi({ example: 'L4' }),
   row: z.number().int(),
-  column: z.number().int(),
-  kind: z.enum(['SEATER', 'SLEEPER']),
-  available: z.boolean(),
+  col: z.number().int(),
+  type: z.enum(['SEATER', 'SEMI_SLEEPER', 'SLEEPER']),
+  price: paise('Seat price, taxes included'),
+  status: z.enum(['AVAILABLE', 'BOOKED', 'HELD', 'BLOCKED']),
   ladiesOnly: z.boolean(),
-  basePaise: z.number().int(),
-  taxPaise: z.number().int(),
-  pricePaise: z.number().int(),
+  bookedByFemale: z.boolean(),
+  width: z.number().int(),
+  height: z.number().int(),
 });
 
 const BusSeatMap = registry.register(
   'BusSeatMap',
   z.object({
     tripId: z.string(),
+    serverNow: z.iso.datetime(),
+    layout: busLayout,
     decks: z.array(
       z.object({
         deck: z.enum(['LOWER', 'UPPER']),
         rows: z.number().int(),
-        columns: z.number().int(),
+        cols: z.number().int(),
         seats: z.array(BusSeat),
       }),
     ),
-    maxSeats: z.number().int(),
+    maxSelectable: z.number().int(),
+    bookable: z.boolean(),
+    demo: z.boolean(),
   }),
 );
 
 /** The `bus` part of BookingDetails. */
 export const BusBookingInfo = z.object({
-  offer: BusTripOffer,
-  seatNumbers: z.array(z.string()),
+  trip: BusTripDetails,
+  seats: z.array(z.string()),
   boardingPoint: BusPoint,
   droppingPoint: BusPoint,
   pnr: z.string().nullable(),
 });
 
 const tripParams = z.object({ tripId: z.string() });
+const referenceParams = z.object({ reference: z.string().openapi({ example: 'ZB7K4Q2M9XPA' }) });
+
+registry.registerPath({
+  method: 'get',
+  path: '/buses/cities',
+  tags,
+  summary: 'City suggestions for the bus search form',
+  request: { query: z.object({ q: z.string().openapi({ example: 'pun' }) }) },
+  responses: {
+    200: ok(
+      'Matching cities',
+      z.array(
+        z.object({ code: z.string(), name: z.string(), state: z.string(), popular: z.boolean() }),
+      ),
+    ),
+    400: error('Invalid query'),
+  },
+});
 
 registry.registerPath({
   method: 'get',
   path: '/buses/search',
   tags,
   summary: 'Search buses between two cities',
-  description: 'City codes as in the search widget (e.g. `pune`, `mumbai`). Cached 60 s.',
+  description: 'City codes as in the search widget (e.g. `PNQ`, `BOM`). Cached 60 s.',
   request: {
     query: z.object({
-      from: z.string().openapi({ example: 'pune' }),
-      to: z.string().openapi({ example: 'mumbai' }),
+      from: z.string().openapi({ example: 'PNQ' }),
+      to: z.string().openapi({ example: 'BOM' }),
       date: z.string().optional().openapi({ example: '2026-10-25' }),
     }),
   },
@@ -115,10 +180,17 @@ registry.registerPath({
     200: ok(
       'Departures in time order',
       z.object({
+        searchId: z.string(),
+        serverNow: z.iso.datetime(),
         from: z.string(),
         to: z.string(),
         date: z.string(),
-        trips: z.array(BusTripOffer),
+        trips: z.array(BusTripSummary),
+        filters: z.object({
+          operators: z.array(z.object({ name: z.string(), count: z.number().int() })),
+          priceMin: z.number().int(),
+          priceMax: z.number().int(),
+        }),
         demo: z.boolean(),
       }),
     ),
@@ -130,9 +202,9 @@ registry.registerPath({
   method: 'get',
   path: '/buses/{tripId}',
   tags,
-  summary: 'Trip details: operator, coach, amenities, points and cancellation policy',
+  summary: 'Trip details: operator, coach, photos, points, rest stops and policies',
   request: { params: tripParams },
-  responses: { 200: ok('Trip', BusTripOffer), 404: error('Trip no longer sold') },
+  responses: { 200: ok('Trip', BusTripDetails), 404: error('Trip no longer sold') },
 });
 
 registry.registerPath({
@@ -148,7 +220,7 @@ registry.registerPath({
   method: 'post',
   path: '/buses/book',
   tags,
-  summary: 'Hold seats and create a booking awaiting payment',
+  summary: 'Hold seats for 10 minutes and create a booking awaiting payment',
   description:
     'Requires an `Idempotency-Key` header. One traveller per seat, up to 6. Ladies-only seats ' +
     'require a female traveller.',
@@ -158,9 +230,36 @@ registry.registerPath({
     body: { content: json(bookBusSchema) },
   },
   responses: {
-    201: { description: 'Booking created (see BookingDetails)' },
+    201: ok(
+      'Seats held',
+      z.object({
+        bookingRef: z.string(),
+        status: z.literal('HELD'),
+        holdExpiresAt: z.iso.datetime(),
+        serverNow: z.iso.datetime(),
+        priceBreakdown: z.looseObject({}).openapi({ description: 'See PriceBreakdown' }),
+      }),
+    ),
     400: error('Invalid travellers, seats or points, or missing Idempotency-Key'),
     401: error('Not signed in'),
     409: error('PRICE_CHANGED or SEAT_UNAVAILABLE'),
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/buses/{reference}/cancel',
+  tags,
+  summary: 'Cancel a confirmed bus booking (owner)',
+  description: "Refund follows the operator's cancellation policy for the time left to departure.",
+  security: bearer,
+  request: { params: referenceParams },
+  responses: {
+    200: ok(
+      'Cancelled',
+      z.object({ bookingRef: z.string(), status: z.string(), refundAmount: z.number().int() }),
+    ),
+    403: error('Not your booking'),
+    409: error('Not cancellable'),
   },
 });
