@@ -1,77 +1,48 @@
 import { Prisma } from '@prisma/client';
+import type { LiveHold } from '@zproo/catalog';
 import type { Db } from './db';
-
-export const busScheduleInclude = {
-  bus: {
-    include: {
-      operator: true,
-      seats: { orderBy: [{ deck: 'asc' }, { row: 'asc' }, { column: 'asc' }] },
-    },
-  },
-  route: { include: { points: { orderBy: { sequence: 'asc' } } } },
-} satisfies Prisma.BusScheduleInclude;
-
-export type BusScheduleRecord = Prisma.BusScheduleGetPayload<{
-  include: typeof busScheduleInclude;
-}>;
 
 export class BusRepository {
   constructor(private readonly db: Db) {}
 
-  findRoute(fromCity: string, toCity: string, weekday: number) {
-    return this.db.busSchedule.findMany({
+  /** Seats held or sold through ZPROO GO on these trips (unpaid holds count until they lapse). */
+  async liveHolds(tripIds: string[], now: Date): Promise<Map<string, LiveHold[]>> {
+    const rows = await this.db.busSeatHold.findMany({
       where: {
+        tripId: { in: tripIds },
         active: true,
-        daysOfWeek: { has: weekday },
-        route: { originCity: fromCity, destinationCity: toCity },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
-      include: busScheduleInclude,
+      select: { tripId: true, seatNo: true, female: true },
     });
-  }
-
-  findSchedule(id: string) {
-    return this.db.busSchedule.findFirst({
-      where: { id, active: true },
-      include: busScheduleInclude,
-    });
-  }
-
-  /** Seat IDs already held or sold per schedule on a date. */
-  async takenSeats(scheduleIds: string[], date: Date): Promise<Map<string, Set<string>>> {
-    const rows = await this.db.busSeatBooking.findMany({
-      where: { trip: { scheduleId: { in: scheduleIds }, date } },
-      select: { seatId: true, trip: { select: { scheduleId: true } } },
-    });
-    const taken = new Map<string, Set<string>>();
+    const byTrip = new Map<string, LiveHold[]>();
     for (const row of rows) {
-      const set = taken.get(row.trip.scheduleId) ?? new Set<string>();
-      set.add(row.seatId);
-      taken.set(row.trip.scheduleId, set);
+      const list = byTrip.get(row.tripId) ?? [];
+      list.push({ seatNo: row.seatNo, female: row.female });
+      byTrip.set(row.tripId, list);
     }
-    return taken;
-  }
-
-  /** The trip row for a schedule and date, created on first use (safe under concurrency). */
-  async ensureTrip(scheduleId: string, date: Date): Promise<string> {
-    await this.db.$executeRaw`
-      INSERT INTO bus_trips (id, schedule_id, date)
-      VALUES (gen_random_uuid()::text, ${scheduleId}, ${date})
-      ON CONFLICT (schedule_id, date) DO NOTHING`;
-    const trip = await this.db.busTrip.findUniqueOrThrow({
-      where: { scheduleId_date: { scheduleId, date } },
-      select: { id: true },
-    });
-    return trip.id;
+    return byTrip;
   }
 
   /**
-   * Holds seats for a booking. The unique (trip, seat) constraint makes this all-or-nothing:
-   * if any seat is already taken, nothing is written and false is returned.
+   * Holds seats for a booking, all or nothing. The unique (trip, seat, active) constraint means
+   * a seat can have only one live hold: returns false if any seat is already taken.
    */
-  async takeSeats(tripId: string, seatIds: string[], bookingId: string): Promise<boolean> {
+  async hold(
+    tripId: string,
+    seats: { seatNo: string; female: boolean }[],
+    bookingId: string,
+    expiresAt: Date,
+  ): Promise<boolean> {
     try {
-      await this.db.busSeatBooking.createMany({
-        data: seatIds.map((seatId) => ({ tripId, seatId, bookingId })),
+      await this.db.busSeatHold.createMany({
+        data: seats.map((s) => ({
+          tripId,
+          seatNo: s.seatNo,
+          female: s.female,
+          bookingId,
+          expiresAt,
+        })),
       });
       return true;
     } catch (err) {
@@ -80,7 +51,19 @@ export class BusRepository {
     }
   }
 
-  releaseSeats(bookingId: string) {
-    return this.db.busSeatBooking.deleteMany({ where: { bookingId } });
+  /** Releases a booking's seats (active → NULL keeps the row for history). */
+  release(bookingId: string) {
+    return this.db.busSeatHold.updateMany({
+      where: { bookingId, active: true },
+      data: { active: null },
+    });
+  }
+
+  /** Paid: the hold no longer lapses. */
+  markPaid(bookingId: string) {
+    return this.db.busSeatHold.updateMany({
+      where: { bookingId, active: true },
+      data: { expiresAt: null },
+    });
   }
 }

@@ -1,6 +1,6 @@
 import { Permission } from '@zproo/types';
 import { BOOKING_REFERENCE_PATTERN } from '@zproo/utils';
-import { bookBusSchema, bookFlightSchema, idSchema } from '@zproo/validation';
+import { bookBusSchema, bookFlightSchema, busTripIdSchema, idSchema } from '@zproo/validation';
 import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import type { createBookingsController } from '../controllers/bookings.controller';
@@ -22,9 +22,7 @@ export const referenceParams = z.object({
     .regex(BOOKING_REFERENCE_PATTERN, 'Invalid booking reference'),
 });
 
-const tripParams = z.object({
-  tripId: z.string().regex(/^[A-Za-z0-9_-]{5,120}$/, 'Invalid trip'),
-});
+const tripParams = z.strictObject({ tripId: busTripIdSchema });
 
 export function busRoutes(
   c: ReturnType<typeof createBusesController>,
@@ -34,6 +32,20 @@ export function busRoutes(
   limits: CommerceLimits,
 ): Router {
   const router = Router();
+  router.get(
+    '/cities',
+    validate({
+      query: z.strictObject({
+        q: z
+          .string()
+          .trim()
+          .min(1, 'Type a city name')
+          .max(40)
+          .regex(/^[A-Za-z ]+$/, 'Use letters only'),
+      }),
+    }),
+    c.cities,
+  );
   router.get('/search', limits.search, c.search);
   router.post(
     '/book',
@@ -43,6 +55,13 @@ export function busRoutes(
     idempotent(idempotency),
     validate({ body: bookBusSchema }),
     c.book,
+  );
+  router.post(
+    '/:reference/cancel',
+    authenticate,
+    authorize(rbac, Permission.BOOKING_CANCEL_OWN),
+    validate({ params: referenceParams }),
+    c.cancel,
   );
   router.get('/:tripId', validate({ params: tripParams }), c.trip);
   router.get('/:tripId/seats', validate({ params: tripParams }), c.seats);
@@ -85,6 +104,7 @@ export function bookingRoutes(
   router.get('/', c.list);
   router.get('/:reference', validate({ params: referenceParams }), c.get);
   router.get('/:reference/ticket.pdf', validate({ params: referenceParams }), c.ticket);
+  router.get('/:reference/cancellation', validate({ params: referenceParams }), c.cancellation);
   return router;
 }
 

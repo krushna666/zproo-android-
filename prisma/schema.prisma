@@ -115,27 +115,6 @@ enum Gender {
   OTHER
 }
 
-enum BusType {
-  SEATER
-  SLEEPER
-  SEATER_SLEEPER
-}
-
-enum BusDeck {
-  LOWER
-  UPPER
-}
-
-enum BusSeatKind {
-  SEATER
-  SLEEPER
-}
-
-enum BusPointKind {
-  BOARDING
-  DROPPING
-}
-
 // ────────────────────────────── Identity ─────────────────────────────
 
 model User {
@@ -488,6 +467,8 @@ model Booking {
   confirmedAt         DateTime?     @map("confirmed_at")
   cancelledAt         DateTime?     @map("cancelled_at")
   cancellationReason  String?       @map("cancellation_reason")
+  /// Refund owed after a customer cancellation (paise), from the supplier's policy.
+  refundAmountPaise   Int?          @map("refund_amount_paise")
   /// Client-supplied Idempotency-Key; retries of the same request return the same booking.
   idempotencyKey      String?       @map("idempotency_key")
   metadata            Json?
@@ -500,7 +481,7 @@ model Booking {
   passengers BookingPassenger[]
   flights    FlightBooking[]
   bus        BusBooking?
-  busSeats   BusSeatBooking[]
+  busSeats   BusSeatHold[]
   payments   Payment[]
   events     BookingEvent[]
 
@@ -582,174 +563,25 @@ model FlightBooking {
 
 // ────────────────────────────── Buses ─────────────────────────────
 
-model BusOperator {
-  id          String   @id @default(cuid())
-  /// Short code used in service numbers, e.g. "SSK"
-  code        String   @unique
-  name        String
-  /// Average customer rating, 1.0–5.0
-  rating      Float
-  ratingCount Int      @map("rating_count")
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  buses Bus[]
-
-  @@map("bus_operators")
-}
-
-/// A coach and its seat layout. Seats are booked per trip (BusSeatBooking), never on the bus.
-model Bus {
-  id         String   @id @default(cuid())
-  operatorId String   @map("operator_id")
-  /// Operator's own key for the coach, unique per operator
-  code       String
-  /// Display name, e.g. "Volvo 9600 Multi-Axle A/C Sleeper (2+1)"
-  name       String
-  type       BusType
-  ac         Boolean
-  electric   Boolean  @default(false)
-  amenities  String[]
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
-
-  operator  BusOperator   @relation(fields: [operatorId], references: [id])
-  seats     BusSeat[]
-  schedules BusSchedule[]
-
-  @@unique([operatorId, code])
-  @@map("buses")
-}
-
-model BusSeat {
-  id          String      @id @default(cuid())
-  busId       String      @map("bus_id")
-  /// Printed seat number, e.g. "L4" or "U12" or "17"
-  number      String
-  deck        BusDeck
-  row         Int
-  column      Int
-  kind        BusSeatKind
-  /// Seat price relative to the trip fare, in percent (lower sleepers cost more)
-  farePercent Int         @default(100) @map("fare_percent")
-  /// Reserved for women travellers
-  ladiesOnly  Boolean     @default(false) @map("ladies_only")
-
-  bus      Bus              @relation(fields: [busId], references: [id], onDelete: Cascade)
-  bookings BusSeatBooking[]
-
-  @@unique([busId, number])
-  @@map("bus_seats")
-}
-
-/// City pair served by bus, with its boarding and dropping points. Cities are codes from
-/// @zproo/config (e.g. "pune").
-model BusRoute {
-  id              String   @id @default(cuid())
-  originCity      String   @map("origin_city")
-  destinationCity String   @map("destination_city")
-  distanceKm      Int      @map("distance_km")
-  createdAt       DateTime @default(now()) @map("created_at")
-
-  points    BusRoutePoint[]
-  schedules BusSchedule[]
-
-  @@unique([originCity, destinationCity])
-  @@map("bus_routes")
-}
-
-model BusRoutePoint {
-  id            String       @id @default(cuid())
-  routeId       String       @map("route_id")
-  kind          BusPointKind
-  sequence      Int
-  name          String
-  address       String
-  /// Boarding: minutes after departure. Dropping: minutes before arrival.
-  offsetMinutes Int          @map("offset_minutes")
-
-  route BusRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
-
-  @@unique([routeId, kind, sequence])
-  @@map("bus_route_points")
-}
-
-/// A regular service: this bus runs this route at this time on these days.
-model BusSchedule {
-  id              String   @id @default(cuid())
-  busId           String   @map("bus_id")
-  routeId         String   @map("route_id")
-  /// Service number shown to customers, e.g. "SSK 2130"
-  serviceNumber   String   @unique @map("service_number")
-  /// Local (IST) departure time from the first boarding point, "HH:MM"
-  departureTime   String   @map("departure_time")
-  durationMinutes Int      @map("duration_minutes")
-  /// ISO weekdays the service operates (1 = Monday … 7 = Sunday)
-  daysOfWeek      Int[]    @map("days_of_week")
-  /// Base fare per seat in paise before demand pricing and seat premiums
-  baseFarePaise   Int      @map("base_fare_paise")
-  active          Boolean  @default(true)
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  bus   Bus       @relation(fields: [busId], references: [id])
-  route BusRoute  @relation(fields: [routeId], references: [id])
-  trips BusTrip[]
-
-  @@index([routeId, active])
-  @@map("bus_schedules")
-}
-
-/// One departure of a schedule on a date. Created on first booking.
-model BusTrip {
-  id         String   @id @default(cuid())
-  scheduleId String   @map("schedule_id")
-  date       DateTime @db.Date
-
-  schedule BusSchedule      @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
-  seats    BusSeatBooking[]
-
-  @@unique([scheduleId, date])
-  @@map("bus_trips")
-}
-
-/// A seat held or sold on a trip. The unique (trip, seat) pair makes double-booking impossible;
-/// rows are deleted when a hold expires or a booking is cancelled.
-model BusSeatBooking {
-  id        String   @id @default(cuid())
-  tripId    String   @map("trip_id")
-  seatId    String   @map("seat_id")
-  bookingId String   @map("booking_id")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  trip    BusTrip @relation(fields: [tripId], references: [id], onDelete: Cascade)
-  seat    BusSeat @relation(fields: [seatId], references: [id])
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-
-  @@unique([tripId, seatId])
-  @@index([bookingId])
-  @@map("bus_seat_bookings")
-}
-
 /// The bus journey of a booking, with a snapshot of the trip as sold.
 model BusBooking {
   id              String   @id @default(cuid())
   bookingId       String   @unique @map("booking_id")
   provider        String
-  offerId         String   @map("offer_id")
-  /// Mock provider only: the trip whose seats were used.
-  tripId          String?  @map("trip_id")
+  tripId          String   @map("trip_id")
   operatorName    String   @map("operator_name")
+  /// e.g. "A/C Sleeper (2+1)"
+  busType         String   @map("bus_type")
+  /// City codes, e.g. PNQ → BOM
   originCity      String   @map("origin_city")
   destinationCity String   @map("destination_city")
   departureAt     DateTime @map("departure_at")
   arrivalAt       DateTime @map("arrival_at")
-  seatNumbers     String[] @map("seat_numbers")
-  /// { id, name, address, time } chosen by the customer
+  seats           String[]
+  /// { id, name, landmark, address, time } chosen by the customer
   boardingPoint   Json     @map("boarding_point")
   droppingPoint   Json     @map("dropping_point")
-  /// Trip as sold: operator, bus, amenities, fares, policies.
+  /// Trip as sold: operator, coach, amenities, policies.
   offer           Json
   /// Operator's ticket/PNR number, set on confirmation.
   pnr             String?
@@ -758,6 +590,28 @@ model BusBooking {
 
   @@index([tripId])
   @@map("bus_bookings")
+}
+
+/// A seat held or sold on a trip. `active` is true while the hold or sale stands and NULL once
+/// released; PostgreSQL treats NULLs as distinct, so the unique (trip, seat, active) constraint
+/// allows any number of released rows but only one live hold per seat.
+model BusSeatHold {
+  id        String    @id @default(cuid())
+  tripId    String    @map("trip_id")
+  seatNo    String    @map("seat_no")
+  bookingId String    @map("booking_id")
+  /// Held for a woman (the seat beside it becomes ladies-only)
+  female    Boolean   @default(false)
+  /// Unpaid holds lapse at this time; null once paid.
+  expiresAt DateTime? @map("expires_at")
+  active    Boolean?  @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([tripId, seatNo, active])
+  @@index([bookingId])
+  @@map("bus_seat_holds")
 }
 
 // ────────────────────────────── Payments ─────────────────────────────

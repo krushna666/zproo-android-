@@ -2,14 +2,16 @@ import { findCity } from '@zproo/config';
 import type {
   BookingDetails,
   BookingListItem,
+  BusBookResponse,
   BusBookingInfo,
   BusPoint,
-  BusTripOffer,
+  BusTripDetails,
   FlightOffer,
   PassengerType,
   PriceBreakdown,
 } from '@zproo/types';
 import type { BookingRecord } from '../repositories/booking.repository';
+import { BUS_AC_GST_PERCENT } from '../services/busPricing';
 import { flightPriceBreakdown } from '../services/flightPricing';
 import { clock } from '../lib/testContext';
 
@@ -25,8 +27,8 @@ function busInfo(booking: BookingRecord): BusBookingInfo | null {
   const bus = booking.bus;
   if (!bus) return null;
   return {
-    offer: bus.offer as unknown as BusTripOffer,
-    seatNumbers: bus.seatNumbers,
+    trip: bus.offer as unknown as BusTripDetails,
+    seats: bus.seats,
     boardingPoint: bus.boardingPoint as unknown as BusPoint,
     droppingPoint: bus.droppingPoint as unknown as BusPoint,
     pnr: bus.pnr,
@@ -56,7 +58,12 @@ function fareLines(booking: BookingRecord, offers: FlightOffer[]): PriceBreakdow
       label: `Base fare — ${seats} seat${seats === 1 ? '' : 's'}`,
       amountPaise: booking.baseAmountPaise,
     },
-    ...(booking.taxAmountPaise > 0 ? [{ label: 'GST', amountPaise: booking.taxAmountPaise }] : []),
+    ...(booking.taxAmountPaise > 0
+      ? [{ label: `GST (${BUS_AC_GST_PERCENT}%)`, amountPaise: booking.taxAmountPaise }]
+      : []),
+    ...(booking.feeAmountPaise > 0
+      ? [{ label: 'Convenience fee', amountPaise: booking.feeAmountPaise }]
+      : []),
   ];
 }
 
@@ -108,9 +115,20 @@ export function toBookingDetails(booking: BookingRecord, now: Date = clock.now()
   };
 }
 
+/** POST /…/book response: the held booking, its hold deadline and the server's bill. */
+export function toBookResult(booking: BookingRecord, now: Date = clock.now()): BusBookResponse {
+  return {
+    bookingRef: booking.reference,
+    status: 'HELD',
+    holdExpiresAt: (booking.holdExpiresAt ?? now).toISOString(),
+    serverNow: now.toISOString(),
+    priceBreakdown: toBookingDetails(booking, now).price,
+  };
+}
+
 export function toBookingListItem(booking: BookingRecord): BookingListItem {
   if (booking.bus) {
-    const seats = booking.bus.seatNumbers;
+    const seats = booking.bus.seats;
     return {
       reference: booking.reference,
       serviceType: booking.serviceType,

@@ -2,6 +2,8 @@
 export {
   BUS_AC_GST_PERCENT,
   BUS_CANCELLATION_POLICY,
-  busSeatFare,
-  type SeatFare,
+  busFareBreakdown,
+  busRefund,
+  busSeatPrice,
+  splitGst,
 } from '@zproo/catalog';

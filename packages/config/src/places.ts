@@ -398,8 +398,12 @@ export const AIRPORTS: readonly Airport[] = [
 // ───────────────────────────── Cities (bus, hotel) ─────────────────────────────
 
 export interface City {
-  /** Stable slug, used in URLs and as the bus/hotel search key. */
+  /** Three-letter city code (the IATA city code where one exists), used in URLs and APIs. */
   code: string;
+  /** Lower-case name for readable URLs and older links. */
+  slug: string;
+  /** Shown in the "Popular" list of city pickers. */
+  popular?: boolean;
   name: string;
   state: string;
   /** Former or alternative names people search for. */
@@ -408,110 +412,162 @@ export interface City {
 
 export const CITIES: readonly City[] = [
   // Maharashtra — major cities
-  { code: 'pune', name: 'Pune', state: MH, aliases: 'Poona' },
-  { code: 'mumbai', name: 'Mumbai', state: MH, aliases: 'Bombay' },
-  { code: 'nagpur', name: 'Nagpur', state: MH },
-  { code: 'nashik', name: 'Nashik', state: MH, aliases: 'Nasik' },
-  { code: 'thane', name: 'Thane', state: MH },
-  { code: 'navi-mumbai', name: 'Navi Mumbai', state: MH, aliases: 'Vashi Belapur' },
-  { code: 'pimpri-chinchwad', name: 'Pimpri-Chinchwad', state: MH, aliases: 'PCMC Pune' },
-  { code: 'sambhajinagar', name: 'Chhatrapati Sambhajinagar', state: MH, aliases: 'Aurangabad' },
-  { code: 'kolhapur', name: 'Kolhapur', state: MH },
-  { code: 'solapur', name: 'Solapur', state: MH, aliases: 'Sholapur' },
-  { code: 'ahilyanagar', name: 'Ahilyanagar', state: MH, aliases: 'Ahmednagar' },
-  { code: 'satara', name: 'Satara', state: MH },
-  { code: 'sangli', name: 'Sangli', state: MH, aliases: 'Miraj' },
-  { code: 'amravati', name: 'Amravati', state: MH },
-  { code: 'akola', name: 'Akola', state: MH },
-  { code: 'jalgaon', name: 'Jalgaon', state: MH },
-  { code: 'latur', name: 'Latur', state: MH },
-  { code: 'nanded', name: 'Nanded', state: MH },
-  { code: 'kalyan', name: 'Kalyan-Dombivli', state: MH },
-  { code: 'panvel', name: 'Panvel', state: MH },
-  { code: 'vasai-virar', name: 'Vasai-Virar', state: MH },
-  { code: 'dhule', name: 'Dhule', state: MH },
-  { code: 'chandrapur', name: 'Chandrapur', state: MH },
-  { code: 'jalna', name: 'Jalna', state: MH },
-  { code: 'parbhani', name: 'Parbhani', state: MH },
-  { code: 'beed', name: 'Beed', state: MH },
-  { code: 'dharashiv', name: 'Dharashiv', state: MH, aliases: 'Osmanabad' },
-  { code: 'yavatmal', name: 'Yavatmal', state: MH },
-  { code: 'wardha', name: 'Wardha', state: MH },
-  { code: 'gondia', name: 'Gondia', state: MH },
-  { code: 'bhandara', name: 'Bhandara', state: MH },
-  { code: 'buldhana', name: 'Buldhana', state: MH },
-  { code: 'washim', name: 'Washim', state: MH },
-  { code: 'hingoli', name: 'Hingoli', state: MH },
-  { code: 'gadchiroli', name: 'Gadchiroli', state: MH },
-  { code: 'nandurbar', name: 'Nandurbar', state: MH },
-  { code: 'palghar', name: 'Palghar', state: MH },
-  { code: 'ratnagiri', name: 'Ratnagiri', state: MH, aliases: 'Konkan' },
-  { code: 'sindhudurg', name: 'Sindhudurg', state: MH, aliases: 'Kudal Oros Konkan' },
-  { code: 'baramati', name: 'Baramati', state: MH },
-  { code: 'karad', name: 'Karad', state: MH },
-  { code: 'ichalkaranji', name: 'Ichalkaranji', state: MH },
+  { code: 'PNQ', slug: 'pune', popular: true, name: 'Pune', state: MH, aliases: 'Poona' },
+  { code: 'BOM', slug: 'mumbai', popular: true, name: 'Mumbai', state: MH, aliases: 'Bombay' },
+  { code: 'NAG', slug: 'nagpur', popular: true, name: 'Nagpur', state: MH },
+  { code: 'ISK', slug: 'nashik', popular: true, name: 'Nashik', state: MH, aliases: 'Nasik' },
+  { code: 'THN', slug: 'thane', name: 'Thane', state: MH },
+  { code: 'NMI', slug: 'navi-mumbai', name: 'Navi Mumbai', state: MH, aliases: 'Vashi Belapur' },
+  {
+    code: 'PMP',
+    slug: 'pimpri-chinchwad',
+    name: 'Pimpri-Chinchwad',
+    state: MH,
+    aliases: 'PCMC Pune',
+  },
+  {
+    code: 'IXU',
+    slug: 'sambhajinagar',
+    popular: true,
+    name: 'Chhatrapati Sambhajinagar',
+    state: MH,
+    aliases: 'Aurangabad',
+  },
+  { code: 'KLH', slug: 'kolhapur', popular: true, name: 'Kolhapur', state: MH },
+  { code: 'SSE', slug: 'solapur', name: 'Solapur', state: MH, aliases: 'Sholapur' },
+  { code: 'AHL', slug: 'ahilyanagar', name: 'Ahilyanagar', state: MH, aliases: 'Ahmednagar' },
+  { code: 'STR', slug: 'satara', name: 'Satara', state: MH },
+  { code: 'SNG', slug: 'sangli', name: 'Sangli', state: MH, aliases: 'Miraj' },
+  { code: 'AMR', slug: 'amravati', name: 'Amravati', state: MH },
+  { code: 'AKL', slug: 'akola', name: 'Akola', state: MH },
+  { code: 'JLG', slug: 'jalgaon', name: 'Jalgaon', state: MH },
+  { code: 'LTR', slug: 'latur', name: 'Latur', state: MH },
+  { code: 'NDC', slug: 'nanded', name: 'Nanded', state: MH },
+  { code: 'KLY', slug: 'kalyan', name: 'Kalyan-Dombivli', state: MH },
+  { code: 'PNV', slug: 'panvel', name: 'Panvel', state: MH },
+  { code: 'VSV', slug: 'vasai-virar', name: 'Vasai-Virar', state: MH },
+  { code: 'DHL', slug: 'dhule', name: 'Dhule', state: MH },
+  { code: 'CHN', slug: 'chandrapur', name: 'Chandrapur', state: MH },
+  { code: 'JLN', slug: 'jalna', name: 'Jalna', state: MH },
+  { code: 'PRB', slug: 'parbhani', name: 'Parbhani', state: MH },
+  { code: 'BEE', slug: 'beed', name: 'Beed', state: MH },
+  { code: 'DHR', slug: 'dharashiv', name: 'Dharashiv', state: MH, aliases: 'Osmanabad' },
+  { code: 'YVT', slug: 'yavatmal', name: 'Yavatmal', state: MH },
+  { code: 'WRD', slug: 'wardha', name: 'Wardha', state: MH },
+  { code: 'GND', slug: 'gondia', name: 'Gondia', state: MH },
+  { code: 'BHN', slug: 'bhandara', name: 'Bhandara', state: MH },
+  { code: 'BLD', slug: 'buldhana', name: 'Buldhana', state: MH },
+  { code: 'WSH', slug: 'washim', name: 'Washim', state: MH },
+  { code: 'HNG', slug: 'hingoli', name: 'Hingoli', state: MH },
+  { code: 'GDC', slug: 'gadchiroli', name: 'Gadchiroli', state: MH },
+  { code: 'NND', slug: 'nandurbar', name: 'Nandurbar', state: MH },
+  { code: 'PLG', slug: 'palghar', name: 'Palghar', state: MH },
+  { code: 'RTN', slug: 'ratnagiri', name: 'Ratnagiri', state: MH, aliases: 'Konkan' },
+  { code: 'SDW', slug: 'sindhudurg', name: 'Sindhudurg', state: MH, aliases: 'Kudal Oros Konkan' },
+  { code: 'BRM', slug: 'baramati', name: 'Baramati', state: MH },
+  { code: 'KRD', slug: 'karad', name: 'Karad', state: MH },
+  { code: 'ICH', slug: 'ichalkaranji', name: 'Ichalkaranji', state: MH },
   // Maharashtra — hill stations, beaches and pilgrimage towns
-  { code: 'lonavala', name: 'Lonavala', state: MH, aliases: 'Khandala' },
-  { code: 'mahabaleshwar', name: 'Mahabaleshwar', state: MH },
-  { code: 'panchgani', name: 'Panchgani', state: MH },
-  { code: 'matheran', name: 'Matheran', state: MH },
-  { code: 'igatpuri', name: 'Igatpuri', state: MH },
-  { code: 'alibaug', name: 'Alibaug', state: MH, aliases: 'Alibag' },
-  { code: 'ganpatipule', name: 'Ganpatipule', state: MH },
-  { code: 'malvan', name: 'Malvan', state: MH, aliases: 'Tarkarli' },
-  { code: 'shirdi', name: 'Shirdi', state: MH, aliases: 'Sai Baba' },
-  { code: 'pandharpur', name: 'Pandharpur', state: MH, aliases: 'Vitthal' },
-  { code: 'trimbakeshwar', name: 'Trimbakeshwar', state: MH },
-  { code: 'shegaon', name: 'Shegaon', state: MH },
-  { code: 'lavasa', name: 'Lavasa', state: MH },
+  { code: 'LNV', slug: 'lonavala', name: 'Lonavala', state: MH, aliases: 'Khandala' },
+  { code: 'MHB', slug: 'mahabaleshwar', name: 'Mahabaleshwar', state: MH },
+  { code: 'PNC', slug: 'panchgani', name: 'Panchgani', state: MH },
+  { code: 'MTH', slug: 'matheran', name: 'Matheran', state: MH },
+  { code: 'IGT', slug: 'igatpuri', name: 'Igatpuri', state: MH },
+  { code: 'ALB', slug: 'alibaug', name: 'Alibaug', state: MH, aliases: 'Alibag' },
+  { code: 'GNP', slug: 'ganpatipule', name: 'Ganpatipule', state: MH },
+  { code: 'MLV', slug: 'malvan', name: 'Malvan', state: MH, aliases: 'Tarkarli' },
+  { code: 'SAG', slug: 'shirdi', popular: true, name: 'Shirdi', state: MH, aliases: 'Sai Baba' },
+  { code: 'PND', slug: 'pandharpur', name: 'Pandharpur', state: MH, aliases: 'Vitthal' },
+  { code: 'TRM', slug: 'trimbakeshwar', name: 'Trimbakeshwar', state: MH },
+  { code: 'SHG', slug: 'shegaon', name: 'Shegaon', state: MH },
+  { code: 'LVS', slug: 'lavasa', name: 'Lavasa', state: MH },
   // Across India
-  { code: 'delhi', name: 'New Delhi', state: 'Delhi' },
-  { code: 'bengaluru', name: 'Bengaluru', state: 'Karnataka', aliases: 'Bangalore' },
-  { code: 'hyderabad', name: 'Hyderabad', state: 'Telangana' },
-  { code: 'goa', name: 'Goa', state: 'Goa', aliases: 'Panaji Panjim Margao' },
-  { code: 'ahmedabad', name: 'Ahmedabad', state: 'Gujarat' },
-  { code: 'surat', name: 'Surat', state: 'Gujarat' },
-  { code: 'vadodara', name: 'Vadodara', state: 'Gujarat', aliases: 'Baroda' },
-  { code: 'rajkot', name: 'Rajkot', state: 'Gujarat' },
-  { code: 'indore', name: 'Indore', state: 'Madhya Pradesh' },
-  { code: 'bhopal', name: 'Bhopal', state: 'Madhya Pradesh' },
-  { code: 'hubballi', name: 'Hubballi', state: 'Karnataka', aliases: 'Hubli Dharwad' },
-  { code: 'belagavi', name: 'Belagavi', state: 'Karnataka', aliases: 'Belgaum' },
-  { code: 'mangaluru', name: 'Mangaluru', state: 'Karnataka', aliases: 'Mangalore' },
-  { code: 'mysuru', name: 'Mysuru', state: 'Karnataka', aliases: 'Mysore' },
-  { code: 'hampi', name: 'Hampi', state: 'Karnataka' },
-  { code: 'chennai', name: 'Chennai', state: 'Tamil Nadu', aliases: 'Madras' },
-  { code: 'coimbatore', name: 'Coimbatore', state: 'Tamil Nadu' },
-  { code: 'madurai', name: 'Madurai', state: 'Tamil Nadu' },
-  { code: 'ooty', name: 'Ooty', state: 'Tamil Nadu', aliases: 'Udhagamandalam' },
-  { code: 'kochi', name: 'Kochi', state: 'Kerala', aliases: 'Cochin Ernakulam' },
-  { code: 'munnar', name: 'Munnar', state: 'Kerala' },
-  { code: 'alleppey', name: 'Alappuzha', state: 'Kerala', aliases: 'Alleppey' },
-  { code: 'visakhapatnam', name: 'Visakhapatnam', state: 'Andhra Pradesh', aliases: 'Vizag' },
-  { code: 'vijayawada', name: 'Vijayawada', state: 'Andhra Pradesh' },
-  { code: 'tirupati', name: 'Tirupati', state: 'Andhra Pradesh' },
-  { code: 'jaipur', name: 'Jaipur', state: 'Rajasthan' },
-  { code: 'udaipur', name: 'Udaipur', state: 'Rajasthan' },
-  { code: 'jodhpur', name: 'Jodhpur', state: 'Rajasthan' },
-  { code: 'agra', name: 'Agra', state: 'Uttar Pradesh' },
-  { code: 'lucknow', name: 'Lucknow', state: 'Uttar Pradesh' },
-  { code: 'varanasi', name: 'Varanasi', state: 'Uttar Pradesh', aliases: 'Banaras Kashi' },
-  { code: 'patna', name: 'Patna', state: 'Bihar' },
-  { code: 'ranchi', name: 'Ranchi', state: 'Jharkhand' },
-  { code: 'raipur', name: 'Raipur', state: 'Chhattisgarh' },
-  { code: 'bhubaneswar', name: 'Bhubaneswar', state: 'Odisha' },
-  { code: 'kolkata', name: 'Kolkata', state: 'West Bengal', aliases: 'Calcutta' },
-  { code: 'darjeeling', name: 'Darjeeling', state: 'West Bengal' },
-  { code: 'guwahati', name: 'Guwahati', state: 'Assam' },
-  { code: 'chandigarh', name: 'Chandigarh', state: 'Chandigarh' },
-  { code: 'amritsar', name: 'Amritsar', state: 'Punjab' },
-  { code: 'dehradun', name: 'Dehradun', state: 'Uttarakhand' },
-  { code: 'rishikesh', name: 'Rishikesh', state: 'Uttarakhand' },
-  { code: 'haridwar', name: 'Haridwar', state: 'Uttarakhand' },
-  { code: 'shimla', name: 'Shimla', state: 'Himachal Pradesh' },
-  { code: 'manali', name: 'Manali', state: 'Himachal Pradesh' },
-  { code: 'dharamshala', name: 'Dharamshala', state: 'Himachal Pradesh', aliases: 'McLeod Ganj' },
-  { code: 'srinagar', name: 'Srinagar', state: 'Jammu and Kashmir' },
+  { code: 'DEL', slug: 'delhi', popular: true, name: 'New Delhi', state: 'Delhi' },
+  {
+    code: 'BLR',
+    slug: 'bengaluru',
+    popular: true,
+    name: 'Bengaluru',
+    state: 'Karnataka',
+    aliases: 'Bangalore',
+  },
+  { code: 'HYD', slug: 'hyderabad', popular: true, name: 'Hyderabad', state: 'Telangana' },
+  {
+    code: 'GOI',
+    slug: 'goa',
+    popular: true,
+    name: 'Goa',
+    state: 'Goa',
+    aliases: 'Panaji Panjim Margao',
+  },
+  { code: 'AMD', slug: 'ahmedabad', popular: true, name: 'Ahmedabad', state: 'Gujarat' },
+  { code: 'STV', slug: 'surat', name: 'Surat', state: 'Gujarat' },
+  { code: 'BDQ', slug: 'vadodara', name: 'Vadodara', state: 'Gujarat', aliases: 'Baroda' },
+  { code: 'RAJ', slug: 'rajkot', name: 'Rajkot', state: 'Gujarat' },
+  { code: 'IDR', slug: 'indore', name: 'Indore', state: 'Madhya Pradesh' },
+  { code: 'BHO', slug: 'bhopal', name: 'Bhopal', state: 'Madhya Pradesh' },
+  { code: 'HBX', slug: 'hubballi', name: 'Hubballi', state: 'Karnataka', aliases: 'Hubli Dharwad' },
+  { code: 'IXG', slug: 'belagavi', name: 'Belagavi', state: 'Karnataka', aliases: 'Belgaum' },
+  { code: 'IXE', slug: 'mangaluru', name: 'Mangaluru', state: 'Karnataka', aliases: 'Mangalore' },
+  { code: 'MYS', slug: 'mysuru', name: 'Mysuru', state: 'Karnataka', aliases: 'Mysore' },
+  { code: 'HMP', slug: 'hampi', name: 'Hampi', state: 'Karnataka' },
+  {
+    code: 'MAA',
+    slug: 'chennai',
+    popular: true,
+    name: 'Chennai',
+    state: 'Tamil Nadu',
+    aliases: 'Madras',
+  },
+  { code: 'CJB', slug: 'coimbatore', name: 'Coimbatore', state: 'Tamil Nadu' },
+  { code: 'IXM', slug: 'madurai', name: 'Madurai', state: 'Tamil Nadu' },
+  { code: 'OTY', slug: 'ooty', name: 'Ooty', state: 'Tamil Nadu', aliases: 'Udhagamandalam' },
+  { code: 'COK', slug: 'kochi', name: 'Kochi', state: 'Kerala', aliases: 'Cochin Ernakulam' },
+  { code: 'MNN', slug: 'munnar', name: 'Munnar', state: 'Kerala' },
+  { code: 'ALP', slug: 'alleppey', name: 'Alappuzha', state: 'Kerala', aliases: 'Alleppey' },
+  {
+    code: 'VTZ',
+    slug: 'visakhapatnam',
+    name: 'Visakhapatnam',
+    state: 'Andhra Pradesh',
+    aliases: 'Vizag',
+  },
+  { code: 'VGA', slug: 'vijayawada', name: 'Vijayawada', state: 'Andhra Pradesh' },
+  { code: 'TIR', slug: 'tirupati', name: 'Tirupati', state: 'Andhra Pradesh' },
+  { code: 'JAI', slug: 'jaipur', popular: true, name: 'Jaipur', state: 'Rajasthan' },
+  { code: 'UDR', slug: 'udaipur', name: 'Udaipur', state: 'Rajasthan' },
+  { code: 'JDH', slug: 'jodhpur', name: 'Jodhpur', state: 'Rajasthan' },
+  { code: 'AGR', slug: 'agra', name: 'Agra', state: 'Uttar Pradesh' },
+  { code: 'LKO', slug: 'lucknow', name: 'Lucknow', state: 'Uttar Pradesh' },
+  {
+    code: 'VNS',
+    slug: 'varanasi',
+    name: 'Varanasi',
+    state: 'Uttar Pradesh',
+    aliases: 'Banaras Kashi',
+  },
+  { code: 'PAT', slug: 'patna', name: 'Patna', state: 'Bihar' },
+  { code: 'IXR', slug: 'ranchi', name: 'Ranchi', state: 'Jharkhand' },
+  { code: 'RPR', slug: 'raipur', name: 'Raipur', state: 'Chhattisgarh' },
+  { code: 'BBI', slug: 'bhubaneswar', name: 'Bhubaneswar', state: 'Odisha' },
+  { code: 'CCU', slug: 'kolkata', name: 'Kolkata', state: 'West Bengal', aliases: 'Calcutta' },
+  { code: 'DRJ', slug: 'darjeeling', name: 'Darjeeling', state: 'West Bengal' },
+  { code: 'GAU', slug: 'guwahati', name: 'Guwahati', state: 'Assam' },
+  { code: 'IXC', slug: 'chandigarh', name: 'Chandigarh', state: 'Chandigarh' },
+  { code: 'ATQ', slug: 'amritsar', name: 'Amritsar', state: 'Punjab' },
+  { code: 'DED', slug: 'dehradun', name: 'Dehradun', state: 'Uttarakhand' },
+  { code: 'RSH', slug: 'rishikesh', name: 'Rishikesh', state: 'Uttarakhand' },
+  { code: 'HRD', slug: 'haridwar', name: 'Haridwar', state: 'Uttarakhand' },
+  { code: 'SHM', slug: 'shimla', name: 'Shimla', state: 'Himachal Pradesh' },
+  { code: 'MNL', slug: 'manali', name: 'Manali', state: 'Himachal Pradesh' },
+  {
+    code: 'DHM',
+    slug: 'dharamshala',
+    name: 'Dharamshala',
+    state: 'Himachal Pradesh',
+    aliases: 'McLeod Ganj',
+  },
+  { code: 'SXR', slug: 'srinagar', name: 'Srinagar', state: 'Jammu and Kashmir' },
 ];
 
 // ───────────────────────────── Train stations ─────────────────────────────
@@ -614,8 +670,37 @@ export function findAirport(code: string): Airport | undefined {
   return AIRPORTS.find((a) => a.code === code);
 }
 
-export function findCity(code: string): City | undefined {
-  return CITIES.find((c) => c.code === code);
+/** By city code (any case) or, for older links, by slug. */
+export function findCity(codeOrSlug: string): City | undefined {
+  const upper = codeOrSlug.toUpperCase();
+  const lower = codeOrSlug.toLowerCase();
+  return CITIES.find((c) => c.code === upper || c.slug === lower);
+}
+
+/**
+ * City autocomplete: names, former names and codes that start with (or, for names, contain) the
+ * query; popular cities first, then the home-state order of CITIES. At most `limit` results.
+ */
+export function searchCities(
+  query: string,
+  options: { limit?: number; only?: ReadonlySet<string> } = {},
+): City[] {
+  const q = query.trim().toLowerCase();
+  const pool = options.only ? CITIES.filter((c) => options.only?.has(c.code)) : CITIES;
+  const score = (c: City): number => {
+    const name = c.name.toLowerCase();
+    if (c.code.toLowerCase() === q) return 0;
+    if (name.startsWith(q)) return 1;
+    if (c.aliases?.toLowerCase().split(/[\s,]+/).some((a) => a.startsWith(q))) return 2;
+    if (name.includes(q)) return 3;
+    return 9;
+  };
+  return pool
+    .map((c, i) => ({ c, i, s: q ? score(c) : 1 }))
+    .filter((x) => x.s < 9)
+    .sort((a, b) => a.s - b.s || Number(!a.c.popular) - Number(!b.c.popular) || a.i - b.i)
+    .slice(0, options.limit ?? 10)
+    .map((x) => x.c);
 }
 
 export function findStation(code: string): TrainStation | undefined {

@@ -1,5 +1,7 @@
-import type { BusSearchResult, BusSeatMap, BusTripOffer } from '@zproo/types';
+import { createHash } from 'node:crypto';
+import type { BusCity, BusSearchResponse, BusSeatMap, BusTripDetails } from '@zproo/types';
 import type { BusSearch } from '@zproo/validation';
+import { clock } from '../lib/testContext';
 import type { BusProvider } from '../providers/bus';
 import type { CacheService } from './cache.service';
 
@@ -12,26 +14,50 @@ export class BusService {
     private readonly cache: CacheService,
   ) {}
 
-  async search(search: BusSearch): Promise<BusSearchResult> {
-    const key = `buses:search:v1:${this.provider.name}:${search.from}:${search.to}:${search.date}`;
-    const trips = await this.cache.getOrSet(key, SEARCH_CACHE_SECONDS, () =>
-      this.provider.search(search),
+  cities(query: string): Promise<BusCity[]> {
+    return this.provider.cities(query);
+  }
+
+  /**
+   * Cached for 60 s per normalised query, so a supplier outage serves the last good result for
+   * a minute at most. `searchId` identifies the query (it is the cache key's hash).
+   */
+  async search(search: BusSearch): Promise<BusSearchResponse> {
+    const normalised = `${this.provider.name}:${search.from}:${search.to}:${search.date}`;
+    const searchId = `srch_${createHash('sha256').update(normalised).digest('hex').slice(0, 20)}`;
+    const trips = await this.cache.getOrSet(
+      `buses:search:v2:${searchId}`,
+      SEARCH_CACHE_SECONDS,
+      () => this.provider.search(search),
     );
+    const operators = new Map<string, number>();
+    for (const t of trips)
+      operators.set(t.operator.name, (operators.get(t.operator.name) ?? 0) + 1);
+    const prices = trips.map((t) => t.fromPrice);
     return {
+      searchId,
+      serverNow: clock.now().toISOString(),
       from: search.from,
       to: search.to,
       date: search.date,
       trips,
+      filters: {
+        operators: [...operators]
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+        priceMin: prices.length > 0 ? Math.min(...prices) : 0,
+        priceMax: prices.length > 0 ? Math.max(...prices) : 0,
+      },
       demo: this.provider.isDemo,
     };
   }
 
-  getTrip(tripId: string): Promise<BusTripOffer | null> {
+  getTrip(tripId: string): Promise<BusTripDetails | null> {
     return this.provider.getTrip(tripId);
   }
 
   /** Never cached: customers pick seats from this. */
   seatMap(tripId: string): Promise<BusSeatMap | null> {
-    return this.provider.seatMap(tripId);
+    return this.provider.getSeatMap(tripId);
   }
 }

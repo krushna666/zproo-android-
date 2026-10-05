@@ -6,6 +6,7 @@ import type { BusProvider } from '../providers/bus';
 import type { FlightProvider } from '../providers/flight';
 import { MockPaymentProvider, type PaymentProvider } from '../providers/payment';
 import { BookingRepository } from '../repositories/booking.repository';
+import { BusRepository } from '../repositories/bus.repository';
 import { PaymentRepository } from '../repositories/payment.repository';
 import {
   AuthorizationError,
@@ -376,6 +377,8 @@ export class PaymentService {
         throw new HoldExpiredError(
           'Your hold expired before payment completed. Any amount debited will be refunded.',
         );
+      // Paid seats no longer lapse with the hold.
+      await new BusRepository(tx).markPaid(payment.bookingId);
       // A booking still HELD (paid without an order step, e.g. via webhook) catches up first.
       await new BookingRepository(tx).move(payment.bookingId, ['HELD'], 'PAYMENT_PENDING', {
         actor,
@@ -459,7 +462,11 @@ export class PaymentService {
     for (let attempt = 1; attempt <= ISSUE_ATTEMPTS; attempt++) {
       try {
         if (booking.bus && !booking.bus.pnr) {
-          const issued = await this.deps.buses.issue(booking.bus.offerId, booking.bus.seatNumbers);
+          const issued = await this.deps.buses.issue(
+            booking.bus.tripId,
+            booking.bus.seats,
+            booking.reference,
+          );
           await repo.setBusPnr(booking.id, issued.pnr);
         }
         for (const leg of booking.flights) {

@@ -59,7 +59,7 @@ export function createApiRouter(
   router.use(
     '/buses',
     busRoutes(
-      createBusesController(services.buses, services.bookings),
+      createBusesController(services.buses, services.bookings, services.cancellations),
       requireUser,
       services.rbac,
       services.idempotency,
@@ -69,7 +69,12 @@ export function createApiRouter(
   router.use(
     '/bookings',
     bookingRoutes(
-      createBookingsController(services.bookings, services.tickets, services.rbac),
+      createBookingsController(
+        services.bookings,
+        services.tickets,
+        services.rbac,
+        services.cancellations,
+      ),
       requireUser,
       services.rbac,
     ),

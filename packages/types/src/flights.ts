@@ -167,3 +167,14 @@ export interface PaymentOrder {
   /** Server clock when this was sent; countdowns use it to avoid client clock skew. */
   serverNow: string;
 }
+
+/** GET /bookings/:ref/cancellation — what cancelling now would refund. */
+export interface CancellationQuote {
+  bookingRef: string;
+  cancellable: boolean;
+  /** Why not, when `cancellable` is false */
+  reason?: string;
+  /** Paise */
+  refundAmount: number;
+  refundPercent: number;
+}

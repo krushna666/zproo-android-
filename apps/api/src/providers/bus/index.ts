@@ -3,7 +3,7 @@ import type { Env } from '../../config/env';
 import type { BusProvider } from './BusProvider';
 import { MockBusProvider } from './MockBusProvider';
 
-export type { BusProvider, BusSearchQuery } from './BusProvider';
+export type { BusProvider, BusSearchQuery, SeatHoldRequest, SeatQuote } from './BusProvider';
 export { MockBusProvider } from './MockBusProvider';
 
 export function createBusProvider(

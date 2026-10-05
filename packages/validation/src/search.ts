@@ -34,11 +34,19 @@ const airportCode = z
   .trim()
   .toUpperCase()
   .refine((code) => Boolean(findAirport(code)), 'Choose an airport from the list');
+/** A city code (or, for older links, a city slug), normalised to the 3-letter code. */
 const cityCode = z
   .string()
   .trim()
-  .toLowerCase()
-  .refine((code) => Boolean(findCity(code)), 'Choose a city from the list');
+  .min(1, 'Choose a city')
+  .transform((value, ctx) => {
+    const city = findCity(value);
+    if (!city) {
+      ctx.addIssue({ code: 'custom', message: 'Choose a city' });
+      return z.NEVER;
+    }
+    return city.code;
+  });
 const stationCode = z
   .string()
   .trim()
@@ -126,9 +134,33 @@ export type FlightSearch = z.output<typeof flightSearchSchema>;
 
 // ───────────────────────────── Ground transport ─────────────────────────────
 
-export const busSearchSchema = z
-  .object({ from: cityCode, to: cityCode, date: travelDate('Travel date') })
-  .refine((s) => s.from !== s.to, { path: ['to'], message: 'From and To must be different' });
+/** Today's date in India (bus and hotel dates are IST calendar dates). */
+export function todayInIst(now: Date = new Date()): string {
+  return new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+}
+
+/** Bus bookings open 120 days ahead. */
+export const BUS_MAX_DAYS_AHEAD = 120;
+export const BUS_SEARCH_MESSAGES = {
+  sameCity: 'Choose different cities for From and To',
+  dateWindow: `Choose a date within the next ${BUS_MAX_DAYS_AHEAD} days`,
+} as const;
+
+/** `now` is injectable so the API can use its (testable) clock. */
+export function busSearchSchemaAt(now: () => Date = () => new Date()) {
+  return z
+    .strictObject({
+      from: cityCode,
+      to: cityCode,
+      date: isoDateSchema.refine((d) => {
+        const today = todayInIst(now());
+        return d >= today && daysBetween(today, d) <= BUS_MAX_DAYS_AHEAD;
+      }, BUS_SEARCH_MESSAGES.dateWindow),
+    })
+    .refine((s) => s.from !== s.to, { path: ['to'], message: BUS_SEARCH_MESSAGES.sameCity });
+}
+
+export const busSearchSchema = busSearchSchemaAt();
 export type BusSearch = z.output<typeof busSearchSchema>;
 
 export const trainSearchSchema = z

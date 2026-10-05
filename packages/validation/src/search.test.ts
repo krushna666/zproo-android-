@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addDays,
   busSearchSchema,
+  busSearchSchemaAt,
   cabSearchSchema,
   flightSearchSchema,
   hotelSearchSchema,
@@ -103,13 +104,35 @@ describe('flightSearchSchema', () => {
 });
 
 describe('ground transport', () => {
-  it('validates bus cities', () => {
-    expect(busSearchSchema.safeParse({ from: 'Pune', to: 'mumbai', date: inDays(2) }).success).toBe(
-      true,
-    );
+  it('normalises bus cities to codes (older slug links still work)', () => {
+    expect(busSearchSchema.parse({ from: 'pnq', to: 'mumbai', date: inDays(2) })).toMatchObject({
+      from: 'PNQ',
+      to: 'BOM',
+    });
     expect(
-      messages(busSearchSchema.safeParse({ from: 'pune', to: 'pune', date: inDays(2) })),
-    ).toContain('From and To must be different');
+      messages(busSearchSchema.safeParse({ from: 'PNQ', to: 'PNQ', date: inDays(2) })),
+    ).toContain('Choose different cities for From and To');
+    expect(messages(busSearchSchema.safeParse({ from: '', to: 'XXX', date: inDays(2) }))).toEqual([
+      'Choose a city',
+      'Choose a city',
+    ]);
+  });
+
+  it('keeps bus dates within the next 120 days (IST)', () => {
+    const now = () => new Date('2026-10-05T20:00:00Z'); // 6 Oct, 01:30 IST
+    const schema = busSearchSchemaAt(now);
+    const msg = 'Choose a date within the next 120 days';
+    expect(messages(schema.safeParse({ from: 'PNQ', to: 'BOM', date: '2026-10-05' }))).toEqual([
+      msg,
+    ]);
+    expect(schema.safeParse({ from: 'PNQ', to: 'BOM', date: '2026-10-06' }).success).toBe(true);
+    expect(schema.safeParse({ from: 'PNQ', to: 'BOM', date: '2027-02-03' }).success).toBe(true);
+    expect(messages(schema.safeParse({ from: 'PNQ', to: 'BOM', date: '2027-02-04' }))).toEqual([
+      msg,
+    ]);
+    expect(schema.safeParse({ from: 'PNQ', to: 'BOM', date: '2026-10-07', x: 1 }).success).toBe(
+      false,
+    );
   });
 
   it('validates train stations and class', () => {

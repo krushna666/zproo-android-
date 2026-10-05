@@ -1,15 +1,6 @@
-import { findAirport, findCity } from '@zproo/config';
+import { findAirport } from '@zproo/config';
 import { describe, expect, it } from 'vitest';
-import {
-  BUS_ROUTES,
-  buildBusTimetable,
-  buildTimetable,
-  COACH_TEMPLATES,
-  pointsFor,
-  quoteFare,
-  unitHash,
-  zonedTimeToUtc,
-} from './index';
+import { buildTimetable, quoteFare, unitHash, zonedTimeToUtc } from './index';
 
 describe('unitHash', () => {
   it('is deterministic and in [0, 1)', () => {
@@ -46,26 +37,6 @@ describe('flight timetable', () => {
       international: false,
     });
     expect(quote.fares.ADULT.basePaise % 10_000).toBe(9_900);
-  });
-});
-
-describe('bus network', () => {
-  it('connects known cities, Maharashtra first, with unique service numbers', () => {
-    for (const [from, to] of BUS_ROUTES) {
-      expect(findCity(from)).toBeDefined();
-      expect(findCity(to)).toBeDefined();
-    }
-    expect(BUS_ROUTES[0]?.slice(0, 2)).toEqual(['pune', 'mumbai']);
-    const plans = buildBusTimetable();
-    expect(new Set(plans.map((p) => p.serviceNumber)).size).toBe(plans.length);
-    expect(pointsFor('pune')[0]?.[0]).toBe('Swargate');
-  });
-
-  it('builds seat layouts with unique seat numbers', () => {
-    for (const coach of COACH_TEMPLATES) {
-      const numbers = coach.seats().map((s) => s.number);
-      expect(new Set(numbers).size).toBe(numbers.length);
-    }
   });
 });
 

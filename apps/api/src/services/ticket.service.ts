@@ -41,6 +41,8 @@ const date = (iso: string, timeZone: string) =>
     month: 'short',
     year: 'numeric',
   }).format(new Date(iso));
+/** Customers should be at the boarding point 15 minutes early. */
+const reportingTime = (iso: string) => new Date(Date.parse(iso) - 15 * 60_000).toISOString();
 const duration = (minutes: number) =>
   `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
 
@@ -226,9 +228,10 @@ export class TicketService {
     y = this.heading(doc, 'Important information', y, left);
     const notes = bus
       ? [
-          'Reach your boarding point 15 minutes before the time shown. Buses do not wait for late passengers.',
-          'Carry a government photo ID; the operator may check it against the traveller names.',
-          `Cancellation: ${bus.offer.cancellationPolicy
+          `Reporting time: reach ${bus.boardingPoint.name} by ${time(reportingTime(bus.boardingPoint.time), 'Asia/Kolkata')} — 15 minutes before departure. Buses do not wait for late passengers.`,
+          bus.trip.policies.idProof,
+          `Operator helpline: ${bus.trip.operator.name}, ${bus.trip.operator.phone}.`,
+          `Cancellation: ${bus.trip.cancellationPolicy
             .map((r) =>
               r.hoursBefore > 0
                 ? `${r.refundPercent}% refund more than ${r.hoursBefore}h before departure`
@@ -287,7 +290,7 @@ export class TicketService {
     left: number,
     width: number,
   ): number {
-    const { offer } = bus;
+    const offer = bus.trip;
     const tz = 'Asia/Kolkata';
     const height = 150;
     doc.roundedRect(left, y, width, height, 8).lineWidth(1).strokeColor(BORDER).stroke();
@@ -309,7 +312,7 @@ export class TicketService {
       .font('Helvetica')
       .fontSize(9)
       .fillColor(MUTED)
-      .text(`${date(offer.departureAt, tz)}  ·  ${offer.bus.name}`, x, y + 30);
+      .text(`${date(offer.departure, tz)}  ·  ${offer.busType.label}`, x, y + 30);
     doc
       .font('Helvetica-Bold')
       .fontSize(20)
@@ -320,7 +323,7 @@ export class TicketService {
       .font('Helvetica')
       .fontSize(9)
       .fillColor(MUTED)
-      .text(`${duration(offer.durationMinutes)}  ·  ${offer.distanceKm} km`, x, y + 56, {
+      .text(`${duration(offer.durationMin)}  ·  ${offer.distanceKm} km`, x, y + 56, {
         width: width - 32,
         align: 'center',
       });
@@ -338,17 +341,18 @@ export class TicketService {
       .font('Helvetica')
       .fontSize(8)
       .fillColor(MUTED)
-      .text(bus.boardingPoint.address, x, y + 90, { width: half - 10 })
-      .text(bus.droppingPoint.address, x + half + 10, y + 90, { width: half - 10, align: 'right' });
+      .text(pdfText(`${bus.boardingPoint.landmark}, ${bus.boardingPoint.address}`), x, y + 90, {
+        width: half - 10,
+      })
+      .text(pdfText(bus.droppingPoint.address), x + half + 10, y + 90, {
+        width: half - 10,
+        align: 'right',
+      });
     doc
       .font('Helvetica-Bold')
       .fontSize(10)
       .fillColor(DARK)
-      .text(
-        `Seat${bus.seatNumbers.length === 1 ? '' : 's'}: ${bus.seatNumbers.join(', ')}`,
-        x,
-        y + 124,
-      );
+      .text(`Seat${bus.seats.length === 1 ? '' : 's'}: ${bus.seats.join(', ')}`, x, y + 124);
     return y + height + 16;
   }
 

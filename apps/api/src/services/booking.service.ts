@@ -1,15 +1,23 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import type { BookingDetails, BookingListItem, FlightOffer } from '@zproo/types';
+import type { BookingDetails, BookingListItem, BusBookResponse, FlightOffer } from '@zproo/types';
+import type { Redis } from 'ioredis';
 import { OPEN_HOLD_STATUSES, generateBookingReference } from '@zproo/utils';
-import { passengerAgeIssues, type BookBusInput, type BookFlightInput } from '@zproo/validation';
+import {
+  BUS_MESSAGES,
+  passengerAgeIssues,
+  type BookBusInput,
+  type BookFlightInput,
+} from '@zproo/validation';
+import { acquireLock } from '../lib/lock';
 import type { Logger } from 'pino';
-import { toBookingDetails, toBookingListItem } from '../models/booking.dto';
+import { toBookResult, toBookingDetails, toBookingListItem } from '../models/booking.dto';
 import type { BusProvider } from '../providers/bus';
 import type { FlightProvider } from '../providers/flight';
 import { BookingRepository, type BookingRecord } from '../repositories/booking.repository';
 import { PaymentRepository } from '../repositories/payment.repository';
 import {
   AuthorizationError,
+  BookingClosedError,
   FareUnavailableError,
   NotFoundError,
   PriceChangedError,
@@ -18,6 +26,7 @@ import {
 } from '../utils/errors';
 import { localDate } from '../utils/time';
 import type { AuditService, RequestContext } from './audit.service';
+import { busFareBreakdown } from './busPricing';
 import { flightPriceBreakdown, type PaxCounts } from './flightPricing';
 import { clock } from '../lib/testContext';
 
@@ -28,6 +37,8 @@ interface BookingServiceDeps {
   audit: AuditService;
   logger: Logger;
   holdMinutes: number;
+  /** Seat locks; optional (the database constraint alone also keeps holds exclusive). */
+  redis?: Redis | undefined;
   now?: () => Date;
 }
 
@@ -44,19 +55,26 @@ export class BookingService {
     idempotencyKey: string,
     ctx: RequestContext,
   ): Promise<BookingDetails> {
-    return this.idempotent(userId, idempotencyKey, () =>
-      this.newFlightBooking(userId, input, idempotencyKey, ctx),
+    return this.idempotent(
+      userId,
+      idempotencyKey,
+      () => this.newFlightBooking(userId, input, idempotencyKey, ctx),
+      (record) => toBookingDetails(record, this.now()),
     );
   }
 
+  /** POST /buses/book — returns `{ bookingRef, status, holdExpiresAt, serverNow, priceBreakdown }`. */
   createBusBooking(
     userId: string,
     input: BookBusInput,
     idempotencyKey: string,
     ctx: RequestContext,
-  ): Promise<BookingDetails> {
-    return this.idempotent(userId, idempotencyKey, () =>
-      this.newBusBooking(userId, input, idempotencyKey, ctx),
+  ): Promise<BusBookResponse> {
+    return this.idempotent(
+      userId,
+      idempotencyKey,
+      () => this.newBusBooking(userId, input, idempotencyKey, ctx),
+      (record) => toBookResult(record, this.now()),
     );
   }
 
@@ -70,7 +88,7 @@ export class BookingService {
     input: BookFlightInput,
     idempotencyKey: string,
     ctx: RequestContext,
-  ): Promise<BookingDetails> {
+  ): Promise<BookingRecord> {
     const pax = this.countPassengers(input);
     const offers: FlightOffer[] = [];
     for (const id of input.offerIds) {
@@ -151,110 +169,158 @@ export class BookingService {
   }
 
   /**
-   * Creates a bus booking awaiting payment: re-checks the trip, seats, points and prices, then
-   * holds the seats and writes the booking in one transaction. Retrying with the same
-   * Idempotency-Key returns the original booking.
+   * Holds bus seats for a booking, in the order the contract requires:
+   *  1. trip, points (belonging to the trip, boarding before dropping) and seats on the coach;
+   *  2. the ladies-seat rule (ladies-only seats, and seats beside one booked by a woman);
+   *  3. the live seat map from the supplier (never cached) — any seat taken → SEAT_UNAVAILABLE;
+   *  4. a live re-price — a different total → PRICE_CHANGED (nothing is held);
+   *  5. under per-seat Redis locks, one transaction: supplier hold + booking (HELD) + event.
+   * The browser's expectedTotal is only compared; the stored amounts come from the supplier.
    */
   private async newBusBooking(
     userId: string,
     input: BookBusInput,
     idempotencyKey: string,
     ctx: RequestContext,
-  ): Promise<BookingDetails> {
-    const unavailable = 'This bus is no longer available. Please choose another.';
+  ): Promise<BookingRecord> {
     const trip = await this.deps.buses.getTrip(input.tripId);
-    const seatMap = trip && (await this.deps.buses.seatMap(input.tripId));
-    if (!trip || !seatMap) throw new NotFoundError(unavailable);
+    if (!trip) throw new NotFoundError('This bus is no longer available. Please search again.');
+    if (!trip.bookable) throw new BookingClosedError(BUS_MESSAGES.closed);
 
+    // 1. Points and seats.
     const boarding = trip.boardingPoints.find((p) => p.id === input.boardingPointId);
     const dropping = trip.droppingPoints.find((p) => p.id === input.droppingPointId);
-    const issues = [];
+    const issues: { path: string; message: string }[] = [];
     if (!boarding)
-      issues.push({ path: 'body.boardingPointId', message: 'Choose a boarding point' });
+      issues.push({ path: 'body.boardingPointId', message: BUS_MESSAGES.boardingPoint });
     if (!dropping)
-      issues.push({ path: 'body.droppingPointId', message: 'Choose a dropping point' });
-
-    const seatsByNumber = new Map(seatMap.decks.flatMap((d) => d.seats).map((s) => [s.number, s]));
-    const seats = input.passengers.map((p, i) => {
-      const seat = seatsByNumber.get(p.seatNumber);
-      if (!seat) {
-        issues.push({
-          path: `body.passengers.${i}.seatNumber`,
-          message: `Seat ${p.seatNumber} does not exist on this bus`,
-        });
-      } else if (seat.ladiesOnly && p.gender !== 'FEMALE') {
-        issues.push({
-          path: `body.passengers.${i}.gender`,
-          message: `Seat ${p.seatNumber} is reserved for women`,
-        });
-      }
-      return seat;
+      issues.push({ path: 'body.droppingPointId', message: BUS_MESSAGES.droppingPoint });
+    if (boarding && dropping && Date.parse(boarding.time) >= Date.parse(dropping.time))
+      issues.push({
+        path: 'body.droppingPointId',
+        message: 'Choose a dropping point after your boarding point',
+      });
+    const map = await this.deps.buses.getSeatMap(input.tripId);
+    if (!map) throw new NotFoundError('This bus is no longer available. Please search again.');
+    const bySeat = new Map(map.decks.flatMap((d) => d.seats).map((s) => [s.seatNo, s]));
+    input.seats.forEach((seatNo, i) => {
+      if (!bySeat.has(seatNo))
+        issues.push({ path: `body.seats.${i}`, message: `Seat ${seatNo} isn't on this bus` });
+    });
+    // 2. Ladies-only seats (fixed, or beside a woman's seat) need a woman traveller.
+    input.travellers.forEach((t, i) => {
+      if (bySeat.get(t.seatNo)?.ladiesOnly && t.gender !== 'FEMALE')
+        issues.push({ path: `body.travellers.${i}.gender`, message: BUS_MESSAGES.ladiesSeat });
     });
     if (issues.length > 0) throw new ValidationError(issues);
-    const taken = input.passengers.filter((_, i) => !seats[i]?.available).map((p) => p.seatNumber);
+
+    // 3. Live availability.
+    const taken = input.seats.filter((n) => bySeat.get(n)?.status !== 'AVAILABLE');
     if (taken.length > 0) throw new SeatUnavailableError(taken);
 
-    const basePaise = seats.reduce((sum, s) => sum + (s?.basePaise ?? 0), 0);
-    const taxPaise = seats.reduce((sum, s) => sum + (s?.taxPaise ?? 0), 0);
-    const totalPaise = basePaise + taxPaise;
-    if (totalPaise !== input.expectedTotalPaise)
-      throw new PriceChangedError(input.expectedTotalPaise, totalPaise);
+    // 4. Live price; the browser's figure is only a comparison value.
+    const quote = await this.deps.buses.reprice(input.tripId, input.seats);
+    if (!quote) throw new NotFoundError('This bus is no longer available. Please search again.');
+    const price = busFareBreakdown(quote.seats, quote.ac);
+    if (price.totalPaise !== input.expectedTotal)
+      throw new PriceChangedError(input.expectedTotal, price.totalPaise);
 
-    const seatNumbers = input.passengers.map((p) => p.seatNumber);
-    return this.createHeld(userId, 'BUS', ctx, async (reference, tx) => {
-      const repo = new BookingRepository(tx);
-      const created = await repo.create({
-        reference,
-        userId,
-        serviceType: 'BUS',
-        status: 'HELD',
-        paymentStatus: 'CREATED',
-        baseAmountPaise: basePaise,
-        taxAmountPaise: taxPaise,
-        feeAmountPaise: 0,
-        totalAmountPaise: totalPaise,
-        contactEmail: input.contact.email,
-        contactPhone: input.contact.phone,
-        travelDate: new Date(`${trip.date}T00:00:00Z`),
-        holdExpiresAt: new Date(this.now().getTime() + this.deps.holdMinutes * 60_000),
-        idempotencyKey,
-        metadata: { demo: this.deps.buses.isDemo, provider: this.deps.buses.name },
-        passengers: {
-          create: input.passengers.map((p, i) => ({
-            sequence: i + 1,
-            type: p.age < 12 ? 'CHILD' : 'ADULT',
-            title: busTitle(p.gender, p.age),
-            firstName: p.firstName,
-            lastName: p.lastName,
-            age: p.age,
-            gender: p.gender,
-            seatNumber: p.seatNumber,
-          })),
-        },
-        bus: {
-          create: {
-            provider: trip.provider,
-            offerId: trip.id,
-            operatorName: trip.operator.name,
-            originCity: trip.from.code,
-            destinationCity: trip.to.code,
-            departureAt: new Date(trip.departureAt),
-            arrivalAt: new Date(trip.arrivalAt),
-            seatNumbers,
-            boardingPoint: boarding as unknown as Prisma.InputJsonValue,
-            droppingPoint: dropping as unknown as Prisma.InputJsonValue,
-            offer: trip as unknown as Prisma.InputJsonValue,
+    // 5. Hold and write the booking.
+    const holdExpiresAt = new Date(this.now().getTime() + this.deps.holdMinutes * 60_000);
+    const genderOf = new Map(input.travellers.map((t) => [t.seatNo, t.gender]));
+    const locks = await this.lockSeats(input.tripId, input.seats);
+    try {
+      return await this.createHeld(userId, 'BUS', ctx, async (reference, tx) => {
+        const created = await new BookingRepository(tx).create({
+          reference,
+          userId,
+          serviceType: 'BUS',
+          status: 'HELD',
+          paymentStatus: 'CREATED',
+          baseAmountPaise: price.basePaise,
+          taxAmountPaise: price.taxesPaise,
+          feeAmountPaise: price.feesPaise,
+          totalAmountPaise: price.totalPaise,
+          contactEmail: input.contact.email,
+          contactPhone: input.contact.mobile,
+          travelDate: new Date(`${trip.date}T00:00:00Z`),
+          holdExpiresAt,
+          idempotencyKey,
+          metadata: {
+            demo: this.deps.buses.isDemo,
+            provider: this.deps.buses.name,
+            seatPrices: Object.fromEntries(quote.seats.map((q) => [q.seatNo, q.price])),
           },
-        },
-      });
-      const { localTripId } = await this.deps.buses.hold(trip.id, seatNumbers, created.id, tx);
-      if (localTripId)
-        await tx.busBooking.update({
-          where: { bookingId: created.id },
-          data: { tripId: localTripId },
+          passengers: {
+            create: input.travellers.map((t, i) => {
+              const { firstName, lastName } = splitName(t.name);
+              return {
+                sequence: i + 1,
+                type: t.age < 12 ? 'CHILD' : 'ADULT',
+                title: busTitle(t.gender, t.age),
+                firstName,
+                lastName,
+                age: t.age,
+                gender: t.gender,
+                seatNumber: t.seatNo,
+              };
+            }),
+          },
+          bus: {
+            create: {
+              provider: this.deps.buses.name,
+              tripId: trip.tripId,
+              operatorName: trip.operator.name,
+              busType: trip.busType.label,
+              originCity: trip.from.code,
+              destinationCity: trip.to.code,
+              departureAt: new Date(trip.departure),
+              arrivalAt: new Date(trip.arrival),
+              seats: input.seats,
+              boardingPoint: boarding as unknown as Prisma.InputJsonValue,
+              droppingPoint: dropping as unknown as Prisma.InputJsonValue,
+              offer: trip as unknown as Prisma.InputJsonValue,
+            },
+          },
         });
-      return created;
-    });
+        await this.deps.buses.hold(
+          trip.tripId,
+          input.seats.map((seatNo) => ({ seatNo, female: genderOf.get(seatNo) === 'FEMALE' })),
+          created.id,
+          holdExpiresAt,
+          tx,
+        );
+        return created;
+      });
+    } finally {
+      await locks.release();
+    }
+  }
+
+  /**
+   * Short Redis locks (`lock:bus:<trip>:<seat>`, SET NX PX) so two customers racing for a seat
+   * don't both reach the database; the unique (trip, seat, active) constraint is the final guard.
+   * Without Redis (tests, outages) the constraint alone keeps holds exclusive.
+   */
+  private async lockSeats(tripId: string, seats: string[]) {
+    const redis = this.deps.redis;
+    const held: { release(): Promise<void> }[] = [];
+    const releaseAll = async () => {
+      await Promise.allSettled(held.map((l) => l.release()));
+    };
+    if (!redis || redis.status !== 'ready') return { release: releaseAll };
+    // Sorted, so two bookings of overlapping seats always lock in the same order.
+    for (const seatNo of [...seats].sort()) {
+      const lock = await acquireLock(redis, `lock:bus:${tripId}:${seatNo}`, 10_000).catch(
+        () => null,
+      );
+      if (!lock) {
+        await releaseAll();
+        throw new SeatUnavailableError([seatNo]);
+      }
+      held.push(lock);
+    }
+    return { release: releaseAll };
   }
 
   /**
@@ -366,19 +432,20 @@ export class BookingService {
    * and again if creating fails: a concurrent retry may have won the race (unique key conflict)
    * or taken the very seats this request wanted.
    */
-  private async idempotent(
+  private async idempotent<T>(
     userId: string,
     idempotencyKey: string,
-    create: () => Promise<BookingDetails>,
-  ): Promise<BookingDetails> {
+    create: () => Promise<BookingRecord>,
+    present: (record: BookingRecord) => T,
+  ): Promise<T> {
     const repo = new BookingRepository(this.deps.prisma);
     const existing = await repo.findByIdempotencyKey(userId, idempotencyKey);
-    if (existing) return toBookingDetails(existing);
+    if (existing) return present(existing);
     try {
-      return await create();
+      return present(await create());
     } catch (err) {
       const winner = await repo.findByIdempotencyKey(userId, idempotencyKey);
-      if (winner) return toBookingDetails(winner);
+      if (winner) return present(winner);
       throw err;
     }
   }
@@ -389,7 +456,7 @@ export class BookingService {
     service: 'FLIGHT' | 'BUS',
     ctx: RequestContext,
     create: (reference: string, tx: Prisma.TransactionClient) => Promise<BookingRecord>,
-  ): Promise<BookingDetails> {
+  ): Promise<BookingRecord> {
     const booking = await this.withUniqueReference(service, (reference) =>
       this.deps.prisma.$transaction(async (tx) => {
         const created = await create(reference, tx);
@@ -411,7 +478,7 @@ export class BookingService {
       after: { reference: booking.reference, service, totalPaise: booking.totalAmountPaise },
       context: ctx,
     });
-    return toBookingDetails(booking);
+    return booking;
   }
 
   /** Booking references are random; on the (very rare) collision, try again with a new one. */
@@ -433,6 +500,13 @@ export class BookingService {
       }
     }
   }
+}
+
+/** "Amit Kumar Sharma" → first "Amit Kumar", last "Sharma" (single names keep last empty). */
+function splitName(name: string): { firstName: string; lastName: string } {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return { firstName: parts[0] ?? '', lastName: '' };
+  return { firstName: parts.slice(0, -1).join(' '), lastName: parts.at(-1) ?? '' };
 }
 
 /** Title printed on bus tickets, from gender and age. */

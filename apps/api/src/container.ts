@@ -21,6 +21,7 @@ import { AuditService } from './services/audit.service';
 import { AuthService } from './services/auth.service';
 import { BookingService } from './services/booking.service';
 import { BusService } from './services/bus.service';
+import { CancellationService } from './services/cancellation.service';
 import { CouponService } from './services/coupon.service';
 import { CacheService } from './services/cache.service';
 import { FlightService } from './services/flight.service';
@@ -77,7 +78,7 @@ export function createServices({
   const busProvider = withResilience(providers.buses ?? createBusProvider(env, prisma), {
     name: `bus:${env.BUS_PROVIDER}`,
     logger,
-    reads: ['search', 'getTrip', 'seatMap'],
+    reads: ['cities', 'search', 'getTrip', 'getSeatMap', 'reprice'],
   });
   const paymentProvider = providers.payments ?? createPaymentProvider(env);
 
@@ -105,6 +106,7 @@ export function createServices({
     audit,
     logger,
     holdMinutes: env.BOOKING_HOLD_MINUTES,
+    redis,
   });
 
   return {
@@ -131,6 +133,14 @@ export function createServices({
     bookings,
     idempotency: new IdempotencyService(prisma),
     coupons: new CouponService({ prisma, bookings, audit }),
+    cancellations: new CancellationService({
+      prisma,
+      bookings,
+      buses: busProvider,
+      payments: paymentProvider,
+      audit,
+      logger,
+    }),
     payments: new PaymentService({
       prisma,
       provider: paymentProvider,

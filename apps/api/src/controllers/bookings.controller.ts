@@ -2,6 +2,7 @@ import type { RequestHandler } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { validated } from '../middleware/validate';
 import type { BookingService } from '../services/booking.service';
+import type { CancellationService } from '../services/cancellation.service';
 import type { RbacService } from '../services/rbac.service';
 import type { TicketService } from '../services/ticket.service';
 import { InvalidStateError } from '../utils/errors';
@@ -11,6 +12,7 @@ export function createBookingsController(
   bookings: BookingService,
   tickets: TicketService,
   rbac: RbacService,
+  cancellations: CancellationService,
 ) {
   const viewer = async (req: Parameters<RequestHandler>[0]) => {
     const auth = requireAuth(req);
@@ -43,5 +45,11 @@ export function createBookingsController(
       .send(pdf);
   };
 
-  return { list, get, ticket };
+  /** What cancelling now would refund, for the confirmation dialog. */
+  const cancellation: RequestHandler = async (req, res) => {
+    const { reference } = validated<{ reference: string }>(req, 'params');
+    sendSuccess(res, await cancellations.quote(requireAuth(req).userId, reference));
+  };
+
+  return { list, get, ticket, cancellation };
 }

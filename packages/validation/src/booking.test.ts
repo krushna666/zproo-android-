@@ -71,40 +71,68 @@ describe('bookFlightSchema', () => {
 
 describe('bookBusSchema', () => {
   const valid = {
-    tripId: 'bs_abc123_20261010',
-    boardingPointId: 'p1',
-    droppingPointId: 'p2',
-    passengers: [
-      { seatNumber: 'L4', firstName: 'Amit', lastName: 'Sharma', age: '34', gender: 'MALE' },
-    ],
-    contact: { email: 'Amit@Example.com', phone: '98765 43210' },
-    expectedTotalPaise: 47_300,
+    tripId: 'trp_PNQ_BOM_20261020_07',
+    seats: ['L4'],
+    boardingPointId: 'bp_2',
+    droppingPointId: 'dp_1',
+    travellers: [{ seatNo: 'L4', name: 'Amit Sharma', age: '34', gender: 'MALE' }],
+    contact: { email: 'Amit@Example.com', mobile: '98765 43210' },
+    expectedTotal: 124_900,
   };
+  const traveller = valid.travellers[0] as (typeof valid.travellers)[number];
+  const issues = (input: object) =>
+    bookBusSchema.safeParse(input).error?.issues.map((i) => [i.path.join('.'), i.message]) ?? [];
 
-  it('accepts a booking and normalises age, email and phone', () => {
+  it('accepts a booking and normalises age, email and mobile', () => {
     const parsed = bookBusSchema.parse(valid);
-    expect(parsed.passengers[0]?.age).toBe(34);
-    expect(parsed.contact).toEqual({ email: 'amit@example.com', phone: '+919876543210' });
+    expect(parsed.travellers[0]?.age).toBe(34);
+    expect(parsed.contact).toEqual({ email: 'amit@example.com', mobile: '+919876543210' });
   });
 
-  it('allows at most six seats and one traveller per seat', () => {
-    const seat = valid.passengers[0] as (typeof valid.passengers)[number];
-    const seven = Array.from({ length: 7 }, (_, i) => ({ ...seat, seatNumber: `L${i + 1}` }));
-    expect(bookBusSchema.safeParse({ ...valid, passengers: seven }).success).toBe(false);
-    const dup = bookBusSchema.safeParse({
-      ...valid,
-      passengers: [seat, { ...seat, firstName: 'Priya' }],
-    });
-    expect(dup.success).toBe(false);
-    expect(dup.error?.issues[0]).toMatchObject({ path: ['passengers', 1, 'seatNumber'] });
+  it('rejects unknown keys such as a client-sent price', () => {
+    expect(bookBusSchema.safeParse({ ...valid, seatPrice: 1 }).success).toBe(false);
+    expect(
+      bookBusSchema.safeParse({ ...valid, travellers: [{ ...traveller, price: 1 }] }).success,
+    ).toBe(false);
   });
 
-  it('requires a sensible age', () => {
-    const seat = valid.passengers[0] as (typeof valid.passengers)[number];
+  it('allows 1–6 unique seats with exactly one traveller each', () => {
+    const seven = Array.from({ length: 7 }, (_, i) => `L${i + 1}`);
+    expect(issues({ ...valid, seats: seven })).toContainEqual([
+      'seats',
+      'You can select up to 6 seats',
+    ]);
+    expect(
+      issues({ ...valid, seats: ['L4', 'L4'], travellers: [traveller, traveller] }),
+    ).toContainEqual(['seats', 'Choose each seat once']);
+    expect(issues({ ...valid, seats: ['L4', 'L5'] })).toContainEqual([
+      'travellers',
+      'Add one traveller for each seat',
+    ]);
+    expect(issues({ ...valid, travellers: [{ ...traveller, seatNo: 'L9' }] })).toContainEqual([
+      'travellers.0.seatNo',
+      'Add one traveller for each seat',
+    ]);
+  });
+
+  it('uses the SOP name and age messages', () => {
+    expect(issues({ ...valid, travellers: [{ ...traveller, name: 'A' }] })).toEqual([
+      ['travellers.0.name', 'Name is too short'],
+    ]);
+    expect(issues({ ...valid, travellers: [{ ...traveller, name: 'Amit 3' }] })).toEqual([
+      ['travellers.0.name', 'Name contains invalid characters'],
+    ]);
     for (const age of ['0', '121', '3.5', '']) {
-      expect(bookBusSchema.safeParse({ ...valid, passengers: [{ ...seat, age }] }).success).toBe(
-        false,
-      );
+      expect(issues({ ...valid, travellers: [{ ...traveller, age }] })).toEqual([
+        ['travellers.0.age', 'Enter a valid age'],
+      ]);
     }
+  });
+
+  it('validates trip and point IDs', () => {
+    expect(bookBusSchema.safeParse({ ...valid, tripId: 'bs_abc' }).success).toBe(false);
+    expect(issues({ ...valid, boardingPointId: '' })).toEqual([
+      ['boardingPointId', 'Choose a boarding point'],
+    ]);
   });
 });
