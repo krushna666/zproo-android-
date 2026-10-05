@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { clientNow } from '@/lib/clock';
 
 /**
  * In-progress sign-in / sign-up / reset flows. Memory only: a page reload restarts the flow.
@@ -6,15 +7,15 @@ import { create } from 'zustand';
  * single-use on the server, so leftover state after success is harmless.
  */
 interface FlowState {
-  otp: { phone: string; next: string; resendAt: number; devCode?: string | undefined } | null;
-  signup: { phone: string; signupToken: string; next: string } | null;
+  otp: { phone: string; returnTo: string; resendAt: number; devCode?: string | undefined } | null;
+  signup: { phone: string; signupToken: string; returnTo: string } | null;
   reset: { identifier: string; resendAt: number; devCode?: string | undefined } | null;
   startOtp: (
     phone: string,
-    next: string,
+    returnTo: string,
     sent: { resendIn: number; devCode?: string | undefined },
   ) => void;
-  startSignup: (phone: string, signupToken: string, next: string) => void;
+  startSignup: (phone: string, signupToken: string, returnTo: string) => void;
   startReset: (
     identifier: string,
     sent: { resendIn: number; devCode?: string | undefined },
@@ -26,16 +27,16 @@ export const useAuthFlow = create<FlowState>()((set) => ({
   otp: null,
   signup: null,
   reset: null,
-  startOtp: (phone, next, sent) =>
+  startOtp: (phone, returnTo, sent) =>
     set({
-      otp: { phone, next, resendAt: Date.now() + sent.resendIn * 1000, devCode: sent.devCode },
+      otp: { phone, returnTo, resendAt: clientNow() + sent.resendIn * 1000, devCode: sent.devCode },
       signup: null,
       reset: null,
     }),
-  startSignup: (phone, signupToken, next) => set({ signup: { phone, signupToken, next } }),
+  startSignup: (phone, signupToken, returnTo) => set({ signup: { phone, signupToken, returnTo } }),
   startReset: (identifier, sent) =>
     set({
-      reset: { identifier, resendAt: Date.now() + sent.resendIn * 1000, devCode: sent.devCode },
+      reset: { identifier, resendAt: clientNow() + sent.resendIn * 1000, devCode: sent.devCode },
       otp: null,
       signup: null,
     }),

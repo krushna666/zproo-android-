@@ -32,7 +32,7 @@ export function CorporatePanel() {
           </Link>
         </Button>
         <Button asChild size="lg" variant="outline" className="h-14 text-base">
-          <Link to="/login?next=/corporate">Corporate login</Link>
+          <Link to="/login?returnTo=%2Fcorporate">Corporate login</Link>
         </Button>
       </div>
     </div>

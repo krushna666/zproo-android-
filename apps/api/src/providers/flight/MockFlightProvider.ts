@@ -14,6 +14,7 @@ import {
   zonedTimeToUtc,
 } from '../../utils/time';
 import type { FlightLegQuery, FlightProvider, IssuedTickets } from './FlightProvider';
+import { clock } from '../../lib/testContext';
 
 const CABIN_CODE: Record<CabinClass, string> = {
   ECONOMY: 'E',
@@ -57,7 +58,7 @@ export class MockFlightProvider implements FlightProvider {
 
   constructor(
     private readonly db: Db,
-    private readonly now: () => Date = () => new Date(),
+    private readonly now: () => Date = clock.now,
   ) {}
 
   async search(query: FlightLegQuery): Promise<FlightOffer[]> {

@@ -20,7 +20,7 @@ describe('mobile OTP sign-up', () => {
       .post('/api/auth/send-otp')
       .send({ phone: phone.slice(3) })
       .expect(200);
-    expect(sent.body.data).toEqual({ expiresIn: 300, resendIn: 60 });
+    expect(sent.body.data).toEqual({ expiresIn: 300, resendIn: 30 });
     expect(ctx.sms.sent).toHaveLength(1);
     expect(ctx.sms.sent[0]?.to).toBe(phone);
 
@@ -58,8 +58,16 @@ describe('mobile OTP sign-up', () => {
       c.startsWith('zp_rt='),
     );
     expect(cookie).toMatch(/HttpOnly/);
-    expect(cookie).toMatch(/SameSite=Lax/);
+    expect(cookie).toMatch(/SameSite=Strict/);
     expect(cookie).toMatch(/Path=\/api\/auth/);
+    // The double-submit CSRF token is readable by the web app (not HttpOnly), site-wide.
+    const csrf = (res.headers['set-cookie'] as unknown as string[]).find((c) =>
+      c.startsWith('zp_csrf='),
+    );
+    expect(csrf).toMatch(/^zp_csrf=[\w-]{32};/);
+    expect(csrf).not.toMatch(/HttpOnly/);
+    expect(csrf).toMatch(/SameSite=Strict/);
+    expect(csrf).toMatch(/Path=\//);
 
     const audit = await prisma.auditLog.findMany({
       where: { entityId: res.body.data.user.id },
@@ -183,15 +191,18 @@ describe('mobile OTP sign-up', () => {
     expect(row.codeHash).not.toContain(ctx.sms.lastCodeFor(phone));
   });
 
-  it('enforces a 60-second resend cooldown per number', async () => {
+  it('enforces a 30-second resend cooldown per number, with Retry-After', async () => {
     const ctx = createTestContext();
     const phone = uniquePhone();
     await request(ctx.app).post('/api/auth/send-otp').send({ phone }).expect(200);
     const res = await request(ctx.app).post('/api/auth/send-otp').send({ phone }).expect(429);
     expect(res.body.error).toMatchObject({
       code: 'RATE_LIMITED',
-      message: 'Please wait a minute before requesting another code.',
+      message: 'Please wait before requesting another code.',
     });
+    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    expect(Number(res.headers['retry-after'])).toBeLessThanOrEqual(30);
+    expect(res.body.error.details.retryAfter).toBe(Number(res.headers['retry-after']));
     expect(ctx.sms.sent).toHaveLength(1);
     // Other numbers are unaffected.
     await request(ctx.app).post('/api/auth/send-otp').send({ phone: uniquePhone() }).expect(200);

@@ -9,7 +9,12 @@ import { createFlightsController } from '../controllers/flights.controller';
 import { createPaymentsController } from '../controllers/payments.controller';
 import { createMeController } from '../controllers/me.controller';
 import { authenticate } from '../middleware/auth';
-import { authRateLimiters, type RateLimitStoreFactory } from '../middleware/rateLimit';
+import { requireCsrf } from '../middleware/csrf';
+import {
+  authRateLimiters,
+  commerceRateLimiters,
+  type RateLimitStoreFactory,
+} from '../middleware/rateLimit';
 import { adminRoutes } from './admin.routes';
 import { authRoutes } from './auth.routes';
 import { bookingRoutes, busRoutes, flightRoutes, paymentRoutes } from './commerce.routes';
@@ -24,6 +29,7 @@ export function createApiRouter(
   rateLimitStore: RateLimitStoreFactory,
 ): Router {
   const requireUser = authenticate(services.tokens);
+  const commerce = commerceRateLimiters(rateLimitStore);
   const router = Router();
   router.use('/health', healthRoutes(services.health));
   router.use(
@@ -32,9 +38,10 @@ export function createApiRouter(
       createAuthController(services.auth, services.tokens, env),
       authRateLimiters(rateLimitStore),
       requireUser,
+      requireCsrf(env),
     ),
   );
-  router.use('/me', meRoutes(createMeController(services.users), requireUser));
+  router.use('/me', meRoutes(createMeController(services.users, services.auth), requireUser));
   router.use(
     '/admin',
     adminRoutes({ users: createAdminUsersController(services.users) }, requireUser, services.rbac),
@@ -46,6 +53,7 @@ export function createApiRouter(
       requireUser,
       services.rbac,
       services.idempotency,
+      commerce,
     ),
   );
   router.use(
@@ -55,6 +63,7 @@ export function createApiRouter(
       requireUser,
       services.rbac,
       services.idempotency,
+      commerce,
     ),
   );
   router.use(
@@ -72,6 +81,7 @@ export function createApiRouter(
       requireUser,
       services.rbac,
       services.idempotency,
+      commerce,
       {
         mockCheckout: services.payments.providerName === 'mock' && !env.isProduction,
       },

@@ -4,6 +4,7 @@ import type { Env } from '../config/env';
 import { AUTH } from '../config/constants';
 import { hmacSha256, randomToken } from '../utils/crypto';
 import { AuthenticationError } from '../utils/errors';
+import { clock } from '../lib/testContext';
 
 export interface AccessClaims {
   userId: string;
@@ -32,24 +33,29 @@ export class TokenService {
     return this.env.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
   }
 
+  /** Claims: sub, sid, roles, jti, iss, aud, iat, exp — nothing personal. */
   signAccessToken(claims: AccessClaims): Promise<string> {
+    const iat = Math.floor(clock.now().getTime() / 1000);
     return new SignJWT({ roles: claims.roles, sid: claims.sessionId })
       .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
       .setSubject(claims.userId)
       .setJti(randomToken(12))
       .setIssuer(AUTH.issuer)
       .setAudience(AUTH.audience.access)
-      .setIssuedAt()
-      .setExpirationTime(`${this.env.accessTokenTtlSeconds}s`)
+      .setIssuedAt(iat)
+      .setExpirationTime(iat + this.env.accessTokenTtlSeconds)
       .sign(this.accessKey);
   }
 
   async verifyAccessToken(token: string): Promise<AccessClaims> {
     try {
+      // The algorithm is pinned (never `none`); iss, aud and exp are checked.
       const { payload } = await jwtVerify(token, this.accessKey, {
         algorithms: ['HS256'],
         issuer: AUTH.issuer,
         audience: AUTH.audience.access,
+        currentDate: clock.now(),
+        requiredClaims: ['exp', 'iat', 'sub'],
       });
       if (!payload.sub || typeof payload.sid !== 'string' || !Array.isArray(payload.roles))
         throw new Error('claims');

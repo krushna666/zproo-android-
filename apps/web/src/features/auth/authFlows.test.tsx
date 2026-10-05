@@ -1,4 +1,5 @@
-import { screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import { Toaster } from '@zproo/ui';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiClientError } from '@/services/http';
@@ -47,9 +48,9 @@ describe('mobile OTP sign-up', () => {
     });
     api.register.mockResolvedValue(session({ fullName: 'Riya Nair' }));
 
-    const { router } = renderRoute('/signup?next=/offers');
+    const { router } = renderRoute('/signup?returnTo=/offers');
     await user.type(await screen.findByLabelText('Mobile number'), '98765 43210');
-    await user.click(screen.getByRole('button', { name: /continue/i }));
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
     expect(api.sendOtp).toHaveBeenCalledWith('+919876543210');
 
     expect(await screen.findByRole('heading', { name: 'Verify OTP' })).toBeInTheDocument();
@@ -106,8 +107,11 @@ describe('mobile OTP sign-up', () => {
     );
     renderRoute('/verify-otp');
     await user.type(await screen.findByLabelText('One-time code'), '000000');
-    expect(await screen.findByRole('alert')).toHaveTextContent('Incorrect code. 4 attempts left.');
+    expect(await screen.findByTestId('field-error-otp')).toHaveTextContent(
+      'Incorrect code. 4 attempts left.',
+    );
     expect(screen.getByLabelText('One-time code')).toHaveValue('');
+    expect(screen.getByLabelText('One-time code')).toHaveAttribute('aria-invalid', 'true');
   });
 
   it('sends people who open /verify-otp directly back to login', async () => {
@@ -121,11 +125,11 @@ describe('password login', () => {
   it('signs in with email and password', async () => {
     const user = userEvent.setup();
     api.login.mockResolvedValue(session());
-    const { router } = renderRoute('/login?next=/wallet');
-    await user.click(await screen.findByRole('radio', { name: 'Password' }));
-    await user.type(screen.getByLabelText('Mobile number or email'), 'Amit@Example.com');
+    const { router } = renderRoute('/login?returnTo=/wallet');
+    await user.click(await screen.findByRole('radio', { name: 'Email' }));
+    await user.type(screen.getByLabelText('Email or mobile number'), 'Amit@Example.com');
     await user.type(screen.getByLabelText('Password'), 'travel2026');
-    await user.click(screen.getByRole('button', { name: 'Login' }));
+    await user.click(screen.getByRole('button', { name: 'Log in' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/wallet'));
     expect(api.login).toHaveBeenCalledWith('amit@example.com', 'travel2026');
   });
@@ -135,25 +139,26 @@ describe('password login', () => {
     api.login.mockRejectedValue(
       new ApiClientError('Incorrect mobile number, email or password', 401, 'INVALID_CREDENTIALS'),
     );
-    renderRoute('/login');
-    await user.click(await screen.findByRole('radio', { name: 'Password' }));
-    await user.type(screen.getByLabelText('Mobile number or email'), '9876543210');
+    const { router } = renderRoute('/login');
+    await user.click(await screen.findByRole('radio', { name: 'Email' }));
+    await user.type(screen.getByLabelText('Email or mobile number'), '9876543210');
     await user.type(screen.getByLabelText('Password'), 'wrongpass1');
-    await user.click(screen.getByRole('button', { name: 'Login' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    await user.click(screen.getByRole('button', { name: 'Log in' }));
+    expect(await screen.findByTestId('field-error-password')).toHaveTextContent(
       'Incorrect mobile number, email or password',
     );
     expect(screen.getByLabelText('Password')).toHaveValue('');
+    expect(router.state.location.pathname).toBe('/login');
   });
 
   it('never redirects off-site after login', async () => {
     const user = userEvent.setup();
     api.login.mockResolvedValue(session());
-    const { router } = renderRoute('/login?next=https://evil.example');
-    await user.click(await screen.findByRole('radio', { name: 'Password' }));
-    await user.type(screen.getByLabelText('Mobile number or email'), '9876543210');
+    const { router } = renderRoute('/login?returnTo=https://evil.example');
+    await user.click(await screen.findByRole('radio', { name: 'Email' }));
+    await user.type(screen.getByLabelText('Email or mobile number'), '9876543210');
     await user.type(screen.getByLabelText('Password'), 'travel2026');
-    await user.click(screen.getByRole('button', { name: 'Login' }));
+    await user.click(screen.getByRole('button', { name: 'Log in' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/'));
   });
 });
@@ -186,5 +191,51 @@ describe('password reset', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(
       'Password updated. Log in with your new password.',
     );
+  });
+});
+
+describe('SOP feedback', () => {
+  it('toasts "Please fix the errors", marks fields and focuses the first one on an empty submit', async () => {
+    const user = userEvent.setup();
+    renderRoute('/login');
+    await user.click(await screen.findByRole('radio', { name: 'Email' }));
+    await user.click(screen.getByRole('button', { name: 'Log in' }));
+    render(<Toaster />);
+    expect(await screen.findByTestId('toast-error')).toHaveTextContent('Please fix the errors');
+    expect(screen.getByTestId('field-error-identifier')).toHaveTextContent(
+      'Enter your mobile number or email',
+    );
+    expect(screen.getByTestId('field-error-password')).toHaveTextContent('Password is required');
+    expect(screen.getByLabelText('Email or mobile number')).toHaveFocus();
+    expect(api.login).not.toHaveBeenCalled();
+  });
+
+  it('toasts "Login successful!" and "OTP sent to +91 …"', async () => {
+    const user = userEvent.setup();
+    api.login.mockResolvedValue(session());
+    render(<Toaster />);
+    renderRoute('/login');
+    await user.click(await screen.findByRole('radio', { name: 'Email' }));
+    await user.type(screen.getByLabelText('Email or mobile number'), 'amit@example.com');
+    await user.type(screen.getByLabelText('Password'), 'travel2026');
+    await user.click(screen.getByRole('button', { name: 'Log in' }));
+    expect(await screen.findByTestId('toast-success')).toHaveTextContent('Login successful!');
+  });
+
+  it('shows the setup message when Google is not configured', async () => {
+    const user = userEvent.setup();
+    renderRoute('/login');
+    await user.click(await screen.findByTestId('auth-google'));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "Google sign-in isn't set up yet. Please continue with your mobile number or email.",
+    );
+  });
+
+  it('disables resend until the 30-second cooldown ends', async () => {
+    useAuthFlow.getState().startOtp('+919876543210', '/', { resendIn: 30 });
+    renderRoute('/verify-otp');
+    const resend = await screen.findByTestId('auth-resend');
+    expect(resend).toBeDisabled();
+    expect(resend).toHaveTextContent(/Resend OTP in 00:(30|29)/);
   });
 });

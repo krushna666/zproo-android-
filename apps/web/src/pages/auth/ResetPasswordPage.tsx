@@ -1,19 +1,15 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Button } from '@zproo/ui';
+import { Button, DevCodeHint, FormAlert, FormField, OtpInput, PasswordInput } from '@zproo/ui';
 import { useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, Navigate, useNavigate } from 'react-router';
 import type { z } from 'zod';
+import { devCodeLabel } from '@/features/auth/devCode';
 import { Seo } from '@/components/seo/Seo';
 import { authApi } from '@/features/auth/api';
 import { AuthHeader } from '@/features/auth/components/AuthHeader';
-import { DevCodeHint } from '@/features/auth/components/DevCodeHint';
-import { FormAlert } from '@/features/auth/components/FormAlert';
-import { FormField } from '@/features/auth/components/FormField';
-import { OtpInput } from '@/features/auth/components/OtpInput';
-import { PasswordInput } from '@/features/auth/components/PasswordInput';
 import { ResendCountdown } from '@/features/auth/components/ResendCountdown';
-import { errorMessage } from '@/features/auth/errors';
+import { errorMessage, invalidForm } from '@/features/auth/errors';
 import { useAuthFlow } from '@/features/auth/flowStore';
 import { maskPhone } from '@/features/auth/redirect';
 import { resetFormSchema } from '@/features/auth/schemas';
@@ -53,7 +49,7 @@ function ResetForm({
     } catch (e) {
       setError(errorMessage(e));
     }
-  });
+  }, invalidForm);
 
   const resend = async () => {
     setResending(true);
@@ -82,8 +78,9 @@ function ResetForm({
       />
       <form onSubmit={onSubmit} noValidate className="space-y-5">
         {error && <FormAlert>{error}</FormAlert>}
-        <FormField label="Reset code" error={errors.otp?.message}>
+        <FormField name="otp" label="Reset code" error={errors.otp?.message}>
           <OtpInput
+            testIdPrefix="auth-otp"
             value={otp}
             onChange={(value) =>
               form.setValue('otp', value, { shouldValidate: form.formState.isSubmitted })
@@ -91,19 +88,38 @@ function ResetForm({
             focusOnMount
           />
         </FormField>
-        <DevCodeHint code={reset.devCode} />
+        <DevCodeHint code={reset.devCode} label={devCodeLabel} />
         <FormField
+          name="newPassword"
           label="New password"
           error={errors.newPassword?.message}
           hint="At least 8 characters with letters and numbers"
         >
-          <PasswordInput autoComplete="new-password" {...form.register('newPassword')} />
+          <PasswordInput
+            autoComplete="new-password"
+            data-testid="auth-password"
+            {...form.register('newPassword')}
+          />
         </FormField>
-        <FormField label="Confirm new password" error={errors.confirmPassword?.message}>
-          <PasswordInput autoComplete="new-password" {...form.register('confirmPassword')} />
+        <FormField
+          name="confirmPassword"
+          label="Confirm new password"
+          error={errors.confirmPassword?.message}
+        >
+          <PasswordInput
+            autoComplete="new-password"
+            data-testid="auth-password-confirm"
+            {...form.register('confirmPassword')}
+          />
         </FormField>
-        <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
-          {form.formState.isSubmitting ? 'Updating…' : 'Update password'}
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full"
+          data-testid="auth-submit"
+          disabled={form.formState.isSubmitting}
+        >
+          {form.formState.isSubmitting ? 'Updating...' : 'Update password'}
         </Button>
         <ResendCountdown
           availableAt={reset.resendAt}

@@ -8,6 +8,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  FormAlert,
   Sheet,
   SheetContent,
   Skeleton,
@@ -23,7 +24,6 @@ import {
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Seo } from '@/components/seo/Seo';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useFlightSearch } from '@/features/flights/api';
 import { DemoBanner } from '@/features/checkout/DemoBanner';

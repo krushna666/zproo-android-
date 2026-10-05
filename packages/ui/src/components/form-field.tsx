@@ -1,8 +1,10 @@
-import { Label } from '@zproo/ui';
+import { Label } from './label';
 import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from 'react';
 
 interface FormFieldProps {
   label: string;
+  /** Field name; the error gets `data-testid="field-error-<name>"`. */
+  name?: string;
   error?: string | undefined;
   hint?: ReactNode;
   /** A single input element; receives id, aria-invalid and aria-describedby. */
@@ -11,7 +13,7 @@ interface FormFieldProps {
 }
 
 /** Label + control + hint/error, wired together for screen readers. */
-export function FormField({ label, error, hint, children, action }: FormFieldProps) {
+export function FormField({ label, name, error, hint, children, action }: FormFieldProps) {
   const id = useId();
   const messageId = `${id}-message`;
   const control = isValidElement(children)
@@ -29,7 +31,11 @@ export function FormField({ label, error, hint, children, action }: FormFieldPro
       </div>
       {control}
       {error ? (
-        <p id={messageId} className="text-xs font-semibold text-danger">
+        <p
+          id={messageId}
+          data-testid={name ? `field-error-${name}` : undefined}
+          className="text-xs font-semibold text-danger"
+        >
           {error}
         </p>
       ) : (

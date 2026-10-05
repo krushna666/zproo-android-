@@ -1,7 +1,15 @@
 import { SignJWT } from 'jose';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { baseEnv, createTestContext, prisma, refreshCookie, resetUsers, signUp } from './helpers';
+import {
+  baseEnv,
+  createTestContext,
+  prisma,
+  refreshCookie,
+  resetUsers,
+  signUp,
+  withCsrf,
+} from './helpers';
 
 beforeEach(resetUsers);
 
@@ -9,7 +17,7 @@ describe('refresh token rotation', () => {
   it('issues a new refresh token and access token on every refresh', async () => {
     const ctx = createTestContext();
     const { cookie, accessToken } = await signUp(ctx);
-    const res = await request(ctx.app).post('/api/auth/refresh').set('Cookie', cookie).expect(200);
+    const res = await request(ctx.app).post('/api/auth/refresh').set(withCsrf(cookie)).expect(200);
     const next = refreshCookie(res);
     expect(next).toBeDefined();
     expect(next).not.toBe(cookie);
@@ -17,7 +25,7 @@ describe('refresh token rotation', () => {
     expect(res.body.data.user.roles).toEqual(['USER']);
     await request(ctx.app)
       .post('/api/auth/refresh')
-      .set('Cookie', next as string)
+      .set(withCsrf(next as string))
       .expect(200);
   });
 
@@ -25,19 +33,19 @@ describe('refresh token rotation', () => {
     const ctx = createTestContext();
     const { cookie } = await signUp(ctx);
     const rotated = refreshCookie(
-      await request(ctx.app).post('/api/auth/refresh').set('Cookie', cookie).expect(200),
+      await request(ctx.app).post('/api/auth/refresh').set(withCsrf(cookie)).expect(200),
     );
 
     // The old token is replayed (e.g. stolen) …
     const replay = await request(ctx.app)
       .post('/api/auth/refresh')
-      .set('Cookie', cookie)
+      .set(withCsrf(cookie))
       .expect(401);
     expect(replay.body.error.message).toBe('Your session has ended. Please sign in again.');
     // … so the legitimate newer token is revoked too.
     await request(ctx.app)
       .post('/api/auth/refresh')
-      .set('Cookie', rotated as string)
+      .set(withCsrf(rotated as string))
       .expect(401);
     expect(await prisma.auditLog.count({ where: { action: 'AUTH_REFRESH_REUSE' } })).toBe(1);
   });
@@ -51,11 +59,11 @@ describe('refresh token rotation', () => {
         .send({ identifier: phone, password: 'travel2026' })
         .expect(200),
     );
-    await request(ctx.app).post('/api/auth/logout').set('Cookie', cookie).expect(200);
-    await request(ctx.app).post('/api/auth/refresh').set('Cookie', cookie).expect(401);
+    await request(ctx.app).post('/api/auth/logout').set(withCsrf(cookie)).expect(200);
+    await request(ctx.app).post('/api/auth/refresh').set(withCsrf(cookie)).expect(401);
     await request(ctx.app)
       .post('/api/auth/refresh')
-      .set('Cookie', second as string)
+      .set(withCsrf(second as string))
       .expect(200);
   });
 
@@ -74,7 +82,7 @@ describe('refresh token rotation', () => {
     await request(ctx.app).post('/api/auth/refresh').expect(401);
     const res = await request(ctx.app)
       .post('/api/auth/refresh')
-      .set('Cookie', 'zp_rt=garbage')
+      .set(withCsrf('zp_rt=garbage'))
       .expect(401);
     expect((res.headers['set-cookie'] as unknown as string[])[0]).toMatch(
       /^zp_rt=;.*Expires=Thu, 01 Jan 1970/,
@@ -85,14 +93,14 @@ describe('refresh token rotation', () => {
     const ctx = createTestContext();
     const { cookie } = await signUp(ctx);
     await prisma.refreshToken.updateMany({ data: { expiresAt: new Date(Date.now() - 1000) } });
-    await request(ctx.app).post('/api/auth/refresh').set('Cookie', cookie).expect(401);
+    await request(ctx.app).post('/api/auth/refresh').set(withCsrf(cookie)).expect(401);
   });
 
   it('ends sessions of suspended users on refresh', async () => {
     const ctx = createTestContext();
     const { cookie, body } = await signUp(ctx);
     await prisma.user.update({ where: { id: body.data.user.id }, data: { status: 'SUSPENDED' } });
-    const res = await request(ctx.app).post('/api/auth/refresh').set('Cookie', cookie).expect(403);
+    const res = await request(ctx.app).post('/api/auth/refresh').set(withCsrf(cookie)).expect(403);
     expect(res.body.error.code).toBe('ACCOUNT_DISABLED');
     expect(await prisma.refreshToken.count({ where: { revokedAt: null } })).toBe(0);
   });
@@ -102,9 +110,9 @@ describe('logout', () => {
   it('clears the cookie and is safe to repeat', async () => {
     const ctx = createTestContext();
     const { cookie } = await signUp(ctx);
-    const res = await request(ctx.app).post('/api/auth/logout').set('Cookie', cookie).expect(200);
+    const res = await request(ctx.app).post('/api/auth/logout').set(withCsrf(cookie)).expect(200);
     expect((res.headers['set-cookie'] as unknown as string[])[0]).toMatch(/^zp_rt=;/);
-    await request(ctx.app).post('/api/auth/logout').set('Cookie', cookie).expect(200);
+    await request(ctx.app).post('/api/auth/logout').set(withCsrf(cookie)).expect(200);
     await request(ctx.app).post('/api/auth/logout').expect(200);
   });
 
@@ -121,8 +129,8 @@ describe('logout', () => {
       .post('/api/auth/logout-all')
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200);
-    await request(ctx.app).post('/api/auth/refresh').set('Cookie', cookie).expect(401);
-    await request(ctx.app).post('/api/auth/refresh').set('Cookie', second).expect(401);
+    await request(ctx.app).post('/api/auth/refresh').set(withCsrf(cookie)).expect(401);
+    await request(ctx.app).post('/api/auth/refresh').set(withCsrf(second)).expect(401);
   });
 });
 
@@ -161,5 +169,59 @@ describe('access tokens', () => {
     const ctx = createTestContext();
     const signupToken = await ctx.services.tokens.signSignupToken('+919876543210');
     await request(ctx.app).get('/api/me').set('Authorization', `Bearer ${signupToken}`).expect(401);
+  });
+});
+
+describe('CSRF on cookie-authenticated endpoints', () => {
+  it.each(['/api/auth/refresh', '/api/auth/logout'])(
+    '%s refuses a missing or mismatched CSRF token',
+    async (path) => {
+      const ctx = createTestContext();
+      const { cookie } = await signUp(ctx);
+      const missing = await request(ctx.app).post(path).set('Cookie', cookie).expect(403);
+      expect(missing.body.error).toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'Missing or invalid CSRF token',
+      });
+      await request(ctx.app)
+        .post(path)
+        .set('Cookie', `${cookie}; zp_csrf=aaaaaaaaaaaaaaaaaaaaaaaa`)
+        .set('X-CSRF-Token', 'bbbbbbbbbbbbbbbbbbbbbbbb')
+        .expect(403);
+      // The session survived both attempts.
+      await request(ctx.app).post('/api/auth/refresh').set(withCsrf(cookie)).expect(200);
+    },
+  );
+
+  it('refuses a foreign Origin even with a valid token', async () => {
+    const ctx = createTestContext();
+    const { cookie } = await signUp(ctx);
+    const res = await request(ctx.app)
+      .post('/api/auth/refresh')
+      .set(withCsrf(cookie))
+      .set('Origin', 'https://evil.example')
+      .expect(403);
+    expect(res.body.error.message).toBe('Request origin not allowed');
+    await request(ctx.app)
+      .post('/api/auth/refresh')
+      .set(withCsrf(cookie))
+      .set('Origin', 'http://localhost:5173')
+      .expect(200);
+  });
+});
+
+describe('access token claims', () => {
+  it('carries only sub, sid, roles, jti, iss, aud, iat and exp', async () => {
+    const ctx = createTestContext();
+    const { accessToken } = await signUp(ctx, { email: 'claims@example.com' });
+    const [header, payload] = accessToken
+      .split('.')
+      .slice(0, 2)
+      .map((part) => JSON.parse(Buffer.from(part, 'base64url').toString()) as object);
+    expect(header).toEqual({ alg: 'HS256', typ: 'JWT' });
+    expect(Object.keys(payload ?? {}).sort()).toEqual(
+      ['aud', 'exp', 'iat', 'iss', 'jti', 'roles', 'sid', 'sub'].sort(),
+    );
+    expect(JSON.stringify(payload)).not.toMatch(/claims@example\.com|\+91/);
   });
 });

@@ -1,7 +1,7 @@
 import type { BusSeatInfo, BusSeatMap, BusTripOffer } from '@zproo/types';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createTestContext, grantRole, prisma, resetUsers, signUp } from './helpers';
+import { createTestContext, grantRole, prisma, resetUsers, signUp, withCsrf } from './helpers';
 import { payWithMock } from './payments';
 
 beforeEach(resetUsers);
@@ -340,7 +340,7 @@ describe('bus payment, ticket and expiry', () => {
     await grantRole(agent.body.data.user.id, 'SUPPORT');
     const refreshed = await request(ctx.app)
       .post('/api/auth/refresh')
-      .set('Cookie', agent.cookie)
+      .set(withCsrf(agent.cookie))
       .expect(200);
     await request(ctx.app)
       .get(`/api/bookings/${reference}`)

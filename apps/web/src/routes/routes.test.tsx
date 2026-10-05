@@ -76,7 +76,7 @@ describe('route guards', () => {
       await screen.findByRole('heading', { level: 1, name: 'Welcome back' }),
     ).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/login');
-    expect(router.state.location.search).toBe('?next=%2Fbookings%3Ftab%3Dupcoming');
+    expect(router.state.location.search).toBe('?returnTo=%2Fbookings%3Ftab%3Dupcoming');
   });
 
   it.each(['/wallet', '/bookings', '/bookings/ZF7K3QX9M2PA', '/profile'])(
@@ -112,11 +112,11 @@ describe('route guards', () => {
   it('sends signed-out visitors from admin to login', async () => {
     const { router } = renderRoute('/admin/users');
     await screen.findByRole('heading', { level: 1, name: 'Welcome back' });
-    expect(router.state.location.search).toBe('?next=%2Fadmin%2Fusers');
+    expect(router.state.location.search).toBe('?returnTo=%2Fadmin%2Fusers');
   });
 
   it('moves signed-in users away from the login page', async () => {
-    const { router } = renderRoute('/login?next=/wallet', makeUser());
+    const { router } = renderRoute('/login?returnTo=/wallet', makeUser());
     await screen.findByRole('heading', { level: 1, name: 'ZPROO Wallet' });
     expect(router.state.location.pathname).toBe('/wallet');
   });

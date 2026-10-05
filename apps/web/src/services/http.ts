@@ -1,6 +1,7 @@
 import type { ApiFailure, ApiSuccess, ErrorCode, ErrorDetails } from '@zproo/types';
 import axios, { AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
 import { env } from '@/lib/env';
+import { testHeaders } from '@/lib/testHooks';
 
 export type ClientErrorCode = ErrorCode | 'NETWORK_ERROR' | 'TIMEOUT' | 'OFFLINE';
 
@@ -100,6 +101,7 @@ type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean };
 http.interceptors.request.use((config) => {
   const token = auth.getAccessToken();
   if (token && !config.headers.Authorization) config.headers.Authorization = `Bearer ${token}`;
+  for (const [name, value] of Object.entries(testHeaders())) config.headers.set(name, value);
   return config;
 });
 

@@ -7,32 +7,33 @@ interface ResendCountdownProps {
   pending?: boolean;
 }
 
+/** "Resend OTP in mm:ss" (disabled) until the cooldown ends, then "Resend OTP". */
 export function ResendCountdown({ availableAt, onResend, pending }: ResendCountdownProps) {
   const seconds = useCountdown(availableAt);
-  if (seconds > 0) {
-    const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
-    const ss = String(seconds % 60).padStart(2, '0');
-    return (
-      <p className="text-center text-sm text-muted" aria-live="polite">
-        Resend OTP in{' '}
-        <span className="font-bold tabular-nums text-foreground">
-          {mm}:{ss}
-        </span>
-      </p>
-    );
-  }
+  const waiting = seconds > 0;
+  const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
+  const ss = String(seconds % 60).padStart(2, '0');
   return (
-    <p className="text-center text-sm text-muted">
-      Didn't get it?{' '}
+    <div className="text-center">
       <Button
         type="button"
-        variant="link"
-        className="h-auto p-0"
+        variant="ghost"
+        className="text-primary disabled:text-muted"
+        data-testid="auth-resend"
         onClick={onResend}
-        disabled={pending}
+        disabled={waiting || pending}
+        aria-disabled={waiting || pending}
       >
-        {pending ? 'Sending…' : 'Resend OTP'}
+        {pending ? (
+          'Sending...'
+        ) : waiting ? (
+          <span aria-live="off">
+            Resend OTP in <span className="tabular-nums">{`${mm}:${ss}`}</span>
+          </span>
+        ) : (
+          'Resend OTP'
+        )}
       </Button>
-    </p>
+    </div>
   );
 }

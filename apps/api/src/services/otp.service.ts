@@ -6,6 +6,7 @@ import type { SmsProvider } from '../providers/sms';
 import type { OtpRepository } from '../repositories/otp.repository';
 import { hmacSha256, randomDigits, safeEqualHex } from '../utils/crypto';
 import { InvalidOtpError, OtpExpiredError } from '../utils/errors';
+import { clock } from '../lib/testContext';
 
 const MESSAGES: Record<OtpPurpose, (code: string) => { sms: string; subject: string }> = {
   SIGNUP: (code) => ({
@@ -17,7 +18,7 @@ const MESSAGES: Record<OtpPurpose, (code: string) => { sms: string; subject: str
     subject: 'Your ZPROO GO login code',
   }),
   PASSWORD_RESET: (code) => ({
-    sms: `${code} is your ZPROO GO password reset code. Valid for 5 minutes. If you did not request this, ignore it.`,
+    sms: `${code} is your ZPROO GO password reset code. Valid for 10 minutes. If you did not request this, ignore it.`,
     subject: 'Reset your ZPROO GO password',
   }),
   CONTACT_VERIFICATION: (code) => ({
@@ -47,18 +48,26 @@ export class OtpService {
     private readonly sms: SmsProvider,
     private readonly email: EmailProvider,
     secret: string,
+    /** Fixed code for automated tests (ALLOW_TEST_OTP, never in production — env refuses it). */
+    private readonly testCode?: string,
   ) {
     this.key = hmacSha256(secret, 'zproo-go:otp:v1');
   }
 
+  static ttlSeconds(purpose: OtpPurpose): number {
+    return purpose === 'PASSWORD_RESET' ? AUTH.resetOtpTtlSeconds : AUTH.otpTtlSeconds;
+  }
+
   async issue({ target, channel, purpose, userId, ip }: IssueOtp): Promise<OtpSent> {
-    const code = randomDigits(AUTH.otpLength);
+    // crypto.randomInt; codes are compared as HMACs with timingSafeEqual.
+    const code = this.testCode ?? randomDigits(AUTH.otpLength);
+    const ttl = OtpService.ttlSeconds(purpose);
     await this.repo.replace({
       target,
       channel,
       purpose,
       codeHash: this.hash(target, purpose, code),
-      expiresAt: new Date(Date.now() + AUTH.otpTtlSeconds * 1000),
+      expiresAt: new Date(clock.now().getTime() + ttl * 1000),
       maxAttempts: AUTH.otpMaxAttempts,
       userId,
       ipAddress: ip,
@@ -69,7 +78,7 @@ export class OtpService {
     else await this.email.send({ to: target, subject: message.subject, text: message.sms });
 
     return {
-      expiresIn: AUTH.otpTtlSeconds,
+      expiresIn: ttl,
       resendIn: AUTH.otpResendSeconds,
       ...(provider.isDevelopment && { devCode: code }),
     };
@@ -78,7 +87,7 @@ export class OtpService {
   /** Verifies and consumes the newest live code for `target`. Returns the purpose it was issued for. */
   async verify(target: string, purposes: OtpPurpose[], code: string): Promise<OtpPurpose> {
     const otp = await this.repo.findLatest(target, purposes);
-    if (!otp || otp.expiresAt <= new Date()) throw new OtpExpiredError();
+    if (!otp || otp.expiresAt <= clock.now()) throw new OtpExpiredError();
     if (!(await this.repo.registerAttempt(otp.id, otp.maxAttempts))) {
       throw new OtpExpiredError('Too many incorrect attempts. Request a new code.');
     }

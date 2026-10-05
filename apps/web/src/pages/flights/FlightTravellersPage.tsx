@@ -1,6 +1,17 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { FlightOffer, PaxCounts } from '@zproo/types';
-import { Button, Card, CardContent, CardHeader, CardTitle, Input, Skeleton } from '@zproo/ui';
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  FormAlert,
+  FormField,
+  Input,
+  PhoneInput,
+  Skeleton,
+} from '@zproo/ui';
 import { flightPriceBreakdown } from '@zproo/utils';
 import {
   contactSchema,
@@ -13,9 +24,6 @@ import type { ComponentProps } from 'react';
 import { useForm, type FieldErrors } from 'react-hook-form';
 import { useNavigate } from 'react-router';
 import { z } from 'zod';
-import { FormAlert } from '@/features/auth/components/FormAlert';
-import { FormField } from '@/features/auth/components/FormField';
-import { PhoneInput } from '@/features/auth/components/PhoneInput';
 import { errorMessage } from '@/features/auth/errors';
 import { useAuthStore } from '@/features/auth/store';
 import { useItineraryOffers } from '@/features/flights/api';

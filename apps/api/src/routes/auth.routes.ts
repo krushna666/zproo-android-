@@ -18,6 +18,7 @@ export function authRoutes(
   controller: ReturnType<typeof createAuthController>,
   limits: ReturnType<typeof authRateLimiters>,
   authenticate: RequestHandler,
+  csrf: RequestHandler,
 ): Router {
   const router = Router();
   router.use(limits.perIp);
@@ -28,6 +29,7 @@ export function authRoutes(
     validate({ body: sendOtpSchema }),
     limits.otpCooldown,
     limits.otpHourly,
+    limits.otpPerIp,
     controller.sendOtp,
   );
   router.post(
@@ -43,14 +45,15 @@ export function authRoutes(
     validate({ params: z.object({ provider: socialProviderSchema }), body: socialLoginSchema }),
     controller.social,
   );
-  router.post('/refresh', controller.refresh);
-  router.post('/logout', controller.logout);
+  router.post('/refresh', csrf, controller.refresh);
+  router.post('/logout', csrf, controller.logout);
   router.post('/logout-all', authenticate, controller.logoutAll);
   router.post(
     '/forgot-password',
     validate({ body: forgotPasswordSchema }),
     limits.otpCooldown,
     limits.otpHourly,
+    limits.otpPerIp,
     controller.forgotPassword,
   );
   router.post(

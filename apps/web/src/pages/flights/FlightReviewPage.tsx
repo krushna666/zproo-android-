@@ -1,11 +1,10 @@
 import { useMutation } from '@tanstack/react-query';
 import type { FlightOffer } from '@zproo/types';
-import { Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@zproo/ui';
+import { Button, Card, CardContent, CardHeader, CardTitle, FormAlert, Skeleton } from '@zproo/ui';
 import { flightPriceBreakdown } from '@zproo/utils';
 import { ArrowRight, Lock, Mail, Phone } from 'lucide-react';
 import { useState } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { flightsApi, useItineraryOffers } from '@/features/flights/api';
 import { CheckoutShell, NothingSelected } from '@/features/checkout/CheckoutShell';

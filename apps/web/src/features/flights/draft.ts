@@ -100,7 +100,7 @@ export const useFlightDraft = create<FlightDraftState>()(
         set({ itinerary: null, passengers: null, reference: null, idempotencyKey: newKey() }),
     }),
     {
-      name: 'zproo-flight-draft',
+      name: 'zproo:draft:flight',
       version: 1,
       storage: createJSONStorage(() => safeSessionStorage),
       partialize: ({ itinerary, passengers, contact, idempotencyKey, reference }) => ({

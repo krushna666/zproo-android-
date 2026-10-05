@@ -1,4 +1,4 @@
-import { Input } from '@zproo/ui';
+import { Input } from './input';
 import { Eye, EyeOff } from 'lucide-react';
 import { useState, type ComponentProps } from 'react';
 

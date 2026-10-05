@@ -10,6 +10,10 @@ import { notFoundHandler } from './middleware/notFound';
 import { apiRateLimiter, type RateLimitStoreFactory } from './middleware/rateLimit';
 import { corsPolicy, securityHeaders } from './middleware/security';
 import { createApiRouter } from './routes';
+import { testRoutes } from './routes/test.routes';
+import { testContextMiddleware } from './lib/testContext';
+import type { PrismaClient } from '@prisma/client';
+import type { Redis } from 'ioredis';
 
 const WEBHOOK_PATH = '/api/payments/webhook';
 
@@ -17,6 +21,9 @@ export interface AppOptions {
   env: Env;
   logger: Logger;
   services: Services;
+  /** Needed only for the test-support routes (NODE_ENV=test). */
+  prisma?: PrismaClient;
+  redis?: Redis | undefined;
   /** Rate-limit store per limiter; omitted = in-memory (single process, tests). */
   rateLimitStore?: RateLimitStoreFactory;
 }
@@ -26,6 +33,8 @@ export function createApp({
   env,
   logger,
   services,
+  prisma,
+  redis,
   rateLimitStore = () => undefined,
 }: AppOptions): Express {
   const app = express();
@@ -48,6 +57,11 @@ export function createApp({
   app.use(cookieParser());
 
   if (env.apiDocsEnabled) app.use('/api/docs', docsRouter(env.APP_VERSION));
+  if (env.isTest) {
+    // X-Test-Now and X-Mock-Scenario, and /api/test: never installed outside NODE_ENV=test.
+    app.use(testContextMiddleware);
+    if (prisma) app.use('/api/test', testRoutes(services, env, { prisma, redis, logger }));
+  }
   app.use(
     '/api',
     apiRateLimiter(env, rateLimitStore),

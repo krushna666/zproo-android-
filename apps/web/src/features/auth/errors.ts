@@ -1,7 +1,16 @@
-import { ApiClientError } from '@/services/http';
+import { toast } from '@zproo/ui';
+import { TOASTS } from '@zproo/validation';
+import { userMessage } from '@/lib/apiErrors';
 
-/** User-facing message for a failed request. */
+/** User-facing message for a failed request (the SOP copy for its error code). */
 export function errorMessage(error: unknown): string {
-  if (error instanceof ApiClientError) return error.message;
-  return 'Something went wrong. Please try again.';
+  return userMessage(error);
+}
+
+/**
+ * Passed as react-hook-form's invalid handler: the SOP toast. react-hook-form has already moved
+ * focus to the first invalid field and each field shows its own message below it.
+ */
+export function invalidForm(): void {
+  toast.error(TOASTS.fixErrors);
 }

@@ -9,6 +9,7 @@ import { offerQuerySchema, type createFlightsController } from '../controllers/f
 import type { createPaymentsController } from '../controllers/payments.controller';
 import { authorize } from '../middleware/auth';
 import { idempotent } from '../middleware/idempotency';
+import type { commerceRateLimiters } from '../middleware/rateLimit';
 import { validate } from '../middleware/validate';
 import type { IdempotencyService } from '../services/idempotency.service';
 import type { RbacService } from '../services/rbac.service';
@@ -30,12 +31,14 @@ export function busRoutes(
   authenticate: RequestHandler,
   rbac: RbacService,
   idempotency: IdempotencyService,
+  limits: CommerceLimits,
 ): Router {
   const router = Router();
-  router.get('/search', c.search);
+  router.get('/search', limits.search, c.search);
   router.post(
     '/book',
     authenticate,
+    limits.book,
     authorize(rbac, Permission.BOOKING_CREATE),
     idempotent(idempotency),
     validate({ body: bookBusSchema }),
@@ -51,12 +54,14 @@ export function flightRoutes(
   authenticate: RequestHandler,
   rbac: RbacService,
   idempotency: IdempotencyService,
+  limits: CommerceLimits,
 ): Router {
   const router = Router();
-  router.get('/search', c.search);
+  router.get('/search', limits.search, c.search);
   router.post(
     '/book',
     authenticate,
+    limits.book,
     authorize(rbac, Permission.BOOKING_CREATE),
     idempotent(idempotency),
     validate({ body: bookFlightSchema }),
@@ -83,6 +88,8 @@ export function bookingRoutes(
   return router;
 }
 
+type CommerceLimits = ReturnType<typeof commerceRateLimiters>;
+
 const orderId = z
   .string()
   .trim()
@@ -93,13 +100,14 @@ export function paymentRoutes(
   authenticate: RequestHandler,
   rbac: RbacService,
   idempotency: IdempotencyService,
+  limits: CommerceLimits,
   options: { mockCheckout: boolean },
 ): Router {
   const router = Router();
   // Called by the gateway, not a customer: authenticated by its signature over the raw body.
   router.post('/webhook', c.webhook);
 
-  router.use(authenticate, authorize(rbac, Permission.BOOKING_CREATE));
+  router.use(authenticate, limits.payments, authorize(rbac, Permission.BOOKING_CREATE));
   router.post(
     '/create',
     idempotent(idempotency),

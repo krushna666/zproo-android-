@@ -1,4 +1,4 @@
-import { cn } from '@zproo/ui';
+import { cn } from '../lib/cn';
 import { CircleAlert, CircleCheck } from 'lucide-react';
 import type { ReactNode } from 'react';
 

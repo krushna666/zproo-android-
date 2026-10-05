@@ -32,7 +32,14 @@ if (env.ephemeralSecrets) {
 }
 
 const services = createServices({ env, logger, prisma, redis });
-const app = createApp({ env, logger, services, rateLimitStore: redisRateLimitStore(redis) });
+const app = createApp({
+  env,
+  logger,
+  services,
+  prisma,
+  redis,
+  rateLimitStore: redisRateLimitStore(redis),
+});
 const server = createServer(app);
 
 server.listen(env.PORT, () => {

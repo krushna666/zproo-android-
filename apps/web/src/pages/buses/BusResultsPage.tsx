@@ -13,6 +13,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  FormAlert,
   Sheet,
   SheetContent,
   Skeleton,
@@ -21,7 +22,6 @@ import { Bus, ChevronLeft, ChevronRight, Pencil, SlidersHorizontal } from 'lucid
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Seo } from '@/components/seo/Seo';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useBusSearch } from '@/features/buses/api';
 import { BusCard } from '@/features/buses/components/BusCard';

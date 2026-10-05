@@ -1,26 +1,39 @@
 import { describe, expect, it } from 'vitest';
-import { loginPath, maskPhone, safeNext } from './redirect';
+import { loginPath, maskPhone, safeReturnTo } from './redirect';
 
-describe('safeNext', () => {
+describe('safeReturnTo (open-redirect protection)', () => {
   it.each([
-    ['/wallet', '/wallet'],
+    ['/buses/trp_123/seats', '/buses/trp_123/seats'],
     ['/bookings/ZF7K3QX9M2PA?tab=invoice', '/bookings/ZF7K3QX9M2PA?tab=invoice'],
+    ['/flights/search?from=PNQ&to=DEL', '/flights/search?from=PNQ&to=DEL'],
+    ['/hotels/htl_1?checkIn=2026-10-20', '/hotels/htl_1?checkIn=2026-10-20'],
+    ['/', '/'],
     [null, '/'],
-    ['https://evil.example', '/'],
-    ['//evil.example', '/'],
-    ['/\\evil.example', '/'],
+    ['', '/'],
+    ['https://evil.com', '/'],
+    ['//evil.com', '/'],
+    ['/\\evil.com', '/'],
+    ['/%5Cevil.com', '/'],
+    ['/%2F%2Fevil.com', '/'],
     ['javascript:alert(1)', '/'],
+    ['/javascript:alert(1)', '/'],
+    ['data:text/html,hi', '/'],
+    ['\t/buses', '/'],
+    ['/buses\nLocation: x', '/'],
     ['/login', '/'],
-    ['/verify-otp', '/'],
-  ])('%s → %s', (input, expected) => {
-    expect(safeNext(input)).toBe(expected);
+    ['/verify-otp?returnTo=/buses', '/'],
+    ['/unknown-page', '/'],
+    ['/busesX', '/'],
+  ])('%j → %s', (input, expected) => {
+    expect(safeReturnTo(input)).toBe(expected);
   });
 });
 
 describe('loginPath', () => {
   it('encodes the destination', () => {
-    expect(loginPath('/bookings?x=1')).toBe('/login?next=%2Fbookings%3Fx%3D1');
+    expect(loginPath('/bookings?x=1')).toBe('/login?returnTo=%2Fbookings%3Fx%3D1');
     expect(loginPath('/')).toBe('/login');
+    expect(loginPath('https://evil.com')).toBe('/login');
   });
 });
 

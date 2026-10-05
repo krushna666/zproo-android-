@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createTestContext, prisma, resetUsers, signUp } from './helpers';
+import { createTestContext, prisma, refreshCookie, resetUsers, signUp, withCsrf } from './helpers';
 
 beforeEach(resetUsers);
 
@@ -54,5 +54,61 @@ describe('/api/me', () => {
       .send({ fullName: 'Amit Sharma', roles: ['SUPER_ADMIN'], status: 'ACTIVE' })
       .expect(200);
     expect(res.body.data.roles).toEqual(['USER']);
+  });
+});
+
+describe('POST /api/me/password', () => {
+  it('changes the password, keeps this session and signs out other devices', async () => {
+    const ctx = createTestContext();
+    const first = await signUp(ctx, { email: 'pw@example.com', password: 'travel2026' });
+    const other = await request(ctx.app)
+      .post('/api/auth/login')
+      .send({ identifier: 'pw@example.com', password: 'travel2026' })
+      .expect(200);
+    const otherCookie = refreshCookie(other);
+    await request(ctx.app)
+      .post('/api/me/password')
+      .set('Authorization', `Bearer ${first.accessToken}`)
+      .send({
+        currentPassword: 'travel2026',
+        newPassword: 'journey2027',
+        confirmPassword: 'journey2027',
+      })
+      .expect(200);
+    await request(ctx.app).post('/api/auth/refresh').set(withCsrf(first.cookie)).expect(200);
+    await request(ctx.app).post('/api/auth/refresh').set(withCsrf(otherCookie)).expect(401);
+    await request(ctx.app)
+      .post('/api/auth/login')
+      .send({ identifier: 'pw@example.com', password: 'journey2027' })
+      .expect(200);
+  });
+
+  it('uses the SOP messages', async () => {
+    const ctx = createTestContext();
+    const { accessToken } = await signUp(ctx, { password: 'travel2026' });
+    const change = (body: object) =>
+      request(ctx.app)
+        .post('/api/me/password')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send(body)
+        .expect(400);
+    expect(
+      (
+        await change({
+          currentPassword: 'travel2026',
+          newPassword: 'travel2026',
+          confirmPassword: 'travel2026',
+        })
+      ).body.error.details.fields,
+    ).toEqual({ newPassword: 'New password must be different from your current password' });
+    expect(
+      (
+        await change({
+          currentPassword: 'wrong123',
+          newPassword: 'journey2027',
+          confirmPassword: 'journey2027',
+        })
+      ).body.error.details.fields,
+    ).toEqual({ currentPassword: 'Your current password is incorrect' });
   });
 });

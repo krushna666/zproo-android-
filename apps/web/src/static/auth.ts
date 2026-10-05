@@ -5,6 +5,7 @@ import {
   registerSchema,
   resetPasswordSchema,
   sendOtpSchema,
+  changePasswordSchema,
   updateProfileSchema,
   verifyOtpSchema,
   type Identifier,
@@ -18,12 +19,14 @@ import {
   randomId,
   save,
   sha256,
+  invalid,
   StaticError,
   unauthenticated,
   type StaticRequest,
   type StaticResult,
   type StoredUser,
 } from './core';
+import { maskIdentifier } from '@zproo/utils';
 
 const OTP_SECONDS = 300;
 
@@ -108,7 +111,7 @@ export async function authRoutes(req: StaticRequest): Promise<StaticResult | nul
       throw new StaticError(
         401,
         'INVALID_CREDENTIALS',
-        'Incorrect mobile number/email or password',
+        'Incorrect mobile number, email or password',
       );
     }
     return { data: session(user) };
@@ -139,7 +142,7 @@ export async function authRoutes(req: StaticRequest): Promise<StaticResult | nul
     // Same answer whether or not the account exists (as the real API does).
     return {
       data: sendCode(`reset:${identifier.value}`),
-      message: 'If the account exists, a code was sent',
+      message: `If an account exists for ${maskIdentifier(identifier.value)}, we've sent a 6-digit code.`,
     };
   }
 
@@ -160,6 +163,17 @@ export async function authRoutes(req: StaticRequest): Promise<StaticResult | nul
     user.fullName = parse(updateProfileSchema, body, 'body').fullName;
     save();
     return { data: publicUser(user), message: 'Profile updated' };
+  }
+  if (path === '/me/password' && method === 'POST') {
+    const user = currentUser();
+    const input = parse(changePasswordSchema, body, 'body');
+    if (user.passwordHash !== (await sha256(input.currentPassword)))
+      throw invalid([
+        { path: 'body.currentPassword', message: 'Your current password is incorrect' },
+      ]);
+    user.passwordHash = await sha256(input.newPassword);
+    save();
+    return { data: null, message: 'Password changed. Other devices have been signed out.' };
   }
   return null;
 }

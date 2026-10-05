@@ -13,6 +13,8 @@ import {
   DialogContent,
   DialogDescription,
   DialogTitle,
+  FormAlert,
+  FormField,
   Input,
 } from '@zproo/ui';
 import { KeyRound, LayoutDashboard, LogOut, Mail, MonitorSmartphone, Phone } from 'lucide-react';
@@ -22,8 +24,6 @@ import { Link, useNavigate } from 'react-router';
 import type { z } from 'zod';
 import { Seo } from '@/components/seo/Seo';
 import { authApi } from '@/features/auth/api';
-import { FormAlert } from '@/features/auth/components/FormAlert';
-import { FormField } from '@/features/auth/components/FormField';
 import { UserAvatar } from '@/features/auth/components/UserAvatar';
 import { errorMessage } from '@/features/auth/errors';
 import { maskPhone } from '@/features/auth/redirect';

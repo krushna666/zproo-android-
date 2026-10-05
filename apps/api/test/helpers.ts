@@ -101,7 +101,14 @@ export function createTestContext(options: TestContextOptions = {}) {
     healthChecks: options.checks ?? [up('database'), up('redis')],
     healthTimeoutMs: 200,
   });
-  return { app: createApp({ env, logger, services }), env, services, sms, email, google };
+  return {
+    app: createApp({ env, logger, services, prisma }),
+    env,
+    services,
+    sms,
+    email,
+    google,
+  };
 }
 
 export function buildTestApp(options: TestContextOptions = {}) {
@@ -132,6 +139,17 @@ export function refreshCookie(res: { headers: Record<string, unknown> }): string
   const cookie = cookies.find((c) => c.startsWith('zp_rt='));
   const value = cookie?.split(';')[0];
   return value && value !== 'zp_rt=' ? value : undefined;
+}
+
+/**
+ * Headers for a cookie-authenticated call (/auth/refresh, /auth/logout): the refresh cookie plus a
+ * matching double-submit CSRF cookie and header, as the web app sends them.
+ */
+export function withCsrf(cookie: string | undefined, token = 'test-csrf-token-0123456789') {
+  return {
+    Cookie: [cookie, `zp_csrf=${token}`].filter(Boolean).join('; '),
+    'X-CSRF-Token': token,
+  };
 }
 
 /** Full mobile-OTP signup. Returns the session body and the refresh cookie. */

@@ -6,6 +6,7 @@ import { BookingRepository } from '../repositories/booking.repository';
 import { CouponInvalidError, HoldExpiredError, InvalidStateError } from '../utils/errors';
 import type { AuditService, RequestContext } from './audit.service';
 import type { BookingService } from './booking.service';
+import { clock } from '../lib/testContext';
 
 /** Bookings that use up a coupon: held (until expiry) or bought. */
 const COUNTING: Prisma.BookingWhereInput = {
@@ -35,7 +36,7 @@ export class CouponService {
       now?: () => Date;
     },
   ) {
-    this.now = deps.now ?? (() => new Date());
+    this.now = deps.now ?? clock.now;
   }
 
   /** Active coupons customers can see (optionally for one service). */

@@ -1,4 +1,5 @@
 import {
+  MESSAGES,
   emailSchema,
   identifierSchema,
   indianMobileSchema,
@@ -20,7 +21,7 @@ export const phoneFormSchema = z.object({ phone: indianMobileSchema });
 
 export const passwordLoginFormSchema = z.object({
   identifier: identifierSchema,
-  password: z.string().min(1, 'Enter your password'),
+  password: z.string().min(1, MESSAGES.password.required),
 });
 
 export const profileFormSchema = z.object({
@@ -35,11 +36,11 @@ export const resetFormSchema = z
   .object({
     otp: otpCodeSchema,
     newPassword: passwordSchema,
-    confirmPassword: z.string(),
+    confirmPassword: z.string().min(1, MESSAGES.changePassword.confirmRequired),
   })
-  .refine((v) => v.newPassword === v.confirmPassword, {
+  .refine((v) => !v.confirmPassword || v.newPassword === v.confirmPassword, {
     path: ['confirmPassword'],
-    message: 'Passwords do not match',
+    message: MESSAGES.changePassword.mismatch,
   });
 
 export const nameFormSchema = z.object({ fullName: personNameSchema });

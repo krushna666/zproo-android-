@@ -1,7 +1,7 @@
 import { cn } from '@zproo/ui';
 import { NavLink, useLocation } from 'react-router';
 
-/** Login / Sign Up switch from the reference design; keeps `?next=` when switching. */
+/** Login / Sign Up switch from the reference design; keeps `?returnTo=` when switching. */
 export function AuthModeSwitch() {
   const { search } = useLocation();
   const item = ({ isActive }: { isActive: boolean }) =>
@@ -20,7 +20,7 @@ export function AuthModeSwitch() {
         Login
       </NavLink>
       <NavLink to={{ pathname: '/signup', search }} className={item}>
-        Sign Up
+        Sign up
       </NavLink>
     </nav>
   );

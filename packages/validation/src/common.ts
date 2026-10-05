@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MESSAGES } from './messages';
 
 /**
  * Shared primitives used by both web forms and API validators, so a value accepted by the
@@ -11,37 +12,35 @@ export const indianMobileSchema = z
   .trim()
   .transform((value) => value.replace(/[\s-]/g, ''))
   .transform((value) => value.replace(/^(\+91|91|0)(?=\d{10}$)/, ''))
-  .refine((value) => /^[6-9]\d{9}$/.test(value), {
-    message: 'Enter a valid 10-digit mobile number',
-  })
+  .refine((value) => /^[6-9]\d{9}$/.test(value), { message: MESSAGES.mobile.invalid })
   .transform((value) => `+91${value}`);
 
 export const emailSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .pipe(z.email({ message: 'Enter a valid email address' }))
-  .refine((value) => value.length <= 254, { message: 'Email is too long' });
+  .pipe(z.email({ message: MESSAGES.email.invalid }))
+  .refine((value) => value.length <= 254, { message: MESSAGES.email.tooLong });
 
 export const passwordSchema = z
   .string()
-  .min(8, 'Password must be at least 8 characters')
-  .max(128, 'Password must be at most 128 characters')
+  .min(8, MESSAGES.password.tooShort)
+  .max(128, MESSAGES.password.tooLong)
   .refine((value) => /[A-Za-z]/.test(value) && /\d/.test(value), {
-    message: 'Password must contain letters and numbers',
+    message: MESSAGES.password.lettersAndNumbers,
   });
 
 export const otpCodeSchema = z
   .string()
   .trim()
-  .regex(/^\d{6}$/, 'Enter the 6-digit code');
+  .regex(/^\d{6}$/, MESSAGES.otp.invalid);
 
 export const personNameSchema = z
   .string()
   .trim()
-  .min(2, 'Name is too short')
-  .max(80, 'Name is too long')
-  .regex(/^[\p{L}\p{M}' .-]+$/u, 'Name contains invalid characters');
+  .min(2, MESSAGES.name.tooShort)
+  .max(80, MESSAGES.name.tooLong)
+  .regex(/^[\p{L}\p{M}' .-]+$/u, MESSAGES.name.invalidCharacters);
 
 export const idSchema = z.string().trim().min(1).max(64);
 

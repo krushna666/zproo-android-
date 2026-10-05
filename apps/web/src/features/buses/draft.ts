@@ -87,7 +87,7 @@ export const useBusDraft = create<BusDraftState>()(
         set({ selection: null, passengers: null, reference: null, idempotencyKey: newKey() }),
     }),
     {
-      name: 'zproo-bus-draft',
+      name: 'zproo:draft:bus',
       version: 1,
       storage: createJSONStorage(() => safeSessionStorage),
       partialize: ({ selection, passengers, contact, idempotencyKey, reference }) => ({

@@ -7,6 +7,7 @@ import type { RequestContext } from '../services/audit.service';
 import type { AuthService, IssuedSession, RegisterInput } from '../services/auth.service';
 import type { TokenService } from '../services/token.service';
 import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from '../utils/cookies';
+import { maskIdentifier } from '../utils/mask';
 import { sendSuccess } from '../utils/response';
 
 export function requestContext(req: Request): RequestContext {
@@ -90,7 +91,12 @@ export function createAuthController(auth: AuthService, tokens: TokenService, en
   const forgotPassword: RequestHandler = async (req, res) => {
     const { identifier } = validated<{ identifier: Identifier }>(req, 'body');
     const sent = await auth.forgotPassword(identifier, requestContext(req));
-    sendSuccess(res, sent, 'If an account exists, we have sent a reset code');
+    // Identical for known and unknown accounts (no user enumeration).
+    sendSuccess(
+      res,
+      sent,
+      `If an account exists for ${maskIdentifier(identifier.value)}, we've sent a 6-digit code.`,
+    );
   };
 
   const resetPassword: RequestHandler = async (req, res) => {

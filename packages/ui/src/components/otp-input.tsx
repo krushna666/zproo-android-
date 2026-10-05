@@ -1,4 +1,4 @@
-import { cn } from '@zproo/ui';
+import { cn } from '../lib/cn';
 import { useState, type ClipboardEvent } from 'react';
 
 interface OtpInputProps {
@@ -11,6 +11,8 @@ interface OtpInputProps {
   disabled?: boolean;
   /** Focus the field when it appears (the code is the only task on these screens). */
   focusOnMount?: boolean;
+  /** Test IDs: the input gets `<prefix>`, each digit box `<prefix>-<i>`. */
+  testIdPrefix?: string;
   'aria-invalid'?: boolean;
   'aria-describedby'?: string;
 }
@@ -27,6 +29,7 @@ export function OtpInput({
   length = 6,
   disabled,
   focusOnMount,
+  testIdPrefix,
   ...aria
 }: OtpInputProps) {
   const [focused, setFocused] = useState(false);
@@ -56,6 +59,8 @@ export function OtpInput({
         disabled={disabled}
         // eslint-disable-next-line jsx-a11y/no-autofocus -- the code field is the only task on this screen
         autoFocus={focusOnMount}
+        data-testid={testIdPrefix}
+        aria-label={aria['aria-describedby'] ? undefined : 'One-time code'}
         className="absolute inset-0 z-10 w-full cursor-text bg-transparent text-transparent caret-transparent selection:bg-transparent focus:outline-none disabled:cursor-not-allowed"
         {...aria}
       />
@@ -70,6 +75,7 @@ export function OtpInput({
           return (
             <div
               key={i}
+              data-testid={testIdPrefix ? `${testIdPrefix}-${i}` : undefined}
               className={cn(
                 'grid h-14 place-items-center rounded-xl border bg-card text-2xl font-bold transition-colors sm:h-16',
                 active ? 'border-primary ring-2 ring-ring/25' : 'border-border',

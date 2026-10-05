@@ -1,9 +1,17 @@
 import { useMutation } from '@tanstack/react-query';
 import type { BookingDetails } from '@zproo/types';
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@zproo/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  FormAlert,
+  Skeleton,
+} from '@zproo/ui';
 import { CircleCheck, Download, Home, Mail } from 'lucide-react';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { checkoutApi, useBooking } from '@/features/checkout/api';
 import { CHECKOUT_STEP, type CheckoutService } from '@/features/checkout/steps';

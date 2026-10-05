@@ -1,4 +1,4 @@
-import type { AuthProvider, PrismaClient } from '@prisma/client';
+import type { AuthProvider, PrismaClient, RoleName } from '@prisma/client';
 import type { AuthSession, OtpSent, VerifyOtpResult } from '@zproo/types';
 import type { Identifier, SocialProvider } from '@zproo/validation';
 import type { Logger } from 'pino';
@@ -16,12 +16,14 @@ import {
   InvalidCredentialsError,
   OtpExpiredError,
   ProviderNotConfiguredError,
+  ValidationError,
 } from '../utils/errors';
 import type { AuditService, RequestContext } from './audit.service';
 import type { OtpService } from './otp.service';
 import type { PasswordService } from './password.service';
 import type { RbacService } from './rbac.service';
 import type { TokenService } from './token.service';
+import { clock } from '../lib/testContext';
 
 /** A signed-in session plus the refresh token, which the controller puts in an HttpOnly cookie. */
 export interface IssuedSession {
@@ -155,7 +157,8 @@ export class AuthService {
         ip: ctx.ip,
       });
     }
-    return { expiresIn: AUTH.otpTtlSeconds, resendIn: AUTH.otpResendSeconds };
+    // Same answer for unknown accounts, so the response never reveals who is registered.
+    return { expiresIn: AUTH.resetOtpTtlSeconds, resendIn: AUTH.otpResendSeconds };
   }
 
   async resetPassword(
@@ -296,7 +299,7 @@ export class AuthService {
       }
       throw new AuthenticationError('Your session has ended. Please sign in again.');
     }
-    if (record.expiresAt <= new Date())
+    if (record.expiresAt <= clock.now())
       throw new AuthenticationError('Your session has expired. Please sign in again.');
 
     const user = await this.deps.users.findById(record.userId);
@@ -313,7 +316,7 @@ export class AuthService {
         userId: user.id,
         tokenHash: next.hash,
         familyId: record.familyId,
-        expiresAt: new Date(Date.now() + this.deps.tokens.refreshTokenTtlMs),
+        expiresAt: new Date(clock.now().getTime() + this.deps.tokens.refreshTokenTtlMs),
         ipAddress: ctx.ip,
         userAgent: ctx.userAgent?.slice(0, 512),
       });
@@ -334,6 +337,39 @@ export class AuthService {
     if (record) await this.deps.refreshTokens.revokeFamily(record.familyId);
   }
 
+  /**
+   * Signed-in password change. Other devices are signed out; the current session (sessionId =
+   * refresh-token family) stays signed in.
+   */
+  async changePassword(
+    userId: string,
+    sessionId: string,
+    input: { currentPassword: string; newPassword: string },
+    ctx: RequestContext,
+  ): Promise<void> {
+    const user = await this.deps.users.findById(userId);
+    if (!user) throw new AuthenticationError('Please sign in to continue');
+    if (!(await this.deps.passwords.verify(user.passwordHash, input.currentPassword)))
+      throw new ValidationError([
+        { path: 'body.currentPassword', message: 'Your current password is incorrect' },
+      ]);
+    const passwordHash = await this.deps.passwords.hash(input.newPassword);
+    await this.deps.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { passwordHash } });
+      await tx.refreshToken.updateMany({
+        where: { userId, revokedAt: null, familyId: { not: sessionId } },
+        data: { revokedAt: clock.now() },
+      });
+    });
+    await this.deps.audit.record({
+      action: 'AUTH_PASSWORD_CHANGED',
+      actorId: userId,
+      entityType: 'User',
+      entityId: userId,
+      context: ctx,
+    });
+  }
+
   async logoutAll(userId: string, ctx: RequestContext): Promise<void> {
     const { count } = await this.deps.refreshTokens.revokeAllForUser(userId);
     await this.deps.audit.record({
@@ -344,6 +380,42 @@ export class AuthService {
       after: { sessionsEnded: count },
       context: ctx,
     });
+  }
+
+  /**
+   * Test support only (mounted at /api/test when NODE_ENV=test): creates an active, verified user
+   * with a password and optional extra roles, and signs them in.
+   */
+  async createTestUser(
+    input: {
+      fullName: string;
+      phone: string;
+      email?: string | undefined;
+      password: string;
+      roles?: RoleName[] | undefined;
+    },
+    ctx: RequestContext,
+  ): Promise<IssuedSession> {
+    const role = await this.requireRole('USER');
+    const created = await this.deps.users.create(
+      {
+        fullName: input.fullName,
+        phone: input.phone,
+        email: input.email ?? null,
+        passwordHash: await this.deps.passwords.hash(input.password),
+        phoneVerifiedAt: clock.now(),
+        emailVerifiedAt: input.email ? clock.now() : null,
+      },
+      role.id,
+    );
+    for (const name of input.roles ?? []) {
+      const extra = await this.deps.roles.findByName(name);
+      if (extra)
+        await this.deps.prisma.userRole.create({ data: { userId: created.id, roleId: extra.id } });
+    }
+    const user = await this.deps.users.findById(created.id);
+    if (!user) throw new Error('Test user vanished');
+    return this.startSession(user, ctx, 'test');
   }
 
   // ───────────── Internals ─────────────
@@ -359,7 +431,7 @@ export class AuthService {
       userId: user.id,
       tokenHash: hash,
       familyId,
-      expiresAt: new Date(Date.now() + this.deps.tokens.refreshTokenTtlMs),
+      expiresAt: new Date(clock.now().getTime() + this.deps.tokens.refreshTokenTtlMs),
       ipAddress: ctx.ip,
       userAgent: ctx.userAgent?.slice(0, 512),
     });

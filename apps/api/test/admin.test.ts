@@ -1,7 +1,14 @@
 import type { RoleName } from '@prisma/client';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createTestContext, grantRole, refreshCookie, resetUsers, signUp } from './helpers';
+import {
+  createTestContext,
+  grantRole,
+  refreshCookie,
+  resetUsers,
+  signUp,
+  withCsrf,
+} from './helpers';
 
 beforeEach(resetUsers);
 
@@ -13,7 +20,7 @@ async function signInAs(
 ) {
   const { cookie, body } = await signUp(ctx, { fullName });
   await grantRole(body.data.user.id, role);
-  const res = await request(ctx.app).post('/api/auth/refresh').set('Cookie', cookie).expect(200);
+  const res = await request(ctx.app).post('/api/auth/refresh').set(withCsrf(cookie)).expect(200);
   expect(refreshCookie(res)).toBeDefined();
   return res.body.data.accessToken as string;
 }

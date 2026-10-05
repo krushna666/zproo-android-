@@ -7,6 +7,7 @@ import {
   resetUsers,
   signUp,
   uniquePhone,
+  withCsrf,
 } from './helpers';
 
 beforeEach(resetUsers);
@@ -94,7 +95,9 @@ describe('password reset', () => {
       .post('/api/auth/forgot-password')
       .send({ identifier: phone })
       .expect(200);
-    expect(forgot.body.message).toBe('If an account exists, we have sent a reset code');
+    expect(forgot.body.message).toMatch(
+      /^If an account exists for \+91 \d{2}X{6}\d{2}, we've sent a 6-digit code\.$/,
+    );
     const otp = ctx.sms.lastCodeFor(phone);
     expect(ctx.sms.sent.at(-1)?.body).toMatch(/password reset code/);
 
@@ -103,7 +106,7 @@ describe('password reset', () => {
       .send({ identifier: phone, otp, newPassword: 'newjourney9' })
       .expect(200);
 
-    await request(ctx.app).post('/api/auth/refresh').set('Cookie', cookie).expect(401);
+    await request(ctx.app).post('/api/auth/refresh').set(withCsrf(cookie)).expect(401);
     await request(ctx.app)
       .post('/api/auth/login')
       .send({ identifier: phone, password: 'travel2026' })
@@ -134,16 +137,24 @@ describe('password reset', () => {
 
   it('does not reveal whether an account exists and sends nothing for unknown accounts', async () => {
     const ctx = createTestContext();
+    await signUp(ctx, { email: 'gopi@example.com' });
+    const known = await request(ctx.app)
+      .post('/api/auth/forgot-password')
+      .send({ identifier: 'gopi@example.com' })
+      .expect(200);
     const unknown = await request(ctx.app)
       .post('/api/auth/forgot-password')
       .send({ identifier: 'ghost@example.com' })
       .expect(200);
     expect(unknown.body).toEqual({
       success: true,
-      message: 'If an account exists, we have sent a reset code',
-      data: { expiresIn: 300, resendIn: 60 },
+      message: "If an account exists for g***@example.com, we've sent a 6-digit code.",
+      data: { expiresIn: 600, resendIn: 30 },
     });
-    expect(ctx.email.sent).toHaveLength(0);
+    // Same status, shape and data as for a real account (only the echoed address differs).
+    expect(known.body.data).toEqual(unknown.body.data);
+    // Only the real account got an email.
+    expect(ctx.email.sent.map((m) => m.to)).toEqual(['gopi@example.com']);
     const res = await request(ctx.app)
       .post('/api/auth/reset-password')
       .send({ identifier: 'ghost@example.com', otp: '123456', newPassword: 'newjourney9' })

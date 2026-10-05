@@ -1,4 +1,4 @@
-import { cn } from '@zproo/ui';
+import { cn } from '../lib/cn';
 import type { ComponentProps } from 'react';
 
 /** Indian mobile number input with a fixed +91 prefix. */

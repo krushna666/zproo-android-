@@ -1,8 +1,7 @@
-import { Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@zproo/ui';
+import { Button, Card, CardContent, CardHeader, CardTitle, FormAlert, Skeleton } from '@zproo/ui';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { Link, useLocation, useParams } from 'react-router';
 import { Seo } from '@/components/seo/Seo';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useBusTrip } from '@/features/buses/api';
 import { AmenityList } from '@/features/buses/components/AmenityList';

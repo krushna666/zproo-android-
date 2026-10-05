@@ -3,3 +3,4 @@ export * from './reference';
 export * from './flightPrice';
 export * from './bookingState';
 export * from './coupon';
+export * from './mask';

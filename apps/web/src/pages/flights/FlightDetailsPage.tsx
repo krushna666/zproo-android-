@@ -1,9 +1,8 @@
-import { Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@zproo/ui';
+import { Button, Card, CardContent, CardHeader, CardTitle, FormAlert, Skeleton } from '@zproo/ui';
 import { flightPriceBreakdown } from '@zproo/utils';
 import { ArrowLeft, ArrowRight, BadgeCheck, CircleX, Luggage } from 'lucide-react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { Seo } from '@/components/seo/Seo';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useFlightOffer } from '@/features/flights/api';
 import { DemoBanner } from '@/features/checkout/DemoBanner';

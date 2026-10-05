@@ -4,7 +4,7 @@ import { Seo } from '@/components/seo/Seo';
 import { AuthHeader } from '@/features/auth/components/AuthHeader';
 import { AuthModeSwitch } from '@/features/auth/components/AuthModeSwitch';
 import { SocialSignIn } from '@/features/auth/components/SocialSignIn';
-import { safeNext } from '@/features/auth/redirect';
+import { safeReturnTo } from '@/features/auth/redirect';
 import { OtpLoginForm } from './LoginPage';
 
 const PERKS = [
@@ -15,7 +15,7 @@ const PERKS = [
 
 export default function SignupPage() {
   const [params] = useSearchParams();
-  const next = safeNext(params.get('next'));
+  const returnTo = safeReturnTo(params.get('returnTo'));
   return (
     <>
       <Seo title="Sign up" description="Create your ZPROO GO account with your mobile number." />
@@ -24,7 +24,7 @@ export default function SignupPage() {
         subtitle="Flights, buses, trains, hotels, cabs and more — in one app"
       />
       <AuthModeSwitch />
-      <OtpLoginForm next={next} submitLabel="Continue" />
+      <OtpLoginForm returnTo={returnTo} submitLabel="Continue" />
       <ul className="mt-6 space-y-2.5 text-sm text-foreground/80">
         {PERKS.map(({ icon: Icon, text }) => (
           <li key={text} className="flex items-center gap-2.5">
@@ -32,7 +32,7 @@ export default function SignupPage() {
           </li>
         ))}
       </ul>
-      <SocialSignIn next={next} />
+      <SocialSignIn returnTo={returnTo} />
       <p className="mt-8 text-center text-xs text-muted">
         By signing up you agree to our{' '}
         <Link to="/terms" className="font-semibold text-foreground hover:text-primary">

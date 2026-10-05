@@ -6,6 +6,7 @@ import {
   passwordSchema,
   personNameSchema,
 } from './common';
+import { MESSAGES } from './messages';
 
 /**
  * A mobile number or an email address. Output is tagged so callers never have to guess:
@@ -14,16 +15,14 @@ import {
 export const identifierSchema = z
   .string()
   .trim()
-  .min(1, 'Enter your mobile number or email')
+  .min(1, MESSAGES.identifier.required)
   .transform((raw, ctx) => {
     const schema = raw.includes('@') ? emailSchema : indianMobileSchema;
     const result = schema.safeParse(raw);
     if (!result.success) {
       ctx.addIssue({
         code: 'custom',
-        message: raw.includes('@')
-          ? 'Enter a valid email address'
-          : 'Enter a valid 10-digit mobile number or email',
+        message: raw.includes('@') ? MESSAGES.email.invalid : MESSAGES.identifier.invalid,
       });
       return z.NEVER;
     }
@@ -48,7 +47,7 @@ export const registerSchema = z.object({
 export const passwordLoginSchema = z.object({
   identifier: identifierSchema,
   // Existing passwords are checked, not re-validated against the current policy.
-  password: z.string().min(1, 'Enter your password').max(128),
+  password: z.string().min(1, MESSAGES.password.required).max(128),
 });
 
 export const forgotPasswordSchema = z.object({ identifier: identifierSchema });
@@ -65,3 +64,26 @@ export type SocialProvider = z.infer<typeof socialProviderSchema>;
 export const socialLoginSchema = z.object({ idToken: z.string().min(20).max(8192) });
 
 export const updateProfileSchema = z.object({ fullName: personNameSchema });
+
+/** Change password (signed in). The same rules run in the form and on the server. */
+export const changePasswordSchema = z
+  .strictObject({
+    currentPassword: z.string().min(1, MESSAGES.changePassword.currentRequired).max(128),
+    newPassword: passwordSchema,
+    confirmPassword: z.string().min(1, MESSAGES.changePassword.confirmRequired),
+  })
+  .superRefine((v, ctx) => {
+    if (v.confirmPassword && v.newPassword !== v.confirmPassword)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['confirmPassword'],
+        message: MESSAGES.changePassword.mismatch,
+      });
+    if (v.currentPassword && v.newPassword === v.currentPassword)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['newPassword'],
+        message: MESSAGES.changePassword.sameAsCurrent,
+      });
+  });
+export type ChangePasswordInput = z.output<typeof changePasswordSchema>;

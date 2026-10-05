@@ -11,6 +11,7 @@ import type {
 } from '@zproo/types';
 import type { BookingRecord } from '../repositories/booking.repository';
 import { flightPriceBreakdown } from '../services/flightPricing';
+import { clock } from '../lib/testContext';
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
@@ -59,7 +60,7 @@ function fareLines(booking: BookingRecord, offers: FlightOffer[]): PriceBreakdow
   ];
 }
 
-export function toBookingDetails(booking: BookingRecord, now: Date = new Date()): BookingDetails {
+export function toBookingDetails(booking: BookingRecord, now: Date = clock.now()): BookingDetails {
   const offers = booking.flights.map((f) => f.offer as unknown as FlightOffer);
   return {
     reference: booking.reference,

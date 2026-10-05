@@ -2,7 +2,7 @@ import type { FlightOffer } from '@zproo/types';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MockFlightProvider } from '../src/providers/flight/MockFlightProvider';
-import { createTestContext, grantRole, prisma, resetUsers, signUp } from './helpers';
+import { createTestContext, grantRole, prisma, resetUsers, signUp, withCsrf } from './helpers';
 import { adult, book, bookedFlight, daysAhead, searchOffers } from './flightFixtures';
 import { createOrder, mockCheckout, payWithMock, verifyPayment } from './payments';
 
@@ -376,7 +376,7 @@ describe('booking access', () => {
     // Refresh so the new access token carries the role.
     const refreshed = await request(ctx.app)
       .post('/api/auth/refresh')
-      .set('Cookie', agent.cookie)
+      .set(withCsrf(agent.cookie))
       .expect(200);
     const res = await request(ctx.app)
       .get(`/api/bookings/${reference}`)

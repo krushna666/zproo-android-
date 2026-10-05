@@ -1,9 +1,8 @@
 import type { BusSeatInfo } from '@zproo/types';
-import { Button, Card, CardContent, Skeleton } from '@zproo/ui';
+import { Button, Card, CardContent, FormAlert, Skeleton } from '@zproo/ui';
 import { ArrowRight } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useBusTrip, useSeatMap } from '@/features/buses/api';
 import { BusTripSummary } from '@/features/buses/components/BusTripSummary';

@@ -1,12 +1,11 @@
 import { CABIN_CLASS_LABELS, type BookingDetails } from '@zproo/types';
-import { Button } from '@zproo/ui';
+import { Button, FormAlert } from '@zproo/ui';
 import { formatMoney } from '@zproo/utils';
 import { Printer } from 'lucide-react';
 import { useParams } from 'react-router';
 import { Logo } from '@/components/brand/Logo';
 import { PageLoader } from '@/components/feedback/PageLoader';
 import { Seo } from '@/components/seo/Seo';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { IST } from '@/features/buses/format';
 import { useBooking } from '@/features/checkout/api';

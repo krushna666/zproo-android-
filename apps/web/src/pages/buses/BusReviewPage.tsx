@@ -1,8 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
-import { Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@zproo/ui';
+import { Button, Card, CardContent, CardHeader, CardTitle, FormAlert, Skeleton } from '@zproo/ui';
 import { ArrowRight, Lock, Mail, Phone } from 'lucide-react';
 import { Link, Navigate, useNavigate } from 'react-router';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { busesApi, useBusTrip, useSeatMap } from '@/features/buses/api';
 import { BusTripSummary } from '@/features/buses/components/BusTripSummary';

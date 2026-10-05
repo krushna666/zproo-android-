@@ -3,6 +3,7 @@ import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 import type { Env } from './config/env';
 import { resolveLogoPath } from './config/brand';
+import { AUTH } from './config/constants';
 import { createBusProvider, type BusProvider } from './providers/bus';
 import { createEmailProvider, type EmailProvider } from './providers/email';
 import { createFlightProvider, type FlightProvider } from './providers/flight';
@@ -77,7 +78,13 @@ export function createServices({
   const tokens = new TokenService(env);
   const rbac = new RbacService(roles);
   const audit = new AuditService(new AuditRepository(prisma), logger);
-  const otp = new OtpService(new OtpRepository(prisma), sms, email, env.JWT_SECRET);
+  const otp = new OtpService(
+    new OtpRepository(prisma),
+    sms,
+    email,
+    env.JWT_SECRET,
+    env.allowTestOtp ? AUTH.testOtpCode : undefined,
+  );
   const passwords = new PasswordService();
 
   const checks = healthChecks ?? [databaseCheck(prisma), ...(redis ? [redisCheck(redis)] : [])];

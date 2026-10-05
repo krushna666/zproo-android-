@@ -1,10 +1,18 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { BookingDetails, PaymentOrder } from '@zproo/types';
-import { Button, Card, CardContent, CardHeader, CardTitle, cn, Skeleton } from '@zproo/ui';
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  cn,
+  FormAlert,
+  Skeleton,
+} from '@zproo/ui';
 import { Building2, CreditCard, Lock, Smartphone, Timer, Wallet } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useBusDraft } from '@/features/buses/draft';
 import { bookingKeys, checkoutApi, useBooking } from '@/features/checkout/api';

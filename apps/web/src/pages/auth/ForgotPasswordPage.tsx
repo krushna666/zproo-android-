@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Button, Input } from '@zproo/ui';
+import { Button, FormAlert, FormField, Input } from '@zproo/ui';
 import { ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -8,9 +8,7 @@ import type { z } from 'zod';
 import { Seo } from '@/components/seo/Seo';
 import { authApi } from '@/features/auth/api';
 import { AuthHeader } from '@/features/auth/components/AuthHeader';
-import { FormAlert } from '@/features/auth/components/FormAlert';
-import { FormField } from '@/features/auth/components/FormField';
-import { errorMessage } from '@/features/auth/errors';
+import { errorMessage, invalidForm } from '@/features/auth/errors';
 import { useAuthFlow } from '@/features/auth/flowStore';
 import { forgotFormSchema } from '@/features/auth/schemas';
 
@@ -35,7 +33,7 @@ export default function ForgotPasswordPage() {
     } catch (e) {
       setError(errorMessage(e));
     }
-  });
+  }, invalidForm);
 
   return (
     <>
@@ -46,16 +44,27 @@ export default function ForgotPasswordPage() {
       />
       <form onSubmit={onSubmit} noValidate className="space-y-5">
         {error && <FormAlert>{error}</FormAlert>}
-        <FormField label="Mobile number or email" error={form.formState.errors.identifier?.message}>
+        <FormField
+          name="identifier"
+          label="Mobile number or email"
+          error={form.formState.errors.identifier?.message}
+        >
           <Input
             className="h-12"
             autoComplete="username"
             placeholder="98765 43210 or you@example.com"
+            data-testid="auth-email"
             {...form.register('identifier')}
           />
         </FormField>
-        <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
-          {form.formState.isSubmitting ? 'Sending…' : 'Send reset code'}
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full"
+          data-testid="auth-submit"
+          disabled={form.formState.isSubmitting}
+        >
+          {form.formState.isSubmitting ? 'Sending...' : 'Send reset code'}
         </Button>
       </form>
       <Link

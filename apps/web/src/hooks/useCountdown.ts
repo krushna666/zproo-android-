@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
+import { clientNow } from '@/lib/clock';
 
 /** Whole seconds remaining until `targetMs` (a timestamp), updating every second. */
 export function useCountdown(targetMs: number): number {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => clientNow());
 
   useEffect(() => {
     const tick = () => {
-      const t = Date.now();
+      const t = clientNow();
       setNow(t);
       if (t >= targetMs) window.clearInterval(interval);
     };

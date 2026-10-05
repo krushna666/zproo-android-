@@ -101,3 +101,26 @@ describe('parseEnv', () => {
     expect(() => parseEnv({ ...testEnv, JWT_ACCESS_TTL: '15 minutes' })).toThrow(/JWT_ACCESS_TTL/);
   });
 });
+
+describe('test hooks', () => {
+  it('refuses ALLOW_TEST_OTP in production', () => {
+    expect(() =>
+      parseEnv({
+        ...baseEnv,
+        NODE_ENV: 'production',
+        JWT_SECRET: secret,
+        JWT_REFRESH_SECRET: otherSecret,
+        ALLOW_TEST_OTP: 'true',
+      }),
+    ).toThrow(/ALLOW_TEST_OTP: must never be enabled in production/);
+  });
+
+  it('only allows the fixed OTP with NODE_ENV=test', () => {
+    expect(
+      parseEnv({ ...baseEnv, NODE_ENV: 'development', ALLOW_TEST_OTP: 'true' }).allowTestOtp,
+    ).toBe(false);
+    expect(parseEnv({ ...baseEnv, NODE_ENV: 'test', ALLOW_TEST_OTP: 'true' }).allowTestOtp).toBe(
+      true,
+    );
+  });
+});

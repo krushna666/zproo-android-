@@ -159,7 +159,7 @@ describe('seat selection', () => {
     await user.click(screen.getAllByRole('button', { name: /continue/i })[0] as HTMLElement);
 
     await screen.findByRole('heading', { level: 1, name: 'Welcome back' });
-    expect(router.state.location.search).toBe('?next=%2Fbuses%2Fbooking');
+    expect(router.state.location.search).toBe('?returnTo=%2Fbuses%2Fbooking');
     expect(useBusDraft.getState().selection).toMatchObject({
       tripId: TRIP.id,
       seats: [

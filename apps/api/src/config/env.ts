@@ -59,8 +59,17 @@ const envSchema = z
     /** Optional path to the logo PNG used in PDFs (defaults to the web app's brand asset). */
     BRAND_LOGO_PATH: z.string().optional(),
     EMAIL_PROVIDER: z.enum(['console']).default('console'),
+    /** NODE_ENV=test only: every OTP is 123456 so end-to-end tests can sign in. */
+    ALLOW_TEST_OTP: booleanString.default(false),
   })
   .superRefine((env, ctx) => {
+    if (env.ALLOW_TEST_OTP && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ALLOW_TEST_OTP'],
+        message: 'must never be enabled in production',
+      });
+    }
     if (env.PAYMENT_PROVIDER === 'razorpay') {
       for (const key of [
         'RAZORPAY_KEY_ID',
@@ -122,6 +131,9 @@ const envSchema = z
       .filter(Boolean),
     apiDocsEnabled: env.ENABLE_API_DOCS ?? env.NODE_ENV !== 'production',
     isProduction: env.NODE_ENV === 'production',
+    /** Test hooks (fixed OTP, /api/test routes, X-Test-Now, X-Mock-Scenario): NODE_ENV=test only. */
+    isTest: env.NODE_ENV === 'test',
+    allowTestOtp: env.ALLOW_TEST_OTP && env.NODE_ENV === 'test',
   }));
 
 export type Env = z.infer<typeof envSchema>;

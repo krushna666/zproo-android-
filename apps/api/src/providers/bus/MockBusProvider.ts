@@ -9,6 +9,7 @@ import { unitHash } from '../../services/flightPricing';
 import { SeatUnavailableError } from '../../utils/errors';
 import { isoWeekday, localDate, zonedTimeToUtc } from '../../utils/time';
 import type { BusProvider, BusSearchQuery } from './BusProvider';
+import { clock } from '../../lib/testContext';
 
 const IST = 'Asia/Kolkata';
 const TRIP_ID = /^bs_([a-z0-9]+)_(\d{4})(\d{2})(\d{2})$/;
@@ -29,7 +30,7 @@ export class MockBusProvider implements BusProvider {
 
   constructor(
     private readonly db: Db,
-    private readonly now: () => Date = () => new Date(),
+    private readonly now: () => Date = clock.now,
   ) {}
 
   async search(query: BusSearchQuery): Promise<BusTripOffer[]> {

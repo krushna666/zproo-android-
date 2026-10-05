@@ -1,9 +1,18 @@
 import type { AuthSession } from '@zproo/types';
 import { AxiosError, type InternalAxiosRequestConfig } from 'axios';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { Toaster } from '@zproo/ui';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useBusDraft } from '@/features/buses/draft';
 import { apiGet, http } from '@/services/http';
 import { makeUser } from '@/test/render';
-import { bootstrapSession, installAuth, refreshSession } from './session';
+import {
+  bootstrapSession,
+  closeAuthChannel,
+  installAuth,
+  refreshSession,
+  signOut,
+} from './session';
 import { sessionHint, useAuthStore } from './store';
 
 const session = (token: string): AuthSession => ({
@@ -46,6 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
   http.defaults.adapter = originalAdapter;
+  closeAuthChannel();
 });
 
 describe('refreshSession', () => {
@@ -129,5 +139,55 @@ describe('HTTP client with auth', () => {
     const calls = mockServer(() => unauthenticated);
     await expect(http.post('/auth/login', {})).rejects.toMatchObject({ status: 401 });
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('session expiry and sign-out', () => {
+  it('sends the double-submit CSRF token on refresh and logout', async () => {
+    document.cookie = 'zp_csrf=csrf-token-123';
+    const headers: (string | undefined)[] = [];
+    http.defaults.adapter = async (config) => {
+      headers.push(config.headers['X-CSRF-Token'] as string | undefined);
+      return { status: 200, statusText: '', headers: {}, config, data: ok(session('t')).data };
+    };
+    await refreshSession();
+    await signOut();
+    expect(headers).toEqual(['csrf-token-123', 'csrf-token-123']);
+    document.cookie = 'zp_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  });
+
+  it('keeps booking drafts and says so when a signed-in session expires', async () => {
+    useAuthStore.setState({ status: 'authenticated', user: makeUser(), accessToken: 'old' });
+    useBusDraft.getState().setReference('ZB0000000BBB');
+    mockServer(() => unauthenticated);
+    expect(await refreshSession()).toBeNull();
+    expect(useAuthStore.getState().status).toBe('anonymous');
+    expect(useBusDraft.getState().reference).toBe('ZB0000000BBB');
+    render(<Toaster />);
+    expect(await screen.findByTestId('toast-error')).toHaveTextContent(
+      'Your session expired. Please log in again.',
+    );
+  });
+
+  it('clears drafts on sign-out and signs out the other tabs', async () => {
+    mockServer(() => ok(null));
+    useAuthStore.setState({ status: 'authenticated', user: makeUser(), accessToken: 'a' });
+    useBusDraft.getState().setReference('ZB0000000BBB');
+    const otherTab = new BroadcastChannel('zproo-auth');
+    const received = new Promise<unknown>((resolve) =>
+      otherTab.addEventListener('message', (e) => resolve(e.data), { once: true }),
+    );
+    await signOut();
+    expect(useBusDraft.getState().reference).toBeNull();
+    expect(await received).toEqual({ type: 'logout' });
+    otherTab.close();
+  });
+
+  it('signs this tab out when another tab signs out', async () => {
+    useAuthStore.setState({ status: 'authenticated', user: makeUser(), accessToken: 'a' });
+    const otherTab = new BroadcastChannel('zproo-auth');
+    otherTab.postMessage({ type: 'logout' });
+    await vi.waitFor(() => expect(useAuthStore.getState().status).toBe('anonymous'));
+    otherTab.close();
   });
 });

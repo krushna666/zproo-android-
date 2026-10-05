@@ -1,4 +1,4 @@
-import { updateProfileSchema } from '@zproo/validation';
+import { changePasswordSchema, updateProfileSchema } from '@zproo/validation';
 import { Router, type RequestHandler } from 'express';
 import type { createMeController } from '../controllers/me.controller';
 import { validate } from '../middleware/validate';
@@ -11,5 +11,6 @@ export function meRoutes(
   router.use(authenticate);
   router.get('/', controller.get);
   router.patch('/', validate({ body: updateProfileSchema }), controller.update);
+  router.post('/password', validate({ body: changePasswordSchema }), controller.changePassword);
   return router;
 }

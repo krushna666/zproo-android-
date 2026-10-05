@@ -1,11 +1,10 @@
 import type { BookingListItem, BookingStatus } from '@zproo/types';
-import { Badge, Button, Skeleton } from '@zproo/ui';
+import { Badge, Button, FormAlert, Skeleton } from '@zproo/ui';
 import { formatMoney } from '@zproo/utils';
 import { Bus, ChevronRight, Plane, Ticket } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { Seo } from '@/components/seo/Seo';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useMyBookings } from '@/features/checkout/api';
 import { BOOKING_STATUS_LABEL, isAwaitingPayment } from '@/features/checkout/status';

@@ -1,19 +1,25 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Button, Input } from '@zproo/ui';
+import {
+  Button,
+  DevCodeHint,
+  FormAlert,
+  FormField,
+  Input,
+  OtpInput,
+  PasswordInput,
+  toast,
+} from '@zproo/ui';
+import { TOASTS } from '@zproo/validation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, Navigate, useNavigate } from 'react-router';
 import type { z } from 'zod';
+import { devCodeLabel } from '@/features/auth/devCode';
 import { Seo } from '@/components/seo/Seo';
 import { authApi } from '@/features/auth/api';
 import { AuthHeader } from '@/features/auth/components/AuthHeader';
-import { DevCodeHint } from '@/features/auth/components/DevCodeHint';
-import { FormAlert } from '@/features/auth/components/FormAlert';
-import { FormField } from '@/features/auth/components/FormField';
-import { OtpInput } from '@/features/auth/components/OtpInput';
-import { PasswordInput } from '@/features/auth/components/PasswordInput';
 import { ResendCountdown } from '@/features/auth/components/ResendCountdown';
-import { errorMessage } from '@/features/auth/errors';
+import { errorMessage, invalidForm } from '@/features/auth/errors';
 import { useAuthFlow } from '@/features/auth/flowStore';
 import { maskPhone } from '@/features/auth/redirect';
 import { profileFormSchema } from '@/features/auth/schemas';
@@ -44,11 +50,12 @@ function VerifyCode() {
       const result = await authApi.verifyOtp(otp.phone, value);
       if (result.status === 'AUTHENTICATED') {
         useAuthStore.getState().setSession(result);
+        toast.success(TOASTS.loginSuccess);
         // The flow is not cleared here: the router renders navigations in a transition, and
         // clearing now would re-render this page without its flow before it unmounts.
-        void navigate(otp.next, { replace: true });
+        void navigate(otp.returnTo, { replace: true });
       } else {
-        flow.startSignup(result.phone, result.signupToken, otp.next);
+        flow.startSignup(result.phone, result.signupToken, otp.returnTo);
       }
     } catch (e) {
       setError(errorMessage(e));
@@ -62,7 +69,8 @@ function VerifyCode() {
     setError(undefined);
     setResending(true);
     try {
-      flow.startOtp(otp.phone, otp.next, await authApi.sendOtp(otp.phone));
+      flow.startOtp(otp.phone, otp.returnTo, await authApi.sendOtp(otp.phone));
+      toast.success(TOASTS.otpSent(maskPhone(otp.phone)));
       setCode('');
     } catch (e) {
       setError(errorMessage(e));
@@ -93,19 +101,25 @@ function VerifyCode() {
           void verify();
         }}
       >
-        {error && <FormAlert>{error}</FormAlert>}
-        <FormField label="One-time code">
+        <FormField name="otp" label="One-time code" error={error}>
           <OtpInput
             value={code}
             onChange={setCode}
             onComplete={(v) => void verify(v)}
             disabled={pending}
             focusOnMount
+            testIdPrefix="auth-otp"
           />
         </FormField>
-        <DevCodeHint code={otp.devCode} />
-        <Button type="submit" size="lg" className="w-full" disabled={pending || code.length !== 6}>
-          {pending ? 'Verifying…' : 'Verify'}
+        <DevCodeHint code={otp.devCode} label={devCodeLabel} />
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full"
+          data-testid="auth-submit"
+          disabled={pending || code.length !== 6}
+        >
+          {pending ? 'Verifying...' : 'Verify'}
         </Button>
         <ResendCountdown
           availableAt={otp.resendAt}
@@ -136,11 +150,12 @@ function CompleteProfile() {
     try {
       const session = await authApi.register({ signupToken: signup.signupToken, ...values });
       useAuthStore.getState().setSession(session);
-      void navigate(signup.next, { replace: true });
+      toast.success(TOASTS.loginSuccess);
+      void navigate(signup.returnTo, { replace: true });
     } catch (e) {
       setError(errorMessage(e));
     }
-  });
+  }, invalidForm);
 
   const { errors } = form.formState;
   return (
@@ -158,6 +173,7 @@ function CompleteProfile() {
       <form onSubmit={onSubmit} noValidate className="space-y-5">
         {error && <FormAlert>{error}</FormAlert>}
         <FormField
+          name="fullName"
           label="Full name"
           error={errors.fullName?.message}
           hint="As on your ID — used for tickets"
@@ -166,10 +182,12 @@ function CompleteProfile() {
             className="h-12"
             autoComplete="name"
             placeholder="e.g. Amit Sharma"
+            data-testid="auth-name"
             {...form.register('fullName')}
           />
         </FormField>
         <FormField
+          name="email"
           label="Email (optional)"
           error={errors.email?.message}
           hint="For tickets and invoices"
@@ -179,10 +197,12 @@ function CompleteProfile() {
             type="email"
             autoComplete="email"
             placeholder="you@example.com"
+            data-testid="auth-email"
             {...form.register('email')}
           />
         </FormField>
         <FormField
+          name="password"
           label="Password (optional)"
           error={errors.password?.message}
           hint="Add one to also log in with a password. At least 8 characters with letters and numbers."
@@ -190,11 +210,18 @@ function CompleteProfile() {
           <PasswordInput
             autoComplete="new-password"
             placeholder="Create a password"
+            data-testid="auth-password"
             {...form.register('password')}
           />
         </FormField>
-        <Button type="submit" size="lg" className="w-full" disabled={form.formState.isSubmitting}>
-          {form.formState.isSubmitting ? 'Creating account…' : 'Create account'}
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full"
+          data-testid="auth-submit"
+          disabled={form.formState.isSubmitting}
+        >
+          {form.formState.isSubmitting ? 'Creating account...' : 'Create account'}
         </Button>
       </form>
     </>

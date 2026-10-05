@@ -19,6 +19,7 @@ import {
 import { localDate } from '../utils/time';
 import type { AuditService, RequestContext } from './audit.service';
 import { flightPriceBreakdown, type PaxCounts } from './flightPricing';
+import { clock } from '../lib/testContext';
 
 interface BookingServiceDeps {
   prisma: PrismaClient;
@@ -34,7 +35,7 @@ export class BookingService {
   private readonly now: () => Date;
 
   constructor(private readonly deps: BookingServiceDeps) {
-    this.now = deps.now ?? (() => new Date());
+    this.now = deps.now ?? clock.now;
   }
 
   createFlightBooking(

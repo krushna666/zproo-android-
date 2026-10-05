@@ -1,6 +1,7 @@
 import { ipKeyGenerator, rateLimit, type Store } from 'express-rate-limit';
 import type { Request } from 'express';
 import type { Env } from '../config/env';
+import { AUTH } from '../config/constants';
 import { RateLimitError } from '../utils/errors';
 
 /** Creates a store for one limiter (Redis in running servers, in-memory when undefined). */
@@ -80,9 +81,9 @@ export function authRateLimiters(storeFactory: RateLimitStoreFactory) {
     // Per flow (sign-in vs password reset), so one does not block the other.
     otpCooldown: limiter(storeFactory, {
       name: 'otp-cooldown',
-      windowMs: 60_000,
+      windowMs: AUTH.otpResendSeconds * 1000,
       limit: 1,
-      message: 'Please wait a minute before requesting another code.',
+      message: 'Please wait before requesting another code.',
       key: (req) => {
         const target = otpKey(req);
         return target && `${req.path}:${target}`;
@@ -92,9 +93,16 @@ export function authRateLimiters(storeFactory: RateLimitStoreFactory) {
     otpHourly: limiter(storeFactory, {
       name: 'otp-hourly',
       windowMs: 60 * 60_000,
-      limit: 5,
+      limit: AUTH.otpMaxSendsPerHour,
       message: 'Too many codes requested. Please try again in an hour.',
       key: otpKey,
+    }),
+    // Caps how many numbers one client can spam with codes.
+    otpPerIp: limiter(storeFactory, {
+      name: 'otp-ip',
+      windowMs: 60 * 60_000,
+      limit: AUTH.otpMaxSendsPerIpPerHour,
+      message: 'Too many codes requested from your network. Please try again later.',
     }),
     otpVerify: limiter(storeFactory, {
       name: 'otp-verify',
@@ -103,12 +111,47 @@ export function authRateLimiters(storeFactory: RateLimitStoreFactory) {
       message: 'Too many attempts. Please try again later.',
       key: otpKey,
     }),
+    // Per client and account: 10 tries in 15 minutes, then 429 with Retry-After.
     login: limiter(storeFactory, {
       name: 'login',
       windowMs: 15 * 60_000,
       limit: 10,
-      message: 'Too many sign-in attempts. Please try again in 15 minutes or reset your password.',
-      key: (req) => bodyKey(req, 'identifier'),
+      message: 'Too many attempts. Please try again later.',
+      key: (req) => {
+        const identifier = bodyKey(req, 'identifier');
+        return identifier && `${ipKeyGenerator(req.ip ?? '')}:${identifier}`;
+      },
+    }),
+  };
+}
+
+/** Signed-in user for per-user limits (falls back to the IP before authentication). */
+function userKey(req: Request): string | undefined {
+  return (req as Request & { auth?: { userId?: string } }).auth?.userId;
+}
+
+/** Commerce limits: searches per client IP, bookings and payments per signed-in customer. */
+export function commerceRateLimiters(storeFactory: RateLimitStoreFactory) {
+  return {
+    search: limiter(storeFactory, {
+      name: 'search',
+      windowMs: 60_000,
+      limit: 60,
+      message: 'Too many searches. Please try again in a minute.',
+    }),
+    book: limiter(storeFactory, {
+      name: 'book',
+      windowMs: 60_000,
+      limit: 10,
+      message: 'Too many booking attempts. Please try again in a minute.',
+      key: userKey,
+    }),
+    payments: limiter(storeFactory, {
+      name: 'payments',
+      windowMs: 60_000,
+      limit: 10,
+      message: 'Too many payment attempts. Please try again in a minute.',
+      key: userKey,
     }),
   };
 }

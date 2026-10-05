@@ -16,6 +16,7 @@ import {
 } from '../utils/errors';
 import type { AuditService, RequestContext } from './audit.service';
 import type { BookingService } from './booking.service';
+import { clock } from '../lib/testContext';
 
 export interface PaymentResult {
   bookingRef: string;
@@ -43,7 +44,7 @@ export class PaymentService {
   private readonly now: () => Date;
 
   constructor(private readonly deps: PaymentServiceDeps) {
-    this.now = deps.now ?? (() => new Date());
+    this.now = deps.now ?? clock.now;
   }
 
   get providerName(): string {

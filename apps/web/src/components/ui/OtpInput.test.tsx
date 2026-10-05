@@ -1,8 +1,8 @@
+import { OtpInput } from '@zproo/ui';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { OtpInput } from './OtpInput';
 
 function Harness({ onComplete }: { onComplete: (v: string) => void }) {
   const [value, setValue] = useState('');

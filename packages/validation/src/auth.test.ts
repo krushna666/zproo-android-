@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { identifierSchema, registerSchema, resetPasswordSchema } from './auth';
+import {
+  changePasswordSchema,
+  identifierSchema,
+  passwordLoginSchema,
+  registerSchema,
+  resetPasswordSchema,
+  sendOtpSchema,
+  verifyOtpSchema,
+} from './auth';
+import { MESSAGES } from './messages';
 
 describe('identifierSchema', () => {
   it('tags phone numbers and normalises them', () => {
@@ -53,5 +62,44 @@ describe('resetPasswordSchema', () => {
     expect(new Set(bad.error?.issues.map((i) => i.path[0]))).toEqual(
       new Set(['otp', 'newPassword']),
     );
+  });
+});
+
+describe('SOP messages', () => {
+  const first = (r: { success: boolean; error?: { issues: { message: string }[] } }) =>
+    r.error?.issues[0]?.message;
+
+  it('uses the exact copy for every field', () => {
+    expect(first(passwordLoginSchema.safeParse({ identifier: 'a@b.co', password: '' }))).toBe(
+      'Password is required',
+    );
+    expect(first(passwordLoginSchema.safeParse({ identifier: '', password: 'x' }))).toBe(
+      'Enter your mobile number or email',
+    );
+    expect(first(passwordLoginSchema.safeParse({ identifier: '12345', password: 'x' }))).toBe(
+      'Enter a valid 10-digit mobile number or email',
+    );
+    expect(first(verifyOtpSchema.safeParse({ phone: '9876543210', otp: '12' }))).toBe(
+      'Enter the 6-digit code',
+    );
+    expect(first(sendOtpSchema.safeParse({ phone: '5876543210' }))).toBe(
+      'Enter a valid 10-digit mobile number',
+    );
+  });
+
+  it('validates password changes', () => {
+    const issues = (input: object) =>
+      changePasswordSchema.safeParse(input).error?.issues.map((i) => i.message) ?? [];
+    expect(issues({ currentPassword: '', newPassword: 'abc12345', confirmPassword: '' })).toEqual([
+      'Enter your current password',
+      'Confirm your new password',
+    ]);
+    expect(
+      issues({ currentPassword: 'old12345', newPassword: 'abc12345', confirmPassword: 'abc1234' }),
+    ).toEqual(['Passwords do not match']);
+    expect(
+      issues({ currentPassword: 'abc12345', newPassword: 'abc12345', confirmPassword: 'abc12345' }),
+    ).toEqual(['New password must be different from your current password']);
+    expect(MESSAGES.password.lettersAndNumbers).toBe('Password must contain letters and numbers');
   });
 });

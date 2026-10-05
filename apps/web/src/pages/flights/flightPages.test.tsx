@@ -123,7 +123,7 @@ describe('flight results', () => {
     const cards = await screen.findAllByRole('article');
     await user.click(within(cards[0] as HTMLElement).getByRole('button', { name: 'Book' }));
     await screen.findByRole('heading', { level: 1, name: 'Welcome back' });
-    expect(router.state.location.search).toBe('?next=%2Fflights%2Fbooking');
+    expect(router.state.location.search).toBe('?returnTo=%2Fflights%2Fbooking');
     expect(useFlightDraft.getState().itinerary).toMatchObject({
       offerIds: [expect.any(String)],
       pax: { adults: 1, children: 0, infants: 0 },

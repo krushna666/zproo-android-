@@ -1,6 +1,6 @@
+import { FormAlert } from '@zproo/ui';
 import { Navigate, useParams } from 'react-router';
 import { PageLoader } from '@/components/feedback/PageLoader';
-import { FormAlert } from '@/features/auth/components/FormAlert';
 import { errorMessage } from '@/features/auth/errors';
 import { useBooking } from '@/features/checkout/api';
 import { confirmationUrl, paymentUrl, serviceOf } from '@/features/checkout/links';

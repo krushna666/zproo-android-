@@ -2,7 +2,7 @@ import type { Permission } from '@zproo/types';
 import { Navigate, Outlet, useLocation } from 'react-router';
 import { PageLoader } from '@/components/feedback/PageLoader';
 import { ForbiddenPage } from '@/pages/ForbiddenPage';
-import { loginPath, safeNext } from './redirect';
+import { loginPath, safeReturnTo } from './redirect';
 import { hasPermission, useAuthStore } from './store';
 
 /** Signed-in users only; others go to login and come back afterwards. */
@@ -37,7 +37,9 @@ export function RedirectIfAuthenticated() {
   const status = useAuthStore((s) => s.status);
   const location = useLocation();
   if (status === 'authenticated') {
-    return <Navigate to={safeNext(new URLSearchParams(location.search).get('next'))} replace />;
+    return (
+      <Navigate to={safeReturnTo(new URLSearchParams(location.search).get('returnTo'))} replace />
+    );
   }
   return <Outlet />;
 }

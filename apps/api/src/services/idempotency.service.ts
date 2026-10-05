@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { clock } from '../lib/testContext';
 
 const TTL_MS = 24 * 60 * 60_000;
 
@@ -28,7 +29,7 @@ export type Claim =
 export class IdempotencyService {
   constructor(
     private readonly prisma: PrismaClient,
-    private readonly now: () => Date = () => new Date(),
+    private readonly now: () => Date = clock.now,
   ) {}
 
   /**
