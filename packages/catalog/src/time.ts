@@ -59,3 +59,14 @@ export function addDaysIso(date: string, days: number): string {
 export function daysBetweenIso(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
+
+/** An instant as ISO 8601 in a zone's local time with its offset, e.g. 2026-10-20T21:30:00+05:30. */
+export function toLocalIso(instant: number, timeZone: string): string {
+  const offset = zoneOffsetMinutes(instant, timeZone);
+  const local = new Date(instant + offset * 60_000).toISOString().slice(0, 19);
+  const sign = offset < 0 ? '-' : '+';
+  const abs = Math.abs(offset);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `${local}${sign}${hh}:${mm}`;
+}

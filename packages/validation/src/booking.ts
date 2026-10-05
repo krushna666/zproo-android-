@@ -22,76 +22,159 @@ export function passengerTypeForAge(age: number): 'ADULT' | 'CHILD' | 'INFANT' {
   return 'ADULT';
 }
 
-const travellerName = (label: string) =>
+/** Contact for tickets: email and Indian mobile (both modules). */
+export const travelContactSchema = z.strictObject({
+  email: emailSchema,
+  mobile: indianMobileSchema,
+});
+export type TravelContact = z.output<typeof travelContactSchema>;
+
+export const FLIGHT_MESSAGES = {
+  name: 'Enter the name as on your government ID',
+  title: 'Choose a title',
+  dob: 'Enter a valid date of birth',
+  adultAge: 'An adult must be 12 or older on the travel date',
+  childAge: 'A child must be 2–11 years old on the travel date',
+  infantAge: 'An infant must be under 2 years old on the travel date',
+  infantAdult: 'Each infant must travel with an adult',
+  infantDistinct: 'Each infant must travel with a different adult',
+  gstin: 'Enter a valid GSTIN',
+  company: 'Enter the company name',
+  passport: 'Enter a valid passport number',
+  passportExpiry: 'The passport must be valid on the travel date',
+  nationality: 'Choose a nationality',
+  returnFare: 'Choose a fare for the return flight',
+} as const;
+
+const flightName = (min: number) =>
   z
     .string()
     .trim()
-    .min(1, `Enter ${label}`)
-    .max(40, `${label[0]?.toUpperCase()}${label.slice(1)} is too long`)
-    .regex(/^[A-Za-z][A-Za-z .'-]*$/, 'Use English letters as on the ID');
+    .min(min, FLIGHT_MESSAGES.name)
+    .max(32, FLIGHT_MESSAGES.name)
+    .regex(/^[A-Za-z]+( [A-Za-z]+)*$/, FLIGHT_MESSAGES.name);
 
-export const passengerSchema = z
-  .object({
+/** Passport details (international only); stored encrypted. */
+export const passportSchema = z.strictObject({
+  number: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z0-9]{6,9}$/, FLIGHT_MESSAGES.passport),
+  expiry: isoDateSchema,
+  nationality: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{2}$/, FLIGHT_MESSAGES.nationality),
+});
+
+export const flightTravellerSchema = z
+  .strictObject({
     type: z.enum(['ADULT', 'CHILD', 'INFANT']),
-    title: z.enum(['MR', 'MRS', 'MS', 'MSTR', 'MISS']),
-    firstName: travellerName('first name'),
-    lastName: travellerName('last name'),
-    dateOfBirth: isoDateSchema.optional(),
+    title: z.enum(['MR', 'MRS', 'MS', 'MSTR', 'MISS'], { message: FLIGHT_MESSAGES.title }),
+    firstName: flightName(1),
+    lastName: flightName(2),
+    dob: isoDateSchema.optional(),
     gender: z.enum(['MALE', 'FEMALE', 'OTHER']),
+    /** Infants: index of the adult (in `travellers`) they sit with */
+    infantOfIndex: z.number().int().min(0).max(12).optional(),
+    passport: passportSchema.optional(),
   })
-  .superRefine((p, ctx) => {
-    if (!(PASSENGER_TITLES[p.type] as readonly string[]).includes(p.title)) {
-      ctx.addIssue({ code: 'custom', path: ['title'], message: 'Choose a title' });
-    }
-    if (p.type !== 'ADULT' && !p.dateOfBirth) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['dateOfBirth'],
-        message: 'Date of birth is required for children and infants',
-      });
-    }
+  .superRefine((t, ctx) => {
+    if (!(PASSENGER_TITLES[t.type] as readonly string[]).includes(t.title))
+      ctx.addIssue({ code: 'custom', path: ['title'], message: FLIGHT_MESSAGES.title });
+    if (t.type !== 'ADULT' && !t.dob)
+      ctx.addIssue({ code: 'custom', path: ['dob'], message: FLIGHT_MESSAGES.dob });
   });
-export type PassengerInput = z.output<typeof passengerSchema>;
+export type FlightTravellerInput = z.output<typeof flightTravellerSchema>;
 
-export const contactSchema = z.object({ email: emailSchema, phone: indianMobileSchema });
+export const GSTIN_PATTERN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+export const gstDetailsSchema = z.strictObject({
+  gstin: z.string().trim().toUpperCase().regex(GSTIN_PATTERN, FLIGHT_MESSAGES.gstin),
+  companyName: z.string().trim().min(2, FLIGHT_MESSAGES.company).max(100, FLIGHT_MESSAGES.company),
+});
+
+const offerIdSchema = z.string().regex(/^off_[A-Za-z0-9_]{20,80}$/, 'Invalid offer');
+const fareIdSchema = z
+  .string()
+  .regex(/^fare_[0-9a-f]{6}_(saver|flexi|superflexi)$/, 'Invalid fare');
 
 /**
- * Checks each passenger's age band on the travel date (so an 11-year-old who turns 12 before the
- * flight travels as an adult).
+ * Infant links: each infant names an adult (by index) and no adult carries two infants. Shared by
+ * the traveller form and the API.
  */
-export function passengerAgeIssues(
-  passengers: PassengerInput[],
-  travelDate: string,
+export function infantLinkIssues(
+  travellers: readonly { type: string; infantOfIndex?: number | undefined }[],
 ): { index: number; message: string }[] {
   const issues: { index: number; message: string }[] = [];
-  passengers.forEach((p, index) => {
-    if (!p.dateOfBirth) return;
-    if (p.dateOfBirth > travelDate) {
-      issues.push({ index, message: 'Date of birth must be before the travel date' });
-      return;
-    }
-    const actual = passengerTypeForAge(ageOn(p.dateOfBirth, travelDate));
-    if (actual !== p.type) {
-      const band = {
-        ADULT: 'an adult (12+)',
-        CHILD: 'a child (2–11)',
-        INFANT: 'an infant (under 2)',
-      }[actual];
-      issues.push({ index, message: `On the travel date this passenger is ${band}` });
-    }
+  const taken = new Set<number>();
+  travellers.forEach((t, index) => {
+    if (t.type !== 'INFANT') return;
+    const adult = t.infantOfIndex;
+    if (adult === undefined || travellers[adult]?.type !== 'ADULT') {
+      issues.push({ index, message: FLIGHT_MESSAGES.infantAdult });
+    } else if (taken.has(adult)) {
+      issues.push({ index, message: FLIGHT_MESSAGES.infantDistinct });
+    } else taken.add(adult);
   });
   return issues;
 }
 
-export const bookFlightSchema = z.object({
-  /** One offer per journey leg, in order. */
-  offerIds: z.array(z.string().min(5).max(200)).min(1).max(5),
-  passengers: z.array(passengerSchema).min(1).max(18),
-  contact: contactSchema,
-  /** The total the customer saw; if the price moved, the API refuses with PRICE_CHANGED. */
-  expectedTotalPaise: z.number().int().positive(),
-});
+export const bookFlightSchema = z
+  .strictObject({
+    offerId: offerIdSchema,
+    fareId: fareIdSchema,
+    returnOfferId: offerIdSchema.optional(),
+    returnFareId: fareIdSchema.optional(),
+    travellers: z.array(flightTravellerSchema).min(1).max(13),
+    contact: travelContactSchema,
+    gstDetails: gstDetailsSchema.optional(),
+    /** The total the customer saw; if the price moved, the API refuses with PRICE_CHANGED. */
+    expectedTotal: z.number().int().positive(),
+  })
+  .superRefine((b, ctx) => {
+    if (Boolean(b.returnOfferId) !== Boolean(b.returnFareId))
+      ctx.addIssue({ code: 'custom', path: ['returnFareId'], message: FLIGHT_MESSAGES.returnFare });
+    for (const issue of infantLinkIssues(b.travellers))
+      ctx.addIssue({
+        code: 'custom',
+        path: ['travellers', issue.index, 'infantOfIndex'],
+        message: issue.message,
+      });
+  });
 export type BookFlightInput = z.output<typeof bookFlightSchema>;
+
+/**
+ * Age rules on the travel date (adult ≥ 12, child 2–11, infant under 2 and at least 7 days old;
+ * no date of birth in the future). Adults may omit the date of birth on domestic flights.
+ */
+export function flightAgeIssues(
+  travellers: readonly { type: 'ADULT' | 'CHILD' | 'INFANT'; dob?: string | undefined }[],
+  travelDate: string,
+  today: string,
+): { index: number; message: string }[] {
+  const issues: { index: number; message: string }[] = [];
+  travellers.forEach((t, index) => {
+    if (!t.dob) return;
+    if (t.dob > today || t.dob > travelDate) {
+      issues.push({ index, message: FLIGHT_MESSAGES.dob });
+      return;
+    }
+    const age = ageOn(t.dob, travelDate);
+    if (t.type === 'INFANT') {
+      const days = Math.round((Date.parse(travelDate) - Date.parse(t.dob)) / 86_400_000);
+      if (days < 7) issues.push({ index, message: FLIGHT_MESSAGES.dob });
+      else if (age >= 2) issues.push({ index, message: FLIGHT_MESSAGES.infantAge });
+    } else if (t.type === 'CHILD' && (age < 2 || age > 11)) {
+      issues.push({ index, message: FLIGHT_MESSAGES.childAge });
+    } else if (t.type === 'ADULT' && age < 12) {
+      issues.push({ index, message: FLIGHT_MESSAGES.adultAge });
+    }
+  });
+  return issues;
+}
 
 // ───────────────────────────── Buses ─────────────────────────────
 
@@ -134,13 +217,6 @@ export const busTravellerSchema = z.strictObject({
   gender: z.enum(['MALE', 'FEMALE', 'OTHER']),
 });
 export type BusTravellerInput = z.output<typeof busTravellerSchema>;
-
-/** Contact for tickets: email and Indian mobile (both modules). */
-export const travelContactSchema = z.strictObject({
-  email: emailSchema,
-  mobile: indianMobileSchema,
-});
-export type TravelContact = z.output<typeof travelContactSchema>;
 
 /**
  * POST /buses/book. Strict: unknown keys (e.g. a price) are rejected. `expectedTotal` is only

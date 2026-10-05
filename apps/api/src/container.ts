@@ -24,6 +24,7 @@ import { BusService } from './services/bus.service';
 import { CancellationService } from './services/cancellation.service';
 import { CouponService } from './services/coupon.service';
 import { CacheService } from './services/cache.service';
+import { hmacSigner } from './lib/crypto';
 import { FlightService } from './services/flight.service';
 import { PaymentService } from './services/payment.service';
 import { TicketService } from './services/ticket.service';
@@ -70,11 +71,15 @@ export function createServices({
   const email = providers.email ?? createEmailProvider(env);
   const identityVerifiers = providers.identityVerifiers ?? createIdentityVerifiers(env);
   // Every supplier call gets a timeout, read retries, a circuit breaker and latency logs.
-  const flightProvider = withResilience(providers.flights ?? createFlightProvider(env, prisma), {
-    name: `flight:${env.FLIGHT_PROVIDER}`,
-    logger,
-    reads: ['search', 'getOffer'],
-  });
+  const flightProvider = withResilience(
+    providers.flights ??
+      createFlightProvider(env, prisma, hmacSigner(env.JWT_SECRET, 'flight-offers')),
+    {
+      name: `flight:${env.FLIGHT_PROVIDER}`,
+      logger,
+      reads: ['airports', 'search', 'getOffer', 'quote'],
+    },
+  );
   const busProvider = withResilience(providers.buses ?? createBusProvider(env, prisma), {
     name: `bus:${env.BUS_PROVIDER}`,
     logger,
@@ -106,6 +111,8 @@ export function createServices({
     audit,
     logger,
     holdMinutes: env.BOOKING_HOLD_MINUTES,
+    piiKey: env.piiKey,
+    internationalFlights: env.INTL_FLIGHTS,
     redis,
   });
 
@@ -128,7 +135,9 @@ export function createServices({
       logger,
     }),
     users: new UserService(users, rbac, audit),
-    flights: new FlightService(flightProvider, new CacheService(redis, logger)),
+    flights: new FlightService(flightProvider, new CacheService(redis, logger), {
+      internationalEnabled: env.INTL_FLIGHTS,
+    }),
     buses: new BusService(busProvider, new CacheService(redis, logger)),
     bookings,
     idempotency: new IdempotencyService(prisma),
@@ -137,6 +146,7 @@ export function createServices({
       prisma,
       bookings,
       buses: busProvider,
+      flights: flightProvider,
       payments: paymentProvider,
       audit,
       logger,

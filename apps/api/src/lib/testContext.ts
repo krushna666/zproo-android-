@@ -15,6 +15,7 @@ export const MOCK_SCENARIOS = [
   'slow',
   'no_results',
   'issue_pending',
+  'issue_failed',
 ] as const;
 export type MockScenario = (typeof MOCK_SCENARIOS)[number];
 

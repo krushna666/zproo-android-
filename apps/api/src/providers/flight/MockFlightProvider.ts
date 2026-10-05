@@ -1,56 +1,46 @@
-import type { CabinClass } from '@prisma/client';
-import type { AirportInfo, FlightOffer, FlightSegmentInfo } from '@zproo/types';
+import {
+  FLIGHT_AIRPORT_CODES,
+  fareFamiliesFor,
+  findMockAirline,
+  flightOfferDetails,
+  flightOfferSummary,
+  flightPlan,
+  flightPlans,
+  istDate,
+  parseFlightOfferId,
+  seatsNeeded,
+  type FlightPlan,
+  type OfferSigner,
+} from '@zproo/catalog';
+import { searchAirports } from '@zproo/config';
+import type { AirportSuggestion, FlightOfferDetails, FlightOfferSummary } from '@zproo/types';
+import { simulateSupplier } from '../../lib/scenario';
+import { clock, currentScenario } from '../../lib/testContext';
 import type { Db } from '../../repositories/db';
-import { FlightRepository, type FlightSchedule } from '../../repositories/flight.repository';
-import { offerTotal, quoteFare, unitHash, type PaxCounts } from '../../services/flightPricing';
-import { randomInt } from 'node:crypto';
+import { FlightRepository } from '../../repositories/flight.repository';
 import { randomDigits } from '../../utils/crypto';
 import { FareUnavailableError } from '../../utils/errors';
-import {
-  addDaysIso,
-  daysBetweenIso,
-  isoWeekday,
-  localDate,
-  zonedTimeToUtc,
-} from '../../utils/time';
-import type { FlightLegQuery, FlightProvider, IssuedTickets } from './FlightProvider';
-import { clock } from '../../lib/testContext';
+import type {
+  FlightIssueResult,
+  FlightProvider,
+  FlightQuote,
+  FlightSearchQuery,
+} from './FlightProvider';
 
-const CABIN_CODE: Record<CabinClass, string> = {
-  ECONOMY: 'E',
-  PREMIUM_ECONOMY: 'P',
-  BUSINESS: 'B',
-  FIRST: 'F',
-};
-const CODE_CABIN = Object.fromEntries(Object.entries(CABIN_CODE).map(([k, v]) => [v, k])) as Record<
-  string,
-  CabinClass
->;
-const OFFER_ID = /^mk_([a-z0-9]+)_(\d{4})(\d{2})(\d{2})_([EPBF])$/;
 /** Sales close this long before departure. */
-const CUTOFF_MS = 2 * 60 * 60 * 1000;
-
-const airportInfo = (a: FlightSchedule['origin']): AirportInfo => ({
-  code: a.code,
-  city: a.city,
-  name: a.name,
-  country: a.country,
-  timezone: a.timezone,
-});
-
-function capacity(flight: FlightSchedule, cabin: CabinClass): number {
-  return {
-    ECONOMY: flight.seatsEconomy,
-    PREMIUM_ECONOMY: flight.seatsPremium,
-    BUSINESS: flight.seatsBusiness,
-    FIRST: flight.seatsFirst,
-  }[cabin];
-}
+const SALES_CUTOFF_MS = 2 * 60 * 60 * 1000;
+/** `price_changed` scenario: the re-price is this much higher (Saver, per adult). */
+const PRICE_CHANGE_PAISE = 50_000;
+/** `issue_pending`: the airline answers "pending" until this many attempts (payment + 2 polls). */
+const PENDING_ATTEMPTS = 3;
+const PNR_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /**
- * Development flight supplier backed by the seeded timetable. Prices follow demand
- * (deterministically), and a realistic share of seats is treated as already sold so availability
- * varies. Never real inventory: `isDemo` is true, and tickets are marked as demo.
+ * Development flight supplier on the shared deterministic generator (@zproo/catalog). Seats held
+ * or sold through ZPROO GO are rows in flight_seat_holds. `isDemo` is true; tickets say so.
+ *
+ * Test scenarios (X-Mock-Scenario, NODE_ENV=test only): price_changed, fare_unavailable,
+ * provider_down, slow, no_results, issue_pending, issue_failed.
  */
 export class MockFlightProvider implements FlightProvider {
   readonly name = 'mock';
@@ -58,171 +48,175 @@ export class MockFlightProvider implements FlightProvider {
 
   constructor(
     private readonly db: Db,
+    private readonly sign: OfferSigner,
     private readonly now: () => Date = clock.now,
   ) {}
 
-  async search(query: FlightLegQuery): Promise<FlightOffer[]> {
-    const repo = new FlightRepository(this.db);
-    const flights = await repo.findRoute(query.from, query.to, isoWeekday(query.date));
-    const withSeats = flights.filter((f) => capacity(f, query.cabin) > 0);
-    const sold = await repo.soldSeats(
-      withSeats.map((f) => f.id),
-      new Date(`${query.date}T00:00:00Z`),
-      query.cabin,
-    );
-    const soldBy = new Map(sold.map((s) => [s.flightId, s]));
-    const seatsNeeded = query.pax.adults + query.pax.children;
-    return withSeats
-      .map((f) => this.buildOffer(f, query.date, query.cabin, query.pax, soldBy.get(f.id)))
-      .filter((o): o is FlightOffer => o !== null && o.seatsLeft >= seatsNeeded)
-      .sort((a, b) => a.totalPaise - b.totalPaise);
+  async airports(query: string): Promise<AirportSuggestion[]> {
+    return searchAirports(query, { only: FLIGHT_AIRPORT_CODES, limit: 10 }).map((a) => ({
+      iata: a.code,
+      city: a.city,
+      name: a.name,
+      country: a.country,
+    }));
   }
 
-  async getOffer(offerId: string, pax: PaxCounts): Promise<FlightOffer | null> {
-    const parsed = this.parse(offerId);
-    if (!parsed) return null;
-    const repo = new FlightRepository(this.db);
-    const flight = await repo.findById(parsed.flightId);
-    if (!flight || !flight.daysOfWeek.includes(isoWeekday(parsed.date))) return null;
-    const [inventory] = await repo.soldSeats(
-      [flight.id],
-      new Date(`${parsed.date}T00:00:00Z`),
-      parsed.cabin,
+  async search(query: FlightSearchQuery): Promise<FlightOfferSummary[]> {
+    await simulateSupplier();
+    if (currentScenario() === 'no_results') return [];
+    const now = this.now();
+    const plans = flightPlans(query.from, query.to, query.date, query.cabin).filter((p) =>
+      this.sellable(p, now),
     );
-    return this.buildOffer(flight, parsed.date, parsed.cabin, pax, inventory);
+    const held = await new FlightRepository(this.db).heldSeats(
+      plans.map((p) => p.itineraryKey),
+      now,
+    );
+    return plans
+      .map((p) =>
+        flightOfferSummary(p, {
+          pax: query.pax,
+          heldSeats: held.get(p.itineraryKey) ?? 0,
+          issuedAtMs: now.getTime(),
+          sign: this.sign,
+          today: istDate(now),
+        }),
+      )
+      .filter((o) => o.seatsLeft >= seatsNeeded(query.pax));
   }
 
-  async hold(offerId: string, seats: number, db: Db): Promise<void> {
-    const parsed = this.parse(offerId);
-    const flight = parsed && (await new FlightRepository(db).findById(parsed.flightId));
-    if (!parsed || !flight) throw new FareUnavailableError();
-    const available =
-      capacity(flight, parsed.cabin) - this.presold(flight, parsed.date, parsed.cabin);
-    const ok = await new FlightRepository(db).takeSeats(
-      flight.id,
-      new Date(`${parsed.date}T00:00:00Z`),
-      parsed.cabin,
-      available,
-      seats,
+  async getOffer(
+    offerId: string,
+    options: { reprice: boolean },
+  ): Promise<FlightOfferDetails | null> {
+    await simulateSupplier();
+    const parsed = parseFlightOfferId(offerId, this.sign);
+    if (!parsed || currentScenario() === 'fare_unavailable') return null;
+    const now = this.now();
+    const expired = now.getTime() >= parsed.expiresAtMs;
+    if (expired && !options.reprice) return null;
+    const plan = flightPlan(parsed);
+    if (!plan || !this.sellable(plan, now)) return null;
+    const held = await this.heldFor(plan, now);
+    if (plan.seats - held < seatsNeeded(parsed.pax)) return null;
+    return flightOfferDetails(plan, {
+      pax: parsed.pax,
+      heldSeats: held,
+      issuedAtMs: expired ? now.getTime() : parsed.issuedAtMs,
+      sign: this.sign,
+      today: istDate(now),
+      bumpPaise: this.bump(),
+      serverNow: now.toISOString(),
+      replacesOfferId: expired ? offerId : null,
+    });
+  }
+
+  async quote(offerId: string, fareId: string): Promise<FlightQuote | 'BAD_FARE' | null> {
+    await simulateSupplier();
+    const parsed = parseFlightOfferId(offerId, this.sign);
+    if (!parsed || currentScenario() === 'fare_unavailable') return null;
+    const now = this.now();
+    if (now.getTime() >= parsed.expiresAtMs) return null;
+    const plan = flightPlan(parsed);
+    if (!plan || !this.sellable(plan, now)) return null;
+    const held = await this.heldFor(plan, now);
+    if (plan.seats - held < seatsNeeded(parsed.pax)) return null;
+    const fare = fareFamiliesFor(plan, parsed.pax, istDate(now), this.bump()).find(
+      (f) => f.fareId === fareId,
+    );
+    if (!fare) return 'BAD_FARE';
+    const offer = flightOfferSummary(plan, {
+      pax: parsed.pax,
+      heldSeats: held,
+      issuedAtMs: parsed.issuedAtMs,
+      sign: this.sign,
+      today: istDate(now),
+      bumpPaise: this.bump(),
+    });
+    const first = plan.segments[0];
+    const last = plan.segments.at(-1);
+    return {
+      offer: { ...offer, offerId },
+      fare,
+      pax: parsed.pax,
+      itineraryKey: plan.itineraryKey,
+      from: parsed.from,
+      to: parsed.to,
+      date: parsed.date,
+      departureAt: new Date(first?.departureMs ?? 0),
+      arrivalAt: new Date((last?.departureMs ?? 0) + (last?.durationMin ?? 0) * 60_000),
+      international: plan.international,
+      holdLimitMinutes: plan.airlineTimeLimitMin,
+    };
+  }
+
+  async hold(quote: FlightQuote, bookingId: string, expiresAt: Date, db: Db): Promise<void> {
+    const parsed = parseFlightOfferId(quote.offer.offerId, this.sign);
+    const plan = parsed && flightPlan(parsed);
+    if (!plan) throw new FareUnavailableError();
+    const ok = await new FlightRepository(db).hold(
+      plan.itineraryKey,
+      seatsNeeded(quote.pax),
+      plan.seats,
+      bookingId,
+      expiresAt,
+      this.now(),
     );
     if (!ok) throw new FareUnavailableError();
   }
 
-  async release(offerId: string, seats: number, db: Db): Promise<void> {
-    const parsed = this.parse(offerId);
-    if (!parsed) return;
-    await new FlightRepository(db).returnSeats(
-      parsed.flightId,
-      new Date(`${parsed.date}T00:00:00Z`),
-      parsed.cabin,
-      seats,
-    );
+  async release(bookingId: string, db: Db): Promise<void> {
+    await new FlightRepository(db).release(bookingId);
   }
 
-  async issue(
-    _offerId: string,
-    passengers: { firstName: string; lastName: string }[],
-  ): Promise<IssuedTickets> {
-    // Six-character airline-style PNR without ambiguous letters, and 13-digit ticket numbers.
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    const pnr = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join('');
-    return { pnr, ticketNumbers: passengers.map(() => `999${randomDigits(10)}`) };
+  async markPaid(bookingId: string, db: Db): Promise<void> {
+    await new FlightRepository(db).markPaid(bookingId);
+  }
+
+  async issue(input: {
+    offerId: string;
+    carrierCode: string;
+    bookingRef: string;
+    passengers: { firstName: string; lastName: string }[];
+    attempt: number;
+    scenario?: string | undefined;
+  }): Promise<FlightIssueResult> {
+    if (input.scenario === 'issue_failed')
+      throw new Error('Airline rejected the ticketing request');
+    if (input.scenario === 'issue_pending' && input.attempt <= PENDING_ATTEMPTS)
+      return { status: 'PENDING' };
+    const prefix = findMockAirline(input.carrierCode)?.ticketPrefix ?? '980';
+    const pnr = Array.from(
+      { length: 6 },
+      () => PNR_ALPHABET[Number(randomDigits(2)) % PNR_ALPHABET.length],
+    ).join('');
+    return {
+      status: 'ISSUED',
+      pnr,
+      ticketNumbers: input.passengers.map(() => `${prefix}${randomDigits(10)}`),
+    };
+  }
+
+  async cancel(bookingId: string, db: Db): Promise<void> {
+    await new FlightRepository(db).release(bookingId);
   }
 
   // ───────── internals ─────────
 
-  private parse(offerId: string): { flightId: string; date: string; cabin: CabinClass } | null {
-    const m = OFFER_ID.exec(offerId);
-    const cabin = m?.[5] ? CODE_CABIN[m[5]] : undefined;
-    if (!m || !cabin) return null;
-    return { flightId: m[1] as string, date: `${m[2]}-${m[3]}-${m[4]}`, cabin };
+  private sellable(plan: FlightPlan, now: Date): boolean {
+    const first = plan.segments[0];
+    return first !== undefined && first.departureMs - now.getTime() > SALES_CUTOFF_MS;
   }
 
-  /** Seats treated as sold before our first booking, so availability looks like a real flight. */
-  private presold(flight: FlightSchedule, date: string, cabin: CabinClass): number {
-    const daysAhead = Math.max(
-      0,
-      daysBetweenIso(localDate(this.now(), flight.origin.timezone), date),
+  private async heldFor(plan: FlightPlan, now: Date): Promise<number> {
+    return (
+      (await new FlightRepository(this.db).heldSeats([plan.itineraryKey], now)).get(
+        plan.itineraryKey,
+      ) ?? 0
     );
-    const load = Math.min(
-      0.97,
-      0.35 + 0.5 * unitHash(`${flight.id}:${date}:${cabin}:load`) + (daysAhead <= 3 ? 0.15 : 0),
-    );
-    return Math.floor(capacity(flight, cabin) * load);
   }
 
-  private buildOffer(
-    flight: FlightSchedule,
-    date: string,
-    cabin: CabinClass,
-    pax: PaxCounts,
-    inventory?: { capacity: number; sold: number },
-  ): FlightOffer | null {
-    const segments: FlightSegmentInfo[] = flight.segments.map((s) => {
-      const departure = zonedTimeToUtc(
-        addDaysIso(date, s.dayOffset),
-        s.departureTime,
-        s.origin.timezone,
-      );
-      return {
-        airline: { code: s.airline.code, name: s.airline.name },
-        flightNumber: s.flightNumber,
-        from: airportInfo(s.origin),
-        to: airportInfo(s.destination),
-        departureAt: departure.toISOString(),
-        arrivalAt: new Date(departure.getTime() + s.durationMinutes * 60_000).toISOString(),
-        durationMinutes: s.durationMinutes,
-        aircraft: flight.aircraft,
-      };
-    });
-    const first = segments[0];
-    const last = segments.at(-1);
-    if (!first || !last) return null;
-    const departureAt = new Date(first.departureAt);
-    if (departureAt.getTime() - this.now().getTime() < CUTOFF_MS) return null;
-
-    const total = capacity(flight, cabin);
-    const seatsLeft = inventory
-      ? inventory.capacity - inventory.sold
-      : total - this.presold(flight, date, cabin);
-    const key = `${flight.id}:${date}:${cabin}`;
-    const quote = quoteFare({
-      key,
-      baseFarePaise: flight.baseFarePaise,
-      cabin,
-      daysAhead: Math.max(0, daysBetweenIso(localDate(this.now(), flight.origin.timezone), date)),
-      weekday: isoWeekday(date),
-      international: flight.origin.country !== flight.destination.country,
-    });
-    return {
-      id: `mk_${flight.id}_${date.replaceAll('-', '')}_${CABIN_CODE[cabin]}`,
-      provider: this.name,
-      airline: { code: flight.airline.code, name: flight.airline.name },
-      flightNumber: flight.flightNumber,
-      from: first.from,
-      to: last.to,
-      departureAt: first.departureAt,
-      arrivalAt: last.arrivalAt,
-      durationMinutes: Math.round(
-        (Date.parse(last.arrivalAt) - Date.parse(first.departureAt)) / 60_000,
-      ),
-      stops: segments.length - 1,
-      segments,
-      layovers: segments.slice(1).map((s, i) => ({
-        airport: s.from,
-        minutes: Math.round(
-          (Date.parse(s.departureAt) - Date.parse(segments[i]?.arrivalAt ?? s.departureAt)) /
-            60_000,
-        ),
-      })),
-      cabin,
-      fareFamily: quote.fareFamily,
-      refundable: quote.refundable,
-      cancellationFeePaise: quote.cancellationFeePaise,
-      baggage: quote.baggage,
-      seatsLeft: Math.max(0, seatsLeft),
-      fares: quote.fares,
-      totalPaise: offerTotal(quote.fares, pax),
-    };
+  private bump(): number {
+    return currentScenario() === 'price_changed' ? PRICE_CHANGE_PAISE : 0;
   }
 }

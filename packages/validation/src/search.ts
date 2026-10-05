@@ -1,5 +1,5 @@
 import { findAirport, findCity, findStation } from '@zproo/config';
-import { CabinClass, TrainClass, TripType } from '@zproo/types';
+import { CabinClass, TrainClass } from '@zproo/types';
 import { z } from 'zod';
 import { isoDateSchema } from './common';
 
@@ -29,11 +29,6 @@ const travelDate = (label: string) =>
 
 const count = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
 
-const airportCode = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .refine((code) => Boolean(findAirport(code)), 'Choose an airport from the list');
 /** A city code (or, for older links, a city slug), normalised to the 3-letter code. */
 const cityCode = z
   .string()
@@ -55,81 +50,86 @@ const stationCode = z
 
 // ───────────────────────────── Flights ─────────────────────────────
 
-export const flightLegSchema = z.object({
-  from: airportCode,
-  to: airportCode,
-  date: travelDate('Departure date'),
-});
+/** Flights open 330 days ahead (airline schedules). */
+export const FLIGHT_MAX_DAYS_AHEAD = 330;
 
-export const flightSearchSchema = z
+export const FLIGHT_SEARCH_MESSAGES = {
+  airport: 'Choose an airport',
+  sameAirport: 'Choose different airports for From and To',
+  dateWindow: `Choose a date within the next ${FLIGHT_MAX_DAYS_AHEAD} days`,
+  returnDate: 'Return date must be on or after the departure date',
+  maxTravellers: 'You can book up to 9 travellers at a time',
+  infants: 'Each infant must travel with an adult',
+  adults: 'Add at least one adult',
+} as const;
+
+/** An IATA code of a known airport (any case in, upper case out). */
+const iata = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{3}$/, FLIGHT_SEARCH_MESSAGES.airport)
+  .refine((code) => Boolean(findAirport(code)), FLIGHT_SEARCH_MESSAGES.airport);
+
+/**
+ * Passenger counts with the airline rules (shared by the search widget, the results URL and the
+ * API): 1–9 adults, 0–8 children (2–11), 0–4 infants (under 2); adults + children ≤ 9; one infant
+ * per adult.
+ */
+export const flightPaxSchema = z
   .object({
-    tripType: z.enum(Object.values(TripType) as [TripType, ...TripType[]]),
-    legs: z.array(flightLegSchema).min(1).max(5),
-    returnDate: travelDate('Return date').optional(),
-    adults: count(1, 9),
-    children: count(0, 8).default(0),
-    infants: count(0, 9).default(0),
-    cabin: z.enum(Object.values(CabinClass) as [CabinClass, ...CabinClass[]]).default('ECONOMY'),
+    adults: z.coerce.number().int().min(0).max(9),
+    children: z.coerce.number().int().min(0).max(8),
+    infants: z.coerce.number().int().min(0).max(4),
   })
-  .superRefine((search, ctx) => {
-    search.legs.forEach((leg, i) => {
-      if (leg.from === leg.to) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['legs', i, 'to'],
-          message: 'From and To must be different',
-        });
-      }
-      const previous = search.legs[i - 1];
-      if (previous && leg.date < previous.date) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['legs', i, 'date'],
-          message: 'Flights must be in date order',
-        });
-      }
-    });
-    if (search.tripType !== 'MULTI_CITY' && search.legs.length !== 1) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['legs'],
-        message: 'Add one flight for one-way or round trips',
-      });
-    }
-    if (search.tripType === 'MULTI_CITY' && search.legs.length < 2) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['legs'],
-        message: 'Add at least two flights for a multi-city trip',
-      });
-    }
-    if (search.tripType === 'ROUND_TRIP') {
-      const first = search.legs[0];
-      if (!search.returnDate) {
-        ctx.addIssue({ code: 'custom', path: ['returnDate'], message: 'Choose a return date' });
-      } else if (first && search.returnDate < first.date) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['returnDate'],
-          message: 'Return must be on or after departure',
-        });
-      }
-    }
-    if (search.adults + search.children > 9) {
+  .superRefine((p, ctx) => {
+    if (p.adults < 1)
+      ctx.addIssue({ code: 'custom', path: ['adults'], message: FLIGHT_SEARCH_MESSAGES.adults });
+    if (p.adults + p.children > 9)
       ctx.addIssue({
         code: 'custom',
         path: ['children'],
-        message: 'Up to 9 travellers per booking (excluding infants)',
+        message: FLIGHT_SEARCH_MESSAGES.maxTravellers,
       });
-    }
-    if (search.infants > search.adults) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['infants'],
-        message: 'Each infant must travel with an adult',
-      });
-    }
+    if (p.infants > p.adults)
+      ctx.addIssue({ code: 'custom', path: ['infants'], message: FLIGHT_SEARCH_MESSAGES.infants });
   });
+
+/** Flight search (one-way or round trip), validated against `now` ("today" is IST). */
+export function flightSearchSchemaAt(now: () => Date = () => new Date()) {
+  const inWindow = (d: string) => {
+    const today = todayInIst(now());
+    return d >= today && daysBetween(today, d) <= FLIGHT_MAX_DAYS_AHEAD;
+  };
+  return z
+    .strictObject({
+      from: iata,
+      to: iata,
+      date: isoDateSchema.refine(inWindow, FLIGHT_SEARCH_MESSAGES.dateWindow),
+      returnDate: z
+        .union([z.literal('').transform(() => undefined), isoDateSchema])
+        .optional()
+        .refine((d) => d === undefined || inWindow(d), FLIGHT_SEARCH_MESSAGES.dateWindow),
+      adults: z.coerce.number().int().min(0).max(9).default(1),
+      children: z.coerce.number().int().min(0).max(8).default(0),
+      infants: z.coerce.number().int().min(0).max(4).default(0),
+      cabin: z.enum(Object.values(CabinClass) as [CabinClass, ...CabinClass[]]).default('ECONOMY'),
+    })
+    .superRefine((s, ctx) => {
+      if (s.from === s.to)
+        ctx.addIssue({ code: 'custom', path: ['to'], message: FLIGHT_SEARCH_MESSAGES.sameAirport });
+      if (s.returnDate !== undefined && s.returnDate < s.date)
+        ctx.addIssue({
+          code: 'custom',
+          path: ['returnDate'],
+          message: FLIGHT_SEARCH_MESSAGES.returnDate,
+        });
+      const pax = flightPaxSchema.safeParse(s);
+      if (!pax.success)
+        for (const issue of pax.error.issues) ctx.addIssue({ ...issue, code: 'custom' });
+    });
+}
+export const flightSearchSchema = flightSearchSchemaAt();
 export type FlightSearch = z.output<typeof flightSearchSchema>;
 
 // ───────────────────────────── Ground transport ─────────────────────────────
@@ -293,33 +293,14 @@ export type ParcelQuote = z.output<typeof parcelQuoteSchema>;
  */
 export const DEFAULT_LEAD_DAYS = { flight: 14, bus: 1, train: 3, hotel: 7 } as const;
 
-/**
- * Raw flight search input from URL query parameters (web result pages and GET /api/flights/search):
- * one way / round trip use from, to, date, return; multi-city uses legs=PNQ.DEL.2026-10-25,….
- * The result still has to go through `flightSearchSchema`.
- */
+/** Raw flight search input from URL query parameters (results page and GET /api/flights/search). */
 export function flightSearchInputFromParams(params: { get(name: string): string | null }) {
-  const tripType = params.get('trip') ?? 'ONE_WAY';
-  const legs =
-    tripType === 'MULTI_CITY'
-      ? (params.get('legs') ?? '')
-          .split(',')
-          .filter(Boolean)
-          .map((leg) => {
-            const [from = '', to = '', date = ''] = leg.split('.');
-            return { from, to, date };
-          })
-      : [
-          {
-            from: params.get('from') ?? '',
-            to: params.get('to') ?? '',
-            date: params.get('date') ?? addDays(todayIso(), DEFAULT_LEAD_DAYS.flight),
-          },
-        ];
+  const returnDate = params.get('returnDate');
   return {
-    tripType,
-    legs,
-    returnDate: params.get('return') ?? undefined,
+    from: params.get('from') ?? '',
+    to: params.get('to') ?? '',
+    date: params.get('date') ?? addDays(todayInIst(), DEFAULT_LEAD_DAYS.flight),
+    ...(returnDate ? { returnDate } : {}),
     adults: params.get('adults') ?? '1',
     children: params.get('children') ?? '0',
     infants: params.get('infants') ?? '0',

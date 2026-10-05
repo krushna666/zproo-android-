@@ -1,10 +1,16 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
-import type { BookingDetails, BookingListItem, BusBookResponse, FlightOffer } from '@zproo/types';
+import type {
+  BookingDetails,
+  BookingListItem,
+  BusBookResponse,
+  FlightBookResponse,
+} from '@zproo/types';
 import type { Redis } from 'ioredis';
 import { OPEN_HOLD_STATUSES, generateBookingReference } from '@zproo/utils';
 import {
   BUS_MESSAGES,
-  passengerAgeIssues,
+  FLIGHT_MESSAGES,
+  flightAgeIssues,
   type BookBusInput,
   type BookFlightInput,
 } from '@zproo/validation';
@@ -28,8 +34,9 @@ import {
 import { localDate } from '../utils/time';
 import type { AuditService, RequestContext } from './audit.service';
 import { busFareBreakdown } from './busPricing';
-import { flightPriceBreakdown, type PaxCounts } from './flightPricing';
-import { clock } from '../lib/testContext';
+import { flightPriceBreakdown } from './flightPricing';
+import { encryptField } from '../lib/crypto';
+import { clock, currentScenario } from '../lib/testContext';
 
 interface BookingServiceDeps {
   prisma: PrismaClient;
@@ -38,6 +45,10 @@ interface BookingServiceDeps {
   audit: AuditService;
   logger: Logger;
   holdMinutes: number;
+  /** Key for passport fields (AES-256-GCM) */
+  piiKey?: Buffer | undefined;
+  /** INTL_FLIGHTS */
+  internationalFlights?: boolean;
   /** Seat locks; optional (the database constraint alone also keeps holds exclusive). */
   redis?: Redis | undefined;
   now?: () => Date;
@@ -50,17 +61,18 @@ export class BookingService {
     this.now = deps.now ?? clock.now;
   }
 
+  /** POST /flights/book — returns `{ bookingRef, status, holdExpiresAt, serverNow, priceBreakdown }`. */
   createFlightBooking(
     userId: string,
     input: BookFlightInput,
     idempotencyKey: string,
     ctx: RequestContext,
-  ): Promise<BookingDetails> {
+  ): Promise<FlightBookResponse> {
     return this.idempotent(
       userId,
       idempotencyKey,
       () => this.newFlightBooking(userId, input, idempotencyKey, ctx),
-      (record) => toBookingDetails(record, this.now()),
+      (record) => toBookResult(record, this.now()),
     );
   }
 
@@ -80,9 +92,13 @@ export class BookingService {
   }
 
   /**
-   * Creates a flight booking awaiting payment: re-prices every offer, checks passengers, then holds
-   * the seats and writes the booking in one transaction. Retrying with the same Idempotency-Key
-   * returns the original booking instead of holding seats twice.
+   * Holds a flight (one-way, or outbound + return) for a booking, in the order the contract
+   * requires:
+   *  1. validate: travellers match the searched passengers, ages on the travel date, infant links
+   *     (schema), the fare belongs to the offer, the return mirrors the outbound;
+   *  2. re-price live → FARE_UNAVAILABLE / PRICE_CHANGED before anything is held;
+   *  3. hold seats for 15 minutes, or the airline's own limit when shorter;
+   *  4. booking (HELD) + passengers (passports encrypted) + flight legs + event, in one transaction.
    */
   private async newFlightBooking(
     userId: string,
@@ -90,36 +106,64 @@ export class BookingService {
     idempotencyKey: string,
     ctx: RequestContext,
   ): Promise<BookingRecord> {
-    const pax = this.countPassengers(input);
-    const offers: FlightOffer[] = [];
-    for (const id of input.offerIds) {
-      const offer = await this.deps.flights.getOffer(id, pax);
-      if (!offer) throw new FareUnavailableError();
-      offers.push(offer);
-    }
-    this.checkItinerary(offers);
-    const travelDate = localDate(
-      new Date(offers[0]?.departureAt ?? ''),
-      offers[0]?.from.timezone ?? 'Asia/Kolkata',
-    );
-    const ageIssues = passengerAgeIssues(input.passengers, travelDate);
-    if (ageIssues.length > 0) {
-      throw new ValidationError(
-        ageIssues.map((i) => ({
-          path: `body.passengers.${i.index}.dateOfBirth`,
-          message: i.message,
-        })),
-      );
-    }
+    const outbound = await this.flightQuote(input.offerId, input.fareId, 'fareId');
+    const inbound =
+      input.returnOfferId && input.returnFareId
+        ? await this.flightQuote(input.returnOfferId, input.returnFareId, 'returnFareId')
+        : null;
+    const legs = inbound ? [outbound, inbound] : [outbound];
+    const pax = outbound.pax;
 
-    const price = flightPriceBreakdown(offers, pax);
-    if (price.totalPaise !== input.expectedTotalPaise)
-      throw new PriceChangedError(input.expectedTotalPaise, price.totalPaise);
+    // 1. Validation that needs the offer.
+    const issues: { path: string; message: string }[] = [];
+    if (
+      inbound &&
+      (inbound.from !== outbound.to ||
+        inbound.to !== outbound.from ||
+        inbound.date < outbound.date ||
+        inbound.offer.cabin !== outbound.offer.cabin ||
+        JSON.stringify(inbound.pax) !== JSON.stringify(pax))
+    ) {
+      issues.push({ path: 'body.returnOfferId', message: 'Choose a return flight for this trip' });
+    }
+    const count = (t: string) => input.travellers.filter((p) => p.type === t).length;
+    if (
+      count('ADULT') !== pax.adults ||
+      count('CHILD') !== pax.children ||
+      count('INFANT') !== pax.infants
+    ) {
+      issues.push({ path: 'body.travellers', message: 'Travellers must match your search' });
+    }
+    for (const issue of flightAgeIssues(
+      input.travellers,
+      outbound.date,
+      localDate(this.now(), 'Asia/Kolkata'),
+    ))
+      issues.push({ path: `body.travellers.${issue.index}.dob`, message: issue.message });
+    if (legs.some((l) => l.international) && !this.deps.internationalFlights)
+      issues.push({ path: 'body.offerId', message: 'International flights are coming soon' });
+    input.travellers.forEach((t, i) => {
+      if (t.passport && t.passport.expiry <= (inbound ?? outbound).date)
+        issues.push({
+          path: `body.travellers.${i}.passport.expiry`,
+          message: FLIGHT_MESSAGES.passportExpiry,
+        });
+    });
+    if (issues.length > 0) throw new ValidationError(issues);
 
-    const seats = pax.adults + pax.children; // infants travel on a lap
+    // 2. Live price; the browser's figure is only compared.
+    const fares = legs.map((l) => l.fare);
+    const price = flightPriceBreakdown(fares, pax);
+    if (price.totalPaise !== input.expectedTotal)
+      throw new PriceChangedError(input.expectedTotal, price.totalPaise);
+
+    // 3–4. Hold and write.
+    const holdMinutes = Math.min(this.deps.holdMinutes, ...legs.map((l) => l.holdLimitMinutes));
+    const holdExpiresAt = new Date(this.now().getTime() + holdMinutes * 60_000);
+    const key = this.deps.piiKey;
+    const scenario = currentScenario();
     return this.createHeld(userId, 'FLIGHT', ctx, async (reference, tx) => {
-      for (const offer of offers) await this.deps.flights.hold(offer.id, seats, tx);
-      return new BookingRepository(tx).create({
+      const created = await new BookingRepository(tx).create({
         reference,
         userId,
         serviceType: 'FLIGHT',
@@ -130,43 +174,69 @@ export class BookingService {
         feeAmountPaise: price.feesPaise,
         totalAmountPaise: price.totalPaise,
         contactEmail: input.contact.email,
-        contactPhone: input.contact.phone,
-        travelDate: new Date(`${travelDate}T00:00:00Z`),
-        holdExpiresAt: new Date(this.now().getTime() + this.deps.holdMinutes * 60_000),
+        contactPhone: input.contact.mobile,
+        travelDate: new Date(`${outbound.date}T00:00:00Z`),
+        holdExpiresAt,
         idempotencyKey,
-        metadata: { demo: this.deps.flights.isDemo, provider: this.deps.flights.name },
+        metadata: {
+          demo: this.deps.flights.isDemo,
+          provider: this.deps.flights.name,
+          ...(input.gstDetails && { gst: input.gstDetails }),
+          // Test builds only: lets the mock airline answer "pending"/"failed" when issuing.
+          ...(scenario === 'issue_pending' || scenario === 'issue_failed'
+            ? { issueScenario: scenario }
+            : {}),
+        },
         passengers: {
-          create: input.passengers.map((p, i) => ({
+          create: input.travellers.map((t, i) => ({
             sequence: i + 1,
-            type: p.type,
-            title: p.title,
-            firstName: p.firstName,
-            lastName: p.lastName,
-            dateOfBirth: p.dateOfBirth ? new Date(`${p.dateOfBirth}T00:00:00Z`) : null,
-            gender: p.gender,
+            type: t.type,
+            title: t.title,
+            firstName: t.firstName,
+            lastName: t.lastName,
+            dateOfBirth: t.dob ? new Date(`${t.dob}T00:00:00Z`) : null,
+            gender: t.gender,
+            travellingWith: t.infantOfIndex === undefined ? null : t.infantOfIndex + 1,
+            ...(t.passport && key
+              ? {
+                  passportNumberEnc: encryptField(t.passport.number, key),
+                  passportExpiryEnc: encryptField(t.passport.expiry, key),
+                  nationality: t.passport.nationality,
+                }
+              : {}),
           })),
         },
         flights: {
-          create: offers.map((offer, i) => {
-            const service = this.mockServiceKey(offer.id);
-            return {
-              sequence: i + 1,
-              provider: offer.provider,
-              offerId: offer.id,
-              flightId: service?.flightId ?? null,
-              serviceDate: service ? new Date(`${service.date}T00:00:00Z`) : null,
-              cabin: offer.cabin,
-              seats,
-              originCode: offer.from.code,
-              destinationCode: offer.to.code,
-              departureAt: new Date(offer.departureAt),
-              arrivalAt: new Date(offer.arrivalAt),
-              offer: offer as unknown as Prisma.InputJsonValue,
-            };
-          }),
+          create: legs.map((leg, i) => ({
+            sequence: i + 1,
+            provider: this.deps.flights.name,
+            offerId: leg.offer.offerId,
+            itineraryKey: leg.itineraryKey,
+            fareId: leg.fare.fareId,
+            fareFamily: leg.fare.name,
+            cabin: leg.offer.cabin,
+            seats: pax.adults + pax.children,
+            originCode: leg.from,
+            destinationCode: leg.to,
+            departureAt: leg.departureAt,
+            arrivalAt: leg.arrivalAt,
+            offer: leg.offer as unknown as Prisma.InputJsonValue,
+            fare: leg.fare as unknown as Prisma.InputJsonValue,
+          })),
         },
       });
+      for (const leg of legs) await this.deps.flights.hold(leg, created.id, holdExpiresAt, tx);
+      return created;
     });
+  }
+
+  /** A live quote for an offer + fare, or the right error (FARE_UNAVAILABLE / bad fare). */
+  private async flightQuote(offerId: string, fareId: string, field: 'fareId' | 'returnFareId') {
+    const quote = await this.deps.flights.quote(offerId, fareId);
+    if (quote === null) throw new FareUnavailableError();
+    if (quote === 'BAD_FARE')
+      throw new ValidationError([{ path: `body.${field}`, message: 'Invalid fare' }]);
+    return quote;
   }
 
   /**
@@ -419,47 +489,11 @@ export class BookingService {
 
   /** Returns a booking's seats to the supplier (expiry, failed issue, cancellation). */
   async releaseInventory(booking: BookingRecord, tx: Prisma.TransactionClient): Promise<void> {
-    for (const leg of booking.flights) await this.deps.flights.release(leg.offerId, leg.seats, tx);
+    if (booking.flights.length > 0) await this.deps.flights.release(booking.id, tx);
     if (booking.bus) await this.deps.buses.release(booking.id, tx);
   }
 
   // ───────── internals ─────────
-
-  private countPassengers(input: BookFlightInput): PaxCounts {
-    const count = (t: string) => input.passengers.filter((p) => p.type === t).length;
-    const pax = { adults: count('ADULT'), children: count('CHILD'), infants: count('INFANT') };
-    const issues = [];
-    if (pax.adults < 1)
-      issues.push({ path: 'body.passengers', message: 'At least one adult must travel' });
-    if (pax.infants > pax.adults)
-      issues.push({ path: 'body.passengers', message: 'Each infant must travel with an adult' });
-    if (pax.adults + pax.children > 9)
-      issues.push({
-        path: 'body.passengers',
-        message: 'Up to 9 travellers per booking (excluding infants)',
-      });
-    if (issues.length > 0) throw new ValidationError(issues);
-    return pax;
-  }
-
-  private checkItinerary(offers: FlightOffer[]) {
-    offers.forEach((offer, i) => {
-      const previous = offers[i - 1];
-      if (previous && Date.parse(offer.departureAt) < Date.parse(previous.arrivalAt)) {
-        throw new ValidationError([
-          {
-            path: `body.offerIds.${i}`,
-            message: 'This flight departs before the previous one lands',
-          },
-        ]);
-      }
-    });
-  }
-
-  private mockServiceKey(offerId: string): { flightId: string; date: string } | null {
-    const m = /^mk_([a-z0-9]+)_(\d{4})(\d{2})(\d{2})_[EPBF]$/.exec(offerId);
-    return m ? { flightId: m[1] as string, date: `${m[2]}-${m[3]}-${m[4]}` } : null;
-  }
 
   /**
    * Retries with the same Idempotency-Key return the original booking. Checked before creating

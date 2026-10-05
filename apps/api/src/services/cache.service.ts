@@ -1,3 +1,4 @@
+import { currentScenario } from '../lib/testContext';
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 
@@ -12,6 +13,8 @@ export class CacheService {
   ) {}
 
   async getOrSet<T>(key: string, ttlSeconds: number, load: () => Promise<T>): Promise<T> {
+    // Test scenarios (X-Mock-Scenario) must neither read nor pollute the shared cache.
+    if (currentScenario()) return load();
     const cached = await this.get<T>(key);
     if (cached !== undefined) return cached;
     const value = await load();

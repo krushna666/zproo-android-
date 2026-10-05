@@ -1,65 +1,55 @@
-import type { CabinClass, Prisma } from '@prisma/client';
 import type { Db } from './db';
 
-export const scheduleInclude = {
-  airline: true,
-  origin: true,
-  destination: true,
-  segments: {
-    include: { airline: true, origin: true, destination: true },
-    orderBy: { sequence: 'asc' },
-  },
-} satisfies Prisma.FlightInclude;
-
-export type FlightSchedule = Prisma.FlightGetPayload<{ include: typeof scheduleInclude }>;
-
+/** Seats held or sold through ZPROO GO on generated (mock) itineraries. */
 export class FlightRepository {
   constructor(private readonly db: Db) {}
 
-  findRoute(fromCode: string, toCode: string, weekday: number) {
-    return this.db.flight.findMany({
+  /** Seats taken per itinerary: paid holds and unpaid holds that have not lapsed. */
+  async heldSeats(itineraryKeys: string[], now: Date): Promise<Map<string, number>> {
+    if (itineraryKeys.length === 0) return new Map();
+    const rows = await this.db.flightSeatHold.groupBy({
+      by: ['itineraryKey'],
       where: {
+        itineraryKey: { in: itineraryKeys },
         active: true,
-        origin: { code: fromCode },
-        destination: { code: toCode },
-        daysOfWeek: { has: weekday },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
-      include: scheduleInclude,
+      _sum: { seats: true },
     });
+    return new Map(rows.map((r) => [r.itineraryKey, r._sum.seats ?? 0]));
   }
 
-  findById(id: string) {
-    return this.db.flight.findFirst({ where: { id, active: true }, include: scheduleInclude });
-  }
-
-  soldSeats(flightIds: string[], date: Date, cabin: CabinClass) {
-    return this.db.flightInventory.findMany({
-      where: { flightId: { in: flightIds }, date, cabin },
-    });
-  }
-
-  /** Creates the inventory row on first use, then takes seats only if enough remain (atomic). */
-  async takeSeats(
-    flightId: string,
-    date: Date,
-    cabin: CabinClass,
-    capacity: number,
+  /**
+   * Holds `seats` if the itinerary still has them. A transaction-scoped advisory lock per
+   * itinerary serialises concurrent holds, so the last seats can never be sold twice.
+   * Must run inside a transaction.
+   */
+  async hold(
+    itineraryKey: string,
     seats: number,
+    capacity: number,
+    bookingId: string,
+    expiresAt: Date,
+    now: Date,
   ): Promise<boolean> {
-    // ON CONFLICT DO NOTHING: two first bookings on the same service can't both try to create it.
-    await this.db.$executeRaw`
-      INSERT INTO flight_inventory (id, flight_id, date, cabin, capacity, sold)
-      VALUES (gen_random_uuid()::text, ${flightId}, ${date}, ${cabin}::"CabinClass", ${capacity}, 0)
-      ON CONFLICT (flight_id, date, cabin) DO NOTHING`;
-    const updated = await this.db.$executeRaw`
-      UPDATE flight_inventory SET sold = sold + ${seats}
-      WHERE flight_id = ${flightId} AND date = ${date} AND cabin = ${cabin}::"CabinClass" AND sold + ${seats} <= capacity`;
-    return updated === 1;
+    await this.db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`flight:${itineraryKey}`}))`;
+    const taken = (await this.heldSeats([itineraryKey], now)).get(itineraryKey) ?? 0;
+    if (taken + seats > capacity) return false;
+    await this.db.flightSeatHold.create({ data: { itineraryKey, seats, bookingId, expiresAt } });
+    return true;
   }
 
-  async returnSeats(flightId: string, date: Date, cabin: CabinClass, seats: number): Promise<void> {
-    await this.db.$executeRaw`
-      UPDATE flight_inventory SET sold = GREATEST(sold - ${seats}, 0)
-      WHERE flight_id = ${flightId} AND date = ${date} AND cabin = ${cabin}::"CabinClass"`;
+  release(bookingId: string) {
+    return this.db.flightSeatHold.updateMany({
+      where: { bookingId, active: true },
+      data: { active: null },
+    });
+  }
+
+  markPaid(bookingId: string) {
+    return this.db.flightSeatHold.updateMany({
+      where: { bookingId, active: true },
+      data: { expiresAt: null },
+    });
   }
 }

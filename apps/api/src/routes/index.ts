@@ -49,7 +49,7 @@ export function createApiRouter(
   router.use(
     '/flights',
     flightRoutes(
-      createFlightsController(services.flights, services.bookings),
+      createFlightsController(services.flights, services.bookings, services.cancellations),
       requireUser,
       services.rbac,
       services.idempotency,
@@ -74,6 +74,7 @@ export function createApiRouter(
         services.tickets,
         services.rbac,
         services.cancellations,
+        services.payments,
       ),
       requireUser,
       services.rbac,

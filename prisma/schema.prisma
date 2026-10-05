@@ -334,113 +334,6 @@ model SystemSetting {
 
 // ────────────────────────────── Flights ──────────────────────────────
 
-model Airline {
-  id        String   @id @default(cuid())
-  /// IATA designator, e.g. "SF"
-  code      String   @unique
-  name      String
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  flights  Flight[]
-  segments FlightSegment[]
-
-  @@map("airlines")
-}
-
-model Airport {
-  id        String @id @default(cuid())
-  /// IATA code, e.g. "PNQ"
-  code      String @unique
-  name      String
-  city      String
-  country   String
-  /// IANA time zone, e.g. "Asia/Kolkata" — schedules are local to the airport.
-  timezone  String
-  latitude  Float?
-  longitude Float?
-
-  departures        Flight[]        @relation("FlightOrigin")
-  arrivals          Flight[]        @relation("FlightDestination")
-  segmentDepartures FlightSegment[] @relation("SegmentOrigin")
-  segmentArrivals   FlightSegment[] @relation("SegmentDestination")
-
-  @@map("airports")
-}
-
-/// A scheduled service in the development (mock) flight provider. Real providers return
-/// offers directly; this table is the mock's timetable.
-model Flight {
-  id            String   @id @default(cuid())
-  airlineId     String   @map("airline_id")
-  /// Marketing flight number of the journey, e.g. "SF 2135"
-  flightNumber  String   @map("flight_number")
-  originId      String   @map("origin_id")
-  destinationId String   @map("destination_id")
-  /// ISO weekdays the service operates (1 = Monday … 7 = Sunday)
-  daysOfWeek    Int[]    @map("days_of_week")
-  /// Economy base fare per adult in paise before demand pricing
-  baseFarePaise Int      @map("base_fare_paise")
-  seatsEconomy  Int      @map("seats_economy")
-  seatsPremium  Int      @default(0) @map("seats_premium")
-  seatsBusiness Int      @default(0) @map("seats_business")
-  seatsFirst    Int      @default(0) @map("seats_first")
-  aircraft      String
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-
-  airline     Airline           @relation(fields: [airlineId], references: [id])
-  origin      Airport           @relation("FlightOrigin", fields: [originId], references: [id])
-  destination Airport           @relation("FlightDestination", fields: [destinationId], references: [id])
-  segments    FlightSegment[]
-  inventory   FlightInventory[]
-
-  @@unique([airlineId, flightNumber])
-  @@index([originId, destinationId, active])
-  @@map("flights")
-}
-
-/// One take-off and landing of a scheduled service. Non-stop services have one segment.
-model FlightSegment {
-  id              String @id @default(cuid())
-  flightId        String @map("flight_id")
-  sequence        Int
-  airlineId       String @map("airline_id")
-  flightNumber    String @map("flight_number")
-  originId        String @map("origin_id")
-  destinationId   String @map("destination_id")
-  /// Local departure time at the segment origin, "HH:MM"
-  departureTime   String @map("departure_time")
-  /// Whole days after the journey's first departure date (0 = same day)
-  dayOffset       Int    @default(0) @map("day_offset")
-  durationMinutes Int    @map("duration_minutes")
-
-  flight      Flight  @relation(fields: [flightId], references: [id], onDelete: Cascade)
-  airline     Airline @relation(fields: [airlineId], references: [id])
-  origin      Airport @relation("SegmentOrigin", fields: [originId], references: [id])
-  destination Airport @relation("SegmentDestination", fields: [destinationId], references: [id])
-
-  @@unique([flightId, sequence])
-  @@map("flight_segments")
-}
-
-/// Seats sold per service, date and cabin. Updated with a conditional increment so two
-/// bookings can never oversell the last seats.
-model FlightInventory {
-  id       String     @id @default(cuid())
-  flightId String     @map("flight_id")
-  date     DateTime   @db.Date
-  cabin    CabinClass
-  capacity Int
-  sold     Int        @default(0)
-
-  flight Flight @relation(fields: [flightId], references: [id], onDelete: Cascade)
-
-  @@unique([flightId, date, cabin])
-  @@map("flight_inventory")
-}
-
 // ────────────────────────────── Bookings ─────────────────────────────
 
 model Booking {
@@ -475,15 +368,16 @@ model Booking {
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
-  user       User               @relation(fields: [userId], references: [id])
-  coupon     Coupon?            @relation(fields: [couponId], references: [id], onDelete: SetNull)
-  redemption CouponRedemption?
-  passengers BookingPassenger[]
-  flights    FlightBooking[]
-  bus        BusBooking?
-  busSeats   BusSeatHold[]
-  payments   Payment[]
-  events     BookingEvent[]
+  user        User               @relation(fields: [userId], references: [id])
+  coupon      Coupon?            @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  redemption  CouponRedemption?
+  passengers  BookingPassenger[]
+  flights     FlightBooking[]
+  bus         BusBooking?
+  busSeats    BusSeatHold[]
+  flightSeats FlightSeatHold[]
+  payments    Payment[]
+  events      BookingEvent[]
 
   @@unique([userId, idempotencyKey])
   @@index([userId, createdAt])
@@ -511,54 +405,98 @@ model BookingEvent {
 }
 
 model BookingPassenger {
-  id          String        @id @default(cuid())
-  bookingId   String        @map("booking_id")
-  sequence    Int
-  type        PassengerType
-  title       String
-  firstName   String        @map("first_name")
-  lastName    String        @map("last_name")
-  dateOfBirth DateTime?     @map("date_of_birth") @db.Date
+  id                String        @id @default(cuid())
+  bookingId         String        @map("booking_id")
+  sequence          Int
+  type              PassengerType
+  title             String
+  firstName         String        @map("first_name")
+  lastName          String        @map("last_name")
+  dateOfBirth       DateTime?     @map("date_of_birth") @db.Date
   /// Age in years on the travel date (buses ask for age rather than date of birth).
-  age         Int?
-  gender      Gender
+  age               Int?
+  gender            Gender
   /// Bus/train seat assigned to this traveller.
-  seatNumber  String?       @map("seat_number")
+  seatNumber        String?       @map("seat_number")
+  /// Infants: sequence of the adult they travel with.
+  travellingWith    Int?          @map("travelling_with")
+  /// Passport (international flights): AES-256-GCM ciphertext, never plaintext.
+  passportNumberEnc String?       @map("passport_number_enc")
+  passportExpiryEnc String?       @map("passport_expiry_enc")
+  nationality       String?       @db.Char(2)
 
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  booking Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  tickets FlightTicket[]
 
   @@unique([bookingId, sequence])
   @@map("booking_passengers")
 }
 
-/// One flown journey (leg) of a flight booking, with a snapshot of the offer as sold.
+/// One direction of a flight booking (outbound = 1, return = 2), with the offer and fare as sold.
 model FlightBooking {
   id              String     @id @default(cuid())
   bookingId       String     @map("booking_id")
   sequence        Int
   provider        String
   offerId         String     @map("offer_id")
-  /// Mock provider only: the scheduled service and date whose inventory was used.
-  flightId        String?    @map("flight_id")
-  serviceDate     DateTime?  @map("service_date") @db.Date
+  /// Itinerary the seats are held on (mock provider)
+  itineraryKey    String     @map("itinerary_key")
+  fareId          String     @map("fare_id")
+  fareFamily      String     @map("fare_family")
   cabin           CabinClass
   seats           Int
   originCode      String     @map("origin_code")
   destinationCode String     @map("destination_code")
   departureAt     DateTime   @map("departure_at")
   arrivalAt       DateTime   @map("arrival_at")
-  /// Offer as sold: airline, segments, fares, baggage, fare rules.
+  /// Offer as sold: carrier, slices (segments, layovers), seats left.
   offer           Json
-  /// Airline booking reference, set on confirmation.
+  /// Fare family as sold: per-passenger fares, baggage, fees.
+  fare            Json
+  /// Airline booking reference (PNR), set on confirmation.
   pnr             String?
-  /// [{ passengerId, ticketNumber }], set on confirmation.
-  tickets         Json?
+  /// The airline's own record locator, when it differs from the PNR.
+  airlineLocator  String?    @map("airline_locator")
+
+  booking Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  tickets FlightTicket[]
+
+  @@unique([bookingId, sequence])
+  @@map("flight_bookings")
+}
+
+/// One e-ticket: per traveller and direction.
+model FlightTicket {
+  id              String @id @default(cuid())
+  flightBookingId String @map("flight_booking_id")
+  passengerId     String @map("passenger_id")
+  ticketNumber    String @unique @map("ticket_number")
+  /// The direction it covers, e.g. "PNQ-DEL"
+  segmentKey      String @map("segment_key")
+
+  flightBooking FlightBooking    @relation(fields: [flightBookingId], references: [id], onDelete: Cascade)
+  passenger     BookingPassenger @relation(fields: [passengerId], references: [id], onDelete: Cascade)
+
+  @@unique([flightBookingId, passengerId])
+  @@map("flight_tickets")
+}
+
+/// Seats held or sold through ZPROO GO on a mock itinerary. Counted against the airline's seats
+/// under a per-itinerary advisory lock; released holds set `active` to NULL.
+model FlightSeatHold {
+  id           String    @id @default(cuid())
+  itineraryKey String    @map("itinerary_key")
+  bookingId    String    @map("booking_id")
+  seats        Int
+  /// Unpaid holds lapse at this time; null once paid.
+  expiresAt    DateTime? @map("expires_at")
+  active       Boolean?  @default(true)
+  createdAt    DateTime  @default(now()) @map("created_at")
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
-  @@unique([bookingId, sequence])
-  @@index([flightId, serviceDate])
-  @@map("flight_bookings")
+  @@index([itineraryKey, active])
+  @@map("flight_seat_holds")
 }
 
 // ────────────────────────────── Buses ─────────────────────────────

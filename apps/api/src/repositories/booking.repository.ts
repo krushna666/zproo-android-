@@ -14,7 +14,7 @@ export interface MoveOptions {
 
 export const bookingInclude = {
   passengers: { orderBy: { sequence: 'asc' } },
-  flights: { orderBy: { sequence: 'asc' } },
+  flights: { orderBy: { sequence: 'asc' }, include: { tickets: true } },
   bus: true,
   coupon: { select: { code: true } },
 } satisfies Prisma.BookingInclude;
@@ -111,11 +111,30 @@ export class BookingRepository {
     return this.db.busBooking.update({ where: { bookingId }, data: { pnr } });
   }
 
+  /** The airline's PNR and one e-ticket per traveller for a direction. */
   setFlightTickets(
     flightBookingId: string,
     pnr: string,
-    tickets: { passengerId: string; ticketNumber: string }[],
+    tickets: { passengerId: string; ticketNumber: string; segmentKey: string }[],
   ) {
-    return this.db.flightBooking.update({ where: { id: flightBookingId }, data: { pnr, tickets } });
+    return this.db.flightBooking.update({
+      where: { id: flightBookingId },
+      data: { pnr, tickets: { create: tickets } },
+    });
+  }
+
+  /** Counts a ticketing attempt (for airlines that answer "pending"); returns the new count. */
+  async countIssueAttempt(bookingId: string): Promise<number> {
+    const booking = await this.db.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      select: { metadata: true },
+    });
+    const metadata = (booking.metadata ?? {}) as Record<string, unknown>;
+    const attempt = (typeof metadata.issueAttempts === 'number' ? metadata.issueAttempts : 0) + 1;
+    await this.db.booking.update({
+      where: { id: bookingId },
+      data: { metadata: { ...metadata, issueAttempts: attempt } },
+    });
+    return attempt;
   }
 }

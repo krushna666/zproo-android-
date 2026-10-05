@@ -1,5 +1,6 @@
 import { BRAND } from '@zproo/config';
-import type { BookingDetails, BusBookingInfo, FlightOffer } from '@zproo/types';
+import { findMockAirline } from '@zproo/catalog';
+import type { BookingDetails, BusBookingInfo, FlightBookingLeg } from '@zproo/types';
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 
@@ -146,8 +147,7 @@ export class TicketService {
       .text(pdfText(booking.contact.email), left + 340, y + 27);
     y += 50;
 
-    for (const leg of booking.flights)
-      y = this.flightBlock(doc, leg.offer, leg.pnr, y, left, width);
+    for (const leg of booking.flights) y = this.flightBlock(doc, leg, y, left, width);
     if (bus) y = this.busBlock(doc, bus, y, left, width);
 
     // Passengers
@@ -241,7 +241,12 @@ export class TicketService {
         ]
       : [
           'Carry a valid government photo ID (passport for international travel). Names must match the ID.',
-          'Check-in closes 45 minutes before departure for domestic flights and 60 minutes for international flights.',
+          'Web check-in opens 48 hours and closes 60 minutes before departure: check in on the airline website or app to save time at the airport.',
+          'Check-in counters close 45 minutes before departure for domestic flights and 60 minutes for international flights.',
+          ...[...new Set(booking.flights.map((f) => f.offer.carrier.code))].map((code) => {
+            const airline = findMockAirline(code);
+            return `${airline?.name ?? code} helpline: ${airline?.phone ?? 'see the airline website'}.`;
+          }),
           'Cancellations and changes follow the airline fare rules shown at booking. Manage your booking in My Bookings.',
         ];
     doc.font('Helvetica').fontSize(9).fillColor(DARK);
@@ -365,31 +370,39 @@ export class TicketService {
     return y + 20;
   }
 
+  /** One direction: every segment (flight no., terminals, times), layovers, fare and PNR. */
   private flightBlock(
     doc: PDFKit.PDFDocument,
-    offer: FlightOffer,
-    pnr: string | null,
+    leg: FlightBookingLeg,
     y: number,
     left: number,
     width: number,
   ): number {
-    const height = 96 + (offer.segments.length - 1) * 22;
+    const slice = leg.offer.slices[0];
+    const segments = slice?.segments ?? [];
+    const height = 58 + segments.length * 44 + (slice?.layovers.length ?? 0) * 14;
     if (y + height > doc.page.height - 60) {
       doc.addPage();
       y = 40;
     }
     doc.roundedRect(left, y, width, height, 8).strokeColor(BORDER).lineWidth(1).stroke();
+    const first = segments[0];
+    const last = segments.at(-1);
     doc
       .font('Helvetica-Bold')
       .fontSize(11)
       .fillColor(DARK)
-      .text(`${offer.airline.name}  ·  ${offer.flightNumber}`, left + 14, y + 12);
+      .text(
+        pdfText(`${first?.from ?? ''} → ${last?.to ?? ''}  ·  ${leg.offer.carrier.name}`),
+        left + 14,
+        y + 12,
+      );
     doc
       .font('Helvetica')
       .fontSize(9)
       .fillColor(MUTED)
       .text(
-        `${date(offer.departureAt, offer.from.timezone)}  ·  ${offer.cabin.replace('_', ' ')} (${offer.fareFamily})`,
+        `${(first?.departure ?? '').slice(0, 10)}  ·  ${leg.offer.cabin.replace('_', ' ')} (${leg.fare.name})  ·  ${slice && slice.stops === 0 ? 'Non-stop' : `${slice?.stops ?? 0} stop`}  ·  ${duration(slice?.durationMin ?? 0)}`,
         left + 14,
         y + 27,
       );
@@ -397,51 +410,45 @@ export class TicketService {
       .font('Helvetica-Bold')
       .fontSize(10)
       .fillColor(RED)
-      .text(`PNR ${pnr ?? 'pending'}`, left, y + 12, { width: width - 14, align: 'right' });
+      .text(`PNR ${leg.pnr ?? 'pending'}`, left, y + 12, { width: width - 14, align: 'right' });
 
-    const row = y + 46;
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(20)
-      .fillColor(DARK)
-      .text(time(offer.departureAt, offer.from.timezone), left + 14, row);
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .fillColor(MUTED)
-      .text(`${offer.from.code} · ${offer.from.city}`, left + 14, row + 24);
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .fillColor(MUTED)
-      .text(
-        `${duration(offer.durationMinutes)} · ${offer.stops === 0 ? 'Non-stop' : `${offer.stops} stop via ${offer.layovers.map((l) => l.airport.code).join(', ')}`}`,
-        left + 150,
-        row + 6,
-        { width: 200, align: 'center' },
-      );
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(20)
-      .fillColor(DARK)
-      .text(time(offer.arrivalAt, offer.to.timezone), left, row, {
-        width: width - 14,
-        align: 'right',
-      });
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .fillColor(MUTED)
-      .text(`${offer.to.code} · ${offer.to.city}`, left, row + 24, {
-        width: width - 14,
-        align: 'right',
-      });
+    let row = y + 46;
+    segments.forEach((seg, i) => {
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(10)
+        .fillColor(DARK)
+        .text(pdfText(seg.flightNo), left + 14, row)
+        .text(`${seg.departure.slice(11, 16)}  ${seg.from}`, left + 90, row)
+        .text(`${seg.arrival.slice(11, 16)}  ${seg.to}`, left + 280, row);
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor(MUTED)
+        .text(pdfText(seg.aircraft), left + 14, row + 14)
+        .text(`Terminal ${seg.terminalFrom}`, left + 90, row + 14)
+        .text(`Terminal ${seg.terminalTo}  ·  ${duration(seg.durationMin)}`, left + 280, row + 14);
+      row += 32;
+      const layover = slice?.layovers[i];
+      if (layover && i < segments.length - 1) {
+        doc
+          .font('Helvetica')
+          .fontSize(8)
+          .fillColor(MUTED)
+          .text(
+            `Layover ${duration(layover.durationMin)} at ${layover.airport}${layover.changeOfTerminal ? ' · change of terminal' : ''}${layover.selfTransfer ? ' · self-transfer: collect bags and check in again' : ''}`,
+            left + 90,
+            row,
+          );
+        row += 14;
+      }
+    });
     doc
       .font('Helvetica')
       .fontSize(8)
       .fillColor(MUTED)
       .text(
-        `Baggage: cabin ${offer.baggage.cabinKg} kg, check-in ${offer.baggage.checkInKg} kg per adult/child`,
+        `Baggage: cabin ${leg.fare.cabinBaggageKg} kg, check-in ${leg.fare.checkinBaggageKg} kg per adult/child`,
         left + 14,
         y + height - 16,
       );

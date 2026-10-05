@@ -3,8 +3,8 @@ import {
   ageOn,
   bookBusSchema,
   bookFlightSchema,
-  passengerAgeIssues,
-  passengerSchema,
+  flightAgeIssues,
+  flightTravellerSchema,
   passengerTypeForAge,
 } from './booking';
 
@@ -15,57 +15,136 @@ const adult = {
   lastName: 'Sharma',
   gender: 'MALE',
 } as const;
+const msgs = (r: { error?: { issues: { message: string }[] } }) =>
+  r.error?.issues.map((i) => i.message) ?? [];
 
 describe('ages', () => {
-  it('computes whole years on a date', () => {
+  it('computes whole years on a date, including leap-day birthdays', () => {
     expect(ageOn('2014-10-26', '2026-10-25')).toBe(11);
-    expect(ageOn('2014-10-25', '2026-10-25')).toBe(12);
+    expect(ageOn('2014-10-25', '2026-10-25')).toBe(12); // birthday on the travel date
+    expect(ageOn('2024-02-29', '2026-02-28')).toBe(1);
+    expect(ageOn('2024-02-29', '2026-03-01')).toBe(2);
     expect(passengerTypeForAge(1)).toBe('INFANT');
     expect(passengerTypeForAge(2)).toBe('CHILD');
     expect(passengerTypeForAge(12)).toBe('ADULT');
   });
 
-  it('flags passengers whose age band differs on the travel date', () => {
-    const child = { ...adult, type: 'CHILD', title: 'MSTR', dateOfBirth: '2014-10-20' } as const;
-    expect(passengerAgeIssues([child], '2026-10-25')).toEqual([
-      { index: 0, message: 'On the travel date this passenger is an adult (12+)' },
+  it('checks each type on the travel date', () => {
+    const travel = '2026-10-25';
+    const today = '2026-10-05';
+    expect(flightAgeIssues([{ type: 'CHILD', dob: '2014-10-25' }], travel, today)).toEqual([
+      { index: 0, message: 'A child must be 2–11 years old on the travel date' },
     ]);
-    expect(passengerAgeIssues([{ ...child, dateOfBirth: '2016-01-01' }], '2026-10-25')).toEqual([]);
-    expect(
-      passengerAgeIssues([{ ...child, dateOfBirth: '2027-01-01' }], '2026-10-25')[0]?.message,
-    ).toBe('Date of birth must be before the travel date');
+    expect(flightAgeIssues([{ type: 'CHILD', dob: '2014-10-26' }], travel, today)).toEqual([]);
+    expect(flightAgeIssues([{ type: 'ADULT', dob: '2015-01-01' }], travel, today)).toEqual([
+      { index: 0, message: 'An adult must be 12 or older on the travel date' },
+    ]);
+    expect(flightAgeIssues([{ type: 'INFANT', dob: '2024-10-25' }], travel, today)).toEqual([
+      { index: 0, message: 'An infant must be under 2 years old on the travel date' },
+    ]);
+    // Future date of birth, or an infant younger than 7 days on the travel date.
+    expect(flightAgeIssues([{ type: 'INFANT', dob: '2026-10-10' }], travel, today)).toEqual([
+      { index: 0, message: 'Enter a valid date of birth' },
+    ]);
+    expect(flightAgeIssues([{ type: 'INFANT', dob: '2026-10-03' }], '2026-10-08', today)).toEqual([
+      { index: 0, message: 'Enter a valid date of birth' },
+    ]);
+    expect(flightAgeIssues([{ type: 'INFANT', dob: '2026-09-20' }], travel, today)).toEqual([]);
+    expect(flightAgeIssues([{ type: 'ADULT' }], travel, today)).toEqual([]);
   });
 });
 
-describe('passengerSchema', () => {
-  it('accepts an adult without date of birth', () => {
-    expect(passengerSchema.safeParse(adult).success).toBe(true);
+describe('flightTravellerSchema', () => {
+  it('accepts an adult without a date of birth', () => {
+    expect(flightTravellerSchema.safeParse(adult).success).toBe(true);
   });
 
-  it('requires matching titles and dates of birth for children', () => {
-    const result = passengerSchema.safeParse({ ...adult, type: 'CHILD' });
-    expect(result.error?.issues.map((i) => i.message)).toEqual([
+  it('requires a title that fits the type and a date of birth for children', () => {
+    expect(msgs(flightTravellerSchema.safeParse({ ...adult, type: 'CHILD' }))).toEqual([
       'Choose a title',
-      'Date of birth is required for children and infants',
+      'Enter a valid date of birth',
     ]);
   });
 
-  it('requires names in English letters', () => {
+  it('allows letters and spaces only, first name 1–32 and last name 2–32', () => {
+    const name = 'Enter the name as on your government ID';
+    expect(msgs(flightTravellerSchema.safeParse({ ...adult, firstName: 'अमित' }))).toEqual([name]);
+    expect(msgs(flightTravellerSchema.safeParse({ ...adult, lastName: 'S' }))).toEqual([name]);
+    expect(msgs(flightTravellerSchema.safeParse({ ...adult, firstName: "D'Souza" }))).toEqual([
+      name,
+    ]);
     expect(
-      passengerSchema.safeParse({ ...adult, firstName: 'अमित' }).error?.issues[0]?.message,
-    ).toBe('Use English letters as on the ID');
+      flightTravellerSchema.safeParse({ ...adult, firstName: 'A', lastName: 'Ng' }).success,
+    ).toBe(true);
+    expect(msgs(flightTravellerSchema.safeParse({ ...adult, lastName: 'x'.repeat(33) }))).toEqual([
+      name,
+    ]);
   });
 });
 
 describe('bookFlightSchema', () => {
+  const offerId = 'off_PNQDEL_20261020_E_100_03_t1abcd_0123abcd';
+  const valid = {
+    offerId,
+    fareId: 'fare_0a1b2c_flexi',
+    travellers: [adult],
+    contact: { email: 'Amit@Example.com', mobile: '98765 43210' },
+    expectedTotal: 532000,
+  };
+
   it('normalises contact details', () => {
-    const parsed = bookFlightSchema.parse({
-      offerIds: ['mk_abc_20261025_ECONOMY'],
-      passengers: [adult],
-      contact: { email: 'Amit@Example.com', phone: '98765 43210' },
-      expectedTotalPaise: 532000,
+    expect(bookFlightSchema.parse(valid).contact).toEqual({
+      email: 'amit@example.com',
+      mobile: '+919876543210',
     });
-    expect(parsed.contact).toEqual({ email: 'amit@example.com', phone: '+919876543210' });
+  });
+
+  it('links each infant to a different adult', () => {
+    const infant = {
+      type: 'INFANT',
+      title: 'MISS',
+      firstName: 'Aanya',
+      lastName: 'Sharma',
+      gender: 'FEMALE',
+      dob: '2026-01-01',
+    } as const;
+    expect(msgs(bookFlightSchema.safeParse({ ...valid, travellers: [adult, infant] }))).toEqual([
+      'Each infant must travel with an adult',
+    ]);
+    expect(
+      msgs(
+        bookFlightSchema.safeParse({
+          ...valid,
+          travellers: [adult, { ...infant, infantOfIndex: 0 }, { ...infant, infantOfIndex: 0 }],
+        }),
+      ),
+    ).toEqual(['Each infant must travel with a different adult']);
+    expect(
+      bookFlightSchema.safeParse({ ...valid, travellers: [adult, { ...infant, infantOfIndex: 0 }] })
+        .success,
+    ).toBe(true);
+  });
+
+  it('checks GSTIN, fare ids and the return fare', () => {
+    expect(
+      msgs(
+        bookFlightSchema.safeParse({
+          ...valid,
+          gstDetails: { gstin: 'NOPE', companyName: 'Acme' },
+        }),
+      ),
+    ).toEqual(['Enter a valid GSTIN']);
+    expect(
+      bookFlightSchema.safeParse({
+        ...valid,
+        gstDetails: { gstin: '27aapfu0939f1zv', companyName: 'Acme Travels' },
+      }).success,
+    ).toBe(true);
+    expect(bookFlightSchema.safeParse({ ...valid, fareId: 'fare_flexi' }).success).toBe(false);
+    expect(msgs(bookFlightSchema.safeParse({ ...valid, returnOfferId: offerId }))).toEqual([
+      'Choose a fare for the return flight',
+    ]);
+    expect(bookFlightSchema.safeParse({ ...valid, price: 1 }).success).toBe(false);
   });
 });
 

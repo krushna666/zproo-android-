@@ -30,12 +30,13 @@ const CUSTOMER_TABLES = [
   'webhook_events',
   'idempotency_keys',
   'coupon_redemptions',
+  'flight_tickets',
   'flight_bookings',
+  'flight_seat_holds',
   'bus_bookings',
   'bus_seat_holds',
   'booking_passengers',
   'bookings',
-  'flight_inventory',
 ];
 
 const testUserSchema = z.strictObject({

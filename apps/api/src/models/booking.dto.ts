@@ -4,9 +4,12 @@ import type {
   BookingListItem,
   BusBookResponse,
   BusBookingInfo,
+  FlightBookResponse,
   BusPoint,
   BusTripDetails,
-  FlightOffer,
+  FareFamily,
+  FlightBookingLeg,
+  FlightOfferSummary,
   PassengerType,
   PriceBreakdown,
 } from '@zproo/types';
@@ -35,8 +38,85 @@ function busInfo(booking: BookingRecord): BusBookingInfo | null {
   };
 }
 
+interface LegacySegment {
+  airline: { code: string; name: string };
+  flightNumber: string;
+  from: { code: string };
+  to: { code: string };
+  departureAt: string;
+  arrivalAt: string;
+  durationMinutes: number;
+  aircraft: string;
+}
+
+/**
+ * The offer snapshot of a flight leg. Bookings made before fare families stored a different
+ * shape; it is converted so old bookings still render.
+ */
+export function legOffer(json: unknown): FlightOfferSummary {
+  const offer = json as Partial<FlightOfferSummary> & {
+    segments?: LegacySegment[];
+    airline?: { code: string; name: string };
+    totalPaise?: number;
+    seatsLeft?: number;
+    cabin?: FlightOfferSummary['cabin'];
+    id?: string;
+  };
+  if (Array.isArray(offer.slices)) return offer as FlightOfferSummary;
+  const segments = (offer.segments ?? []).map((s) => ({
+    carrier: s.airline,
+    flightNo: s.flightNumber,
+    from: s.from.code,
+    to: s.to.code,
+    departure: s.departureAt,
+    arrival: s.arrivalAt,
+    durationMin: s.durationMinutes,
+    aircraft: s.aircraft,
+    terminalFrom: '1',
+    terminalTo: '1',
+  }));
+  const first = segments[0];
+  const last = segments.at(-1);
+  return {
+    offerId: offer.id ?? '',
+    expiresAt: '',
+    carrier: offer.airline ?? { code: '', name: '' },
+    slices: [
+      {
+        segments,
+        stops: Math.max(0, segments.length - 1),
+        layovers: [],
+        durationMin:
+          first && last
+            ? Math.round((Date.parse(last.arrival) - Date.parse(first.departure)) / 60_000)
+            : 0,
+      },
+    ],
+    cabin: offer.cabin ?? 'ECONOMY',
+    fromPrice: 0,
+    currency: 'INR',
+    refundable: Boolean(offer.refundable),
+    mealIncluded: false,
+    seatsLeft: offer.seatsLeft ?? 0,
+  };
+}
+
+function flightLegs(booking: BookingRecord): FlightBookingLeg[] {
+  return booking.flights.map((f) => ({
+    sequence: f.sequence,
+    offer: legOffer(f.offer),
+    fare: f.fare as unknown as FareFamily,
+    pnr: f.pnr,
+    tickets: f.tickets.map((t) => ({
+      passengerId: t.passengerId,
+      ticketNumber: t.ticketNumber,
+      segmentKey: t.segmentKey,
+    })),
+  }));
+}
+
 /** Customer-facing lines for the stored amounts; amounts always come from the booking itself. */
-function priceLines(booking: BookingRecord, offers: FlightOffer[]): PriceBreakdown['lines'] {
+function priceLines(booking: BookingRecord): PriceBreakdown['lines'] {
   const discount =
     booking.discountAmountPaise > 0
       ? [
@@ -46,12 +126,15 @@ function priceLines(booking: BookingRecord, offers: FlightOffer[]): PriceBreakdo
           },
         ]
       : [];
-  return [...fareLines(booking, offers), ...discount];
+  return [...fareLines(booking), ...discount];
 }
 
-function fareLines(booking: BookingRecord, offers: FlightOffer[]): PriceBreakdown['lines'] {
+function fareLines(booking: BookingRecord): PriceBreakdown['lines'] {
   if (booking.serviceType === 'FLIGHT')
-    return flightPriceBreakdown(offers, paxCounts(booking)).lines;
+    return flightPriceBreakdown(
+      booking.flights.map((f) => f.fare as unknown as FareFamily),
+      paxCounts(booking),
+    ).lines;
   const seats = booking.passengers.length;
   return [
     {
@@ -68,7 +151,6 @@ function fareLines(booking: BookingRecord, offers: FlightOffer[]): PriceBreakdow
 }
 
 export function toBookingDetails(booking: BookingRecord, now: Date = clock.now()): BookingDetails {
-  const offers = booking.flights.map((f) => f.offer as unknown as FlightOffer);
   return {
     reference: booking.reference,
     serviceType: booking.serviceType === 'BUS' ? 'BUS' : 'FLIGHT',
@@ -82,7 +164,7 @@ export function toBookingDetails(booking: BookingRecord, now: Date = clock.now()
     travelDate: isoDate(booking.travelDate),
     // Amounts come from the stored booking (what was charged), not re-computed.
     price: {
-      lines: priceLines(booking, offers),
+      lines: priceLines(booking),
       currency: 'INR',
       basePaise: booking.baseAmountPaise,
       taxesPaise: booking.taxAmountPaise,
@@ -101,23 +183,23 @@ export function toBookingDetails(booking: BookingRecord, now: Date = clock.now()
       firstName: p.firstName,
       lastName: p.lastName,
       dateOfBirth: p.dateOfBirth ? isoDate(p.dateOfBirth) : null,
+      // Passengers store the adult's sequence; the API speaks in list indexes.
+      travellingWith: p.travellingWith === null ? null : p.travellingWith - 1,
       age: p.age,
       gender: p.gender,
       seatNumber: p.seatNumber,
     })),
-    flights: booking.flights.map((f, i) => ({
-      sequence: f.sequence,
-      offer: offers[i] as FlightOffer,
-      pnr: f.pnr,
-      tickets: (f.tickets as { passengerId: string; ticketNumber: string }[] | null) ?? [],
-    })),
+    flights: flightLegs(booking),
     bus: busInfo(booking),
     demo: Boolean((booking.metadata as { demo?: boolean } | null)?.demo),
   };
 }
 
 /** POST /…/book response: the held booking, its hold deadline and the server's bill. */
-export function toBookResult(booking: BookingRecord, now: Date = clock.now()): BusBookResponse {
+export function toBookResult(
+  booking: BookingRecord,
+  now: Date = clock.now(),
+): BusBookResponse & FlightBookResponse {
   return {
     bookingRef: booking.reference,
     status: 'HELD',

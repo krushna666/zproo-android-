@@ -3,6 +3,7 @@ import { requireAuth } from '../middleware/auth';
 import { validated } from '../middleware/validate';
 import type { BookingService } from '../services/booking.service';
 import type { CancellationService } from '../services/cancellation.service';
+import type { PaymentService } from '../services/payment.service';
 import type { RbacService } from '../services/rbac.service';
 import type { TicketService } from '../services/ticket.service';
 import { InvalidStateError } from '../utils/errors';
@@ -13,6 +14,7 @@ export function createBookingsController(
   tickets: TicketService,
   rbac: RbacService,
   cancellations: CancellationService,
+  payments: PaymentService,
 ) {
   const viewer = async (req: Parameters<RequestHandler>[0]) => {
     const auth = requireAuth(req);
@@ -23,9 +25,18 @@ export function createBookingsController(
     sendSuccess(res, await bookings.list(requireAuth(req).userId));
   };
 
+  /**
+   * Booking details. A paid booking the airline is still ticketing ("Confirming with the
+   * airline...") is checked with the supplier on each poll, so the answer is current.
+   */
   const get: RequestHandler = async (req, res) => {
     const { reference } = validated<{ reference: string }>(req, 'params');
-    sendSuccess(res, await bookings.getDetails(reference, await viewer(req)));
+    const who = await viewer(req);
+    const record = await bookings.get(reference, who);
+    if (record.status === 'PAYMENT_PENDING' && record.paymentStatus === 'CAPTURED')
+      await payments.retryIssue(record.id);
+    res.setHeader('Cache-Control', 'no-store');
+    sendSuccess(res, await bookings.getDetails(reference, who));
   };
 
   const ticket: RequestHandler = async (req, res) => {

@@ -3,18 +3,21 @@ import type { CancellationQuote, ServiceType } from '@zproo/types';
 import type { Logger } from 'pino';
 import { clock } from '../lib/testContext';
 import type { BusProvider } from '../providers/bus';
+import type { FlightProvider } from '../providers/flight';
 import type { PaymentProvider } from '../providers/payment';
 import { BookingRepository, type BookingRecord } from '../repositories/booking.repository';
 import { InvalidStateError, NotFoundError } from '../utils/errors';
 import type { AuditService, RequestContext } from './audit.service';
 import type { BookingService } from './booking.service';
 import { busRefund } from './busPricing';
-import type { BusCancellationRule } from '@zproo/types';
+import { FLIGHT_CANCEL_CUTOFF_HOURS, flightRefund } from '@zproo/catalog';
+import type { BusCancellationRule, FareFamily } from '@zproo/types';
 
 interface CancellationDeps {
   prisma: PrismaClient;
   bookings: BookingService;
   buses: BusProvider;
+  flights: FlightProvider;
   payments: PaymentProvider;
   audit: AuditService;
   logger: Logger;
@@ -65,6 +68,7 @@ export class CancellationService {
       if (!cancelled)
         throw new InvalidStateError('This booking was already changed. Please refresh.');
       if (booking.bus) await this.deps.buses.cancel(booking.id, booking.bus.pnr, tx);
+      if (booking.flights.length > 0) await this.deps.flights.cancel(booking.id, tx);
       if (quote.refundAmount <= 0) return 'CANCELLED' as const;
       await repo.move(booking.id, ['CANCELLED'], 'REFUND_PENDING', {
         actor: 'system',
@@ -129,6 +133,32 @@ export class CancellationService {
         policy,
       );
       return { ...base, cancellable: true, refundAmount: refundPaise, refundPercent };
+    }
+    const first = booking.flights[0];
+    if (first) {
+      const hours = (first.departureAt.getTime() - this.now().getTime()) / 3_600_000;
+      if (hours < FLIGHT_CANCEL_CUTOFF_HOURS)
+        return {
+          ...base,
+          cancellable: false,
+          reason: 'Cancellation is closed for this flight. Please contact the airline.',
+        };
+      const refund = flightRefund(
+        booking.flights.map((f) => ({ fare: f.fare as unknown as FareFamily })),
+        {
+          adults: booking.passengers.filter((p) => p.type === 'ADULT').length,
+          children: booking.passengers.filter((p) => p.type === 'CHILD').length,
+          infants: booking.passengers.filter((p) => p.type === 'INFANT').length,
+        },
+        booking.totalAmountPaise,
+      );
+      return {
+        ...base,
+        cancellable: true,
+        refundAmount: refund,
+        refundPercent:
+          booking.totalAmountPaise > 0 ? Math.floor((refund * 100) / booking.totalAmountPaise) : 0,
+      };
     }
     return {
       ...base,

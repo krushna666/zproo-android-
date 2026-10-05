@@ -1,39 +1,44 @@
-import type { FlightOffer, PassengerType, PaxCounts, PaxFare, PriceBreakdown } from '@zproo/types';
+import type { FareFamily, PassengerType, PaxCounts, PaxFare, PriceBreakdown } from '@zproo/types';
 
-/** Price of one offer for a passenger mix. */
-export function offerTotal(fares: Record<PassengerType, PaxFare>, pax: PaxCounts): number {
-  return (
-    fares.ADULT.totalPaise * pax.adults +
-    fares.CHILD.totalPaise * pax.children +
-    fares.INFANT.totalPaise * pax.infants
-  );
+const PAX: [PassengerType, keyof PaxCounts, string][] = [
+  ['ADULT', 'adults', 'Adult'],
+  ['CHILD', 'children', 'Child'],
+  ['INFANT', 'infants', 'Infant'],
+];
+
+/** Price of one fare for a passenger mix (all-inclusive). */
+export function fareTotal(perPax: Record<PassengerType, PaxFare>, pax: PaxCounts): number {
+  return PAX.reduce((sum, [type, key]) => sum + perPax[type].total * pax[key], 0);
 }
 
-/** Customer-facing price breakdown for one or more flight legs. No hidden fees are added. */
-export function flightPriceBreakdown(offers: FlightOffer[], pax: PaxCounts): PriceBreakdown {
-  let basePaise = 0;
-  let taxesPaise = 0;
+/**
+ * The bill for one or two fares (one-way or round trip): base fare per passenger type, GST and
+ * airport fees. Airport fees are government charges, so they are part of `taxesPaise`; ZPROO GO
+ * adds no convenience fee (`feesPaise` 0).
+ */
+export function flightPriceBreakdown(fares: readonly FareFamily[], pax: PaxCounts): PriceBreakdown {
   const lines: { label: string; amountPaise: number }[] = [];
-  const counts: [PassengerType, number, string][] = [
-    ['ADULT', pax.adults, 'Adult'],
-    ['CHILD', pax.children, 'Child'],
-    ['INFANT', pax.infants, 'Infant'],
-  ];
-  for (const [type, n, label] of counts) {
+  let basePaise = 0;
+  let gst = 0;
+  let airport = 0;
+  for (const [type, key, label] of PAX) {
+    const n = pax[key];
     if (n === 0) continue;
-    const base = offers.reduce((sum, o) => sum + o.fares[type].basePaise, 0) * n;
+    const base = fares.reduce((sum, f) => sum + f.perPax[type].base, 0) * n;
     lines.push({ label: `Base fare — ${label} × ${n}`, amountPaise: base });
     basePaise += base;
-    taxesPaise += offers.reduce((sum, o) => sum + o.fares[type].taxesPaise, 0) * n;
+    gst += fares.reduce((sum, f) => sum + f.perPax[type].taxes, 0) * n;
+    airport += fares.reduce((sum, f) => sum + f.perPax[type].fees, 0) * n;
   }
-  lines.push({ label: 'Taxes & airport fees', amountPaise: taxesPaise });
+  lines.push({ label: 'Taxes (GST)', amountPaise: gst });
+  if (airport > 0) lines.push({ label: 'Airport fees', amountPaise: airport });
   return {
     lines,
     basePaise,
-    taxesPaise,
+    taxesPaise: gst + airport,
     feesPaise: 0,
     discountPaise: 0,
-    totalPaise: basePaise + taxesPaise,
+    totalPaise: basePaise + gst + airport,
     currency: 'INR',
   };
 }

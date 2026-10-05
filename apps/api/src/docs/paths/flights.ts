@@ -1,7 +1,6 @@
 import { bookFlightSchema } from '@zproo/validation';
 import { BookingStatus, CabinClass, PaymentStatus } from '@zproo/types';
 import { z } from 'zod';
-import { offerQuerySchema } from '../../controllers/flights.controller';
 import { ErrorResponse, registry, successEnvelope } from '../openapi';
 import { BusBookingInfo } from './buses';
 
@@ -19,79 +18,138 @@ const paise = (description: string) =>
     .openapi({ description: `${description} (paise)` });
 const cabin = z.enum(Object.values(CabinClass) as [string, ...string[]]);
 
-const Airport = z.object({
-  code: z.string(),
-  city: z.string(),
-  name: z.string(),
-  country: z.string(),
-  timezone: z.string(),
-});
-const Airline = z.object({ code: z.string(), name: z.string() });
+const Carrier = z.object({ code: z.string(), name: z.string() });
 const PaxFare = z.object({
-  basePaise: z.number().int(),
-  taxesPaise: z.number().int(),
-  totalPaise: z.number().int(),
+  base: z.number().int(),
+  taxes: z.number().int(),
+  fees: z.number().int(),
+  total: z.number().int(),
+});
+const Pax = z.object({
+  adults: z.number().int(),
+  children: z.number().int(),
+  infants: z.number().int(),
 });
 
-const FlightOffer = registry.register(
-  'FlightOffer',
+const FlightSlice = z.object({
+  segments: z.array(
+    z.object({
+      carrier: Carrier,
+      flightNo: z.string().openapi({ example: 'SF 5123' }),
+      from: z.string().openapi({ example: 'PNQ' }),
+      to: z.string().openapi({ example: 'DEL' }),
+      departure: z.string().openapi({ example: '2026-10-20T06:15:00+05:30' }),
+      arrival: z.string(),
+      durationMin: z.number().int(),
+      aircraft: z.string(),
+      terminalFrom: z.string(),
+      terminalTo: z.string(),
+    }),
+  ),
+  stops: z.number().int(),
+  layovers: z.array(
+    z.object({
+      airport: z.string(),
+      durationMin: z.number().int(),
+      changeOfTerminal: z.boolean(),
+      selfTransfer: z.boolean(),
+      overnight: z.boolean(),
+    }),
+  ),
+  durationMin: z.number().int(),
+});
+
+const FlightOfferSummary = registry.register(
+  'FlightOfferSummary',
   z.object({
-    id: z.string().openapi({ description: 'Opaque offer id; pass back to fetch or book it' }),
-    provider: z.string(),
-    airline: Airline,
-    flightNumber: z.string(),
-    from: Airport,
-    to: Airport,
-    departureAt: z.iso.datetime(),
-    arrivalAt: z.iso.datetime(),
-    durationMinutes: z.number().int(),
-    stops: z.number().int(),
-    segments: z.array(
-      z.object({
-        airline: Airline,
-        flightNumber: z.string(),
-        from: Airport,
-        to: Airport,
-        departureAt: z.iso.datetime(),
-        arrivalAt: z.iso.datetime(),
-        durationMinutes: z.number().int(),
-        aircraft: z.string(),
-      }),
-    ),
-    layovers: z.array(z.object({ airport: Airport, minutes: z.number().int() })),
+    offerId: z.string().openapi({ description: 'Signed, opaque; valid for 20 minutes' }),
+    expiresAt: z.iso.datetime(),
+    carrier: Carrier,
+    slices: z.array(FlightSlice),
     cabin,
-    fareFamily: z.string(),
+    fromPrice: paise('Cheapest fare per adult, all-inclusive'),
+    currency: z.literal('INR'),
     refundable: z.boolean(),
-    cancellationFeePaise: z.number().int().nullable(),
-    baggage: z.object({ cabinKg: z.number(), checkInKg: z.number() }),
+    mealIncluded: z.boolean(),
     seatsLeft: z.number().int(),
-    fares: z.object({ ADULT: PaxFare, CHILD: PaxFare, INFANT: PaxFare }),
-    totalPaise: paise('Price for the searched passengers'),
   }),
 );
 
-const FlightSearchResult = registry.register(
-  'FlightSearchResult',
+const FareFamily = registry.register(
+  'FareFamily',
   z.object({
-    legs: z.array(
-      z.object({
-        from: z.string(),
-        to: z.string(),
-        date: z.string(),
-        offers: z.array(FlightOffer),
-      }),
-    ),
-    passengers: z.object({
-      adults: z.number().int(),
-      children: z.number().int(),
-      infants: z.number().int(),
-    }),
-    cabin,
-    demo: z
-      .boolean()
-      .openapi({ description: 'True when results come from the development provider' }),
+    fareId: z.string().openapi({ description: 'Scoped to its offer' }),
+    name: z.enum(['Saver', 'Flexi', 'Super Flexi']),
+    price: paise('Per adult'),
+    total: paise('All travellers'),
+    perPax: z.object({ ADULT: PaxFare, CHILD: PaxFare, INFANT: PaxFare }),
+    cabinBaggageKg: z.number(),
+    checkinBaggageKg: z.number(),
+    changeFee: paise('Per traveller'),
+    cancellationFee: paise('Per traveller; null = non-refundable').nullable(),
+    refundable: z.boolean(),
+    meal: z.enum(['PAID', 'INCLUDED']),
+    seatSelection: z.enum(['PAID', 'FREE']),
+    priority: z.boolean(),
+    mostPopular: z.boolean(),
   }),
 );
+
+const FlightSearchResponse = registry.register(
+  'FlightSearchResponse',
+  z.object({
+    searchId: z.string(),
+    serverNow: z.iso.datetime(),
+    from: z.string(),
+    to: z.string(),
+    date: z.string(),
+    returnDate: z.string().nullable(),
+    pax: Pax,
+    cabin,
+    offers: z.array(FlightOfferSummary),
+    returnOffers: z.array(FlightOfferSummary),
+    filters: z.object({
+      airlines: z.array(
+        z.object({
+          code: z.string(),
+          name: z.string(),
+          count: z.number().int(),
+          minPrice: z.number().int(),
+        }),
+      ),
+      priceMin: z.number().int(),
+      priceMax: z.number().int(),
+    }),
+    demo: z.boolean().openapi({ description: 'True for the development provider' }),
+  }),
+);
+
+const FlightOfferDetails = registry.register(
+  'FlightOfferDetails',
+  FlightOfferSummary.extend({
+    pax: Pax,
+    fareFamilies: z.array(FareFamily),
+    fareRules: z.array(z.string()),
+    serverNow: z.iso.datetime(),
+    replacesOfferId: z.string().nullable(),
+  }),
+);
+
+const BookResponse = z.object({
+  bookingRef: z.string(),
+  status: z.literal('HELD'),
+  holdExpiresAt: z.iso.datetime(),
+  serverNow: z.iso.datetime(),
+  priceBreakdown: z.object({
+    lines: z.array(z.object({ label: z.string(), amountPaise: z.number().int() })),
+    basePaise: z.number().int(),
+    taxesPaise: z.number().int(),
+    feesPaise: z.number().int(),
+    discountPaise: z.number().int(),
+    totalPaise: z.number().int(),
+    currency: z.literal('INR'),
+  }),
+});
 
 const BookingDetails = registry.register(
   'BookingDetails',
@@ -102,19 +160,13 @@ const BookingDetails = registry.register(
     paymentStatus: z.enum(Object.values(PaymentStatus) as [string, ...string[]]),
     createdAt: z.iso.datetime(),
     holdExpiresAt: z.iso.datetime().nullable(),
+    serverNow: z.iso.datetime(),
     confirmedAt: z.iso.datetime().nullable(),
     cancelledAt: z.iso.datetime().nullable(),
     travelDate: z.string(),
-    price: z.object({
-      lines: z.array(z.object({ label: z.string(), amountPaise: z.number().int() })),
-      basePaise: z.number().int(),
-      taxesPaise: z.number().int(),
-      feesPaise: z.number().int(),
-      discountPaise: z.number().int(),
-      totalPaise: z.number().int(),
-      currency: z.literal('INR'),
-    }),
+    price: BookResponse.shape.priceBreakdown,
     contact: z.object({ email: z.string(), phone: z.string() }),
+    coupon: z.object({ code: z.string(), discountPaise: z.number().int() }).nullable(),
     passengers: z.array(
       z.object({
         id: z.string(),
@@ -123,6 +175,7 @@ const BookingDetails = registry.register(
         firstName: z.string(),
         lastName: z.string(),
         dateOfBirth: z.string().nullable(),
+        travellingWith: z.number().int().nullable(),
         age: z.number().int().nullable(),
         gender: z.enum(['MALE', 'FEMALE', 'OTHER']),
         seatNumber: z.string().nullable(),
@@ -131,12 +184,16 @@ const BookingDetails = registry.register(
     flights: z.array(
       z.object({
         sequence: z.number().int(),
-        offer: FlightOffer,
+        offer: FlightOfferSummary,
+        fare: FareFamily,
         pnr: z.string().nullable(),
-        tickets: z.array(z.object({ passengerId: z.string(), ticketNumber: z.string() })),
+        tickets: z.array(
+          z.object({ passengerId: z.string(), ticketNumber: z.string(), segmentKey: z.string() }),
+        ),
       }),
     ),
     bus: BusBookingInfo.nullable(),
+    demo: z.boolean(),
   }),
 );
 
@@ -158,20 +215,34 @@ const referenceParams = z.object({ reference: z.string().openapi({ example: 'ZF7
 
 registry.registerPath({
   method: 'get',
+  path: '/flights/airports',
+  tags: ['Flights'],
+  summary: 'Airport suggestions by code, city or name',
+  request: { query: z.object({ q: z.string().openapi({ example: 'bom' }) }) },
+  responses: {
+    200: ok(
+      'Airports',
+      z.array(
+        z.object({ iata: z.string(), city: z.string(), name: z.string(), country: z.string() }),
+      ),
+    ),
+  },
+});
+
+registry.registerPath({
+  method: 'get',
   path: '/flights/search',
   tags: ['Flights'],
-  summary: 'Search flights',
+  summary: 'Search flights (one-way or round trip)',
   description:
-    'One way / round trip: `from`, `to`, `date`, `return`. Multi-city: `trip=MULTI_CITY&legs=PNQ.DEL.2026-10-25,DEL.GOI.2026-10-28`. ' +
-    'Results may be cached for 60 seconds; prices are re-checked when booking.',
+    'Passenger rules: adults + children ≤ 9, one infant per adult, at least one adult. Dates up to 330 days ahead. ' +
+    'Cached for 60 seconds; offers are valid for 20 minutes and re-priced on the details call and at booking.',
   request: {
     query: z.object({
-      trip: z.enum(['ONE_WAY', 'ROUND_TRIP', 'MULTI_CITY']).optional(),
-      from: z.string().optional().openapi({ example: 'PNQ' }),
-      to: z.string().optional().openapi({ example: 'DEL' }),
-      date: z.string().optional().openapi({ example: '2026-10-25' }),
-      return: z.string().optional(),
-      legs: z.string().optional(),
+      from: z.string().openapi({ example: 'PNQ' }),
+      to: z.string().openapi({ example: 'DEL' }),
+      date: z.string().openapi({ example: '2026-10-20' }),
+      returnDate: z.string().optional(),
       adults: z.string().optional(),
       children: z.string().optional(),
       infants: z.string().optional(),
@@ -179,7 +250,7 @@ registry.registerPath({
     }),
   },
   responses: {
-    200: ok('Offers per leg, cheapest first', FlightSearchResult),
+    200: ok('Offers (and return offers for round trips)', FlightSearchResponse),
     400: error('Invalid search'),
   },
 });
@@ -188,9 +259,16 @@ registry.registerPath({
   method: 'get',
   path: '/flights/{offerId}',
   tags: ['Flights'],
-  summary: 'Current price and availability of one offer',
-  request: { params: z.object({ offerId: z.string() }), query: offerQuerySchema },
-  responses: { 200: ok('Offer', FlightOffer), 404: error('Offer no longer available') },
+  summary: 'Live price, fare families and fare rules (never cached)',
+  description: '`?reprice=1` renews an expired offer at the current price (or 409 if it is gone).',
+  request: {
+    params: z.object({ offerId: z.string() }),
+    query: z.object({ reprice: z.enum(['0', '1']).optional() }),
+  },
+  responses: {
+    200: ok('Offer with fare families', FlightOfferDetails),
+    409: error('FARE_UNAVAILABLE — expired or sold out'),
+  },
 });
 
 registry.registerPath({
@@ -199,8 +277,9 @@ registry.registerPath({
   tags: ['Flights'],
   summary: 'Hold seats and create a booking awaiting payment',
   description:
-    'Requires an `Idempotency-Key` header; retrying with the same key returns the same booking. ' +
-    'Seats are held for BOOKING_HOLD_MINUTES; unpaid bookings are then cancelled.',
+    'Requires an `Idempotency-Key` header. Validates travellers (ages on the travel date, infants linked to ' +
+    'distinct adults), re-prices live (PRICE_CHANGED / FARE_UNAVAILABLE) and holds seats for 15 minutes or ' +
+    "the airline's shorter limit.",
   security: bearer,
   request: {
     headers: z.object({
@@ -209,10 +288,29 @@ registry.registerPath({
     body: { content: json(bookFlightSchema) },
   },
   responses: {
-    201: ok('Booking created', BookingDetails),
-    400: error('Invalid passengers or missing Idempotency-Key'),
+    201: ok('Seats held', BookResponse),
+    400: error('Invalid travellers or missing Idempotency-Key'),
     401: error('Not signed in'),
-    409: error('PRICE_CHANGED or FARE_UNAVAILABLE'),
+    409: error('PRICE_CHANGED, FARE_UNAVAILABLE or IDEMPOTENCY_CONFLICT'),
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/flights/{reference}/cancel',
+  tags: ['Flights'],
+  summary: 'Cancel a confirmed flight booking (owner)',
+  description:
+    'Refund = paid − airline cancellation fee per traveller − ZPROO GO fee (₹300). Closed 3 hours before departure.',
+  security: bearer,
+  request: { params: referenceParams },
+  responses: {
+    200: ok(
+      'Cancelled',
+      z.object({ bookingRef: z.string(), status: z.string(), refundAmount: z.number().int() }),
+    ),
+    403: error('Not your booking'),
+    409: error('Not cancellable'),
   },
 });
 

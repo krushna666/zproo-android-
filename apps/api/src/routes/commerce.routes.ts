@@ -1,11 +1,11 @@
 import { Permission } from '@zproo/types';
 import { BOOKING_REFERENCE_PATTERN } from '@zproo/utils';
-import { bookBusSchema, bookFlightSchema, busTripIdSchema, idSchema } from '@zproo/validation';
+import { bookBusSchema, bookFlightSchema, busTripIdSchema } from '@zproo/validation';
 import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import type { createBookingsController } from '../controllers/bookings.controller';
 import type { createBusesController } from '../controllers/buses.controller';
-import { offerQuerySchema, type createFlightsController } from '../controllers/flights.controller';
+import type { createFlightsController } from '../controllers/flights.controller';
 import type { createPaymentsController } from '../controllers/payments.controller';
 import { authorize } from '../middleware/auth';
 import { idempotent } from '../middleware/idempotency';
@@ -76,6 +76,20 @@ export function flightRoutes(
   limits: CommerceLimits,
 ): Router {
   const router = Router();
+  router.get(
+    '/airports',
+    validate({
+      query: z.strictObject({
+        q: z
+          .string()
+          .trim()
+          .min(1, 'Type a city or airport')
+          .max(40)
+          .regex(/^[A-Za-z ]+$/, 'Use letters only'),
+      }),
+    }),
+    c.airports,
+  );
   router.get('/search', limits.search, c.search);
   router.post(
     '/book',
@@ -86,9 +100,26 @@ export function flightRoutes(
     validate({ body: bookFlightSchema }),
     c.book,
   );
+  router.post(
+    '/:reference/cancel',
+    authenticate,
+    authorize(rbac, Permission.BOOKING_CANCEL_OWN),
+    validate({ params: referenceParams }),
+    c.cancel,
+  );
   router.get(
     '/:offerId',
-    validate({ params: z.object({ offerId: idSchema.max(200) }), query: offerQuerySchema }),
+    validate({
+      params: z.strictObject({
+        offerId: z.string().regex(/^off_[A-Za-z0-9_]{20,80}$/, 'Invalid offer'),
+      }),
+      query: z.strictObject({
+        reprice: z
+          .enum(['0', '1'])
+          .optional()
+          .transform((v) => v === '1'),
+      }),
+    }),
     c.offer,
   );
   return router;

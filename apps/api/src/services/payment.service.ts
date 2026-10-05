@@ -260,6 +260,14 @@ export class PaymentService {
     return confirmed;
   }
 
+  /**
+   * A customer's status poll on a paid booking that is still being ticketed: ask the supplier
+   * again. Returns true when it is confirmed now.
+   */
+  retryIssue(bookingId: string): Promise<boolean> {
+    return this.issueTickets(bookingId);
+  }
+
   // ───────── internals ─────────
 
   private async confirm(
@@ -379,6 +387,7 @@ export class PaymentService {
         );
       // Paid seats no longer lapse with the hold.
       await new BusRepository(tx).markPaid(payment.bookingId);
+      await this.deps.flights.markPaid(payment.bookingId, tx);
       // A booking still HELD (paid without an order step, e.g. via webhook) catches up first.
       await new BookingRepository(tx).move(payment.bookingId, ['HELD'], 'PAYMENT_PENDING', {
         actor,
@@ -456,8 +465,9 @@ export class PaymentService {
         bus: true,
       },
     });
-    if (booking?.status !== 'PAYMENT_PENDING') return false;
+    if (booking?.status !== 'PAYMENT_PENDING' || booking.paymentStatus !== 'CAPTURED') return false;
     const repo = new BookingRepository(this.deps.prisma);
+    const scenario = (booking.metadata as { issueScenario?: string } | null)?.issueScenario;
     let lastError: unknown;
     for (let attempt = 1; attempt <= ISSUE_ATTEMPTS; attempt++) {
       try {
@@ -469,18 +479,33 @@ export class PaymentService {
           );
           await repo.setBusPnr(booking.id, issued.pnr);
         }
-        for (const leg of booking.flights) {
-          if (leg.pnr) continue;
-          const issued = await this.deps.flights.issue(leg.offerId, booking.passengers);
-          await repo.setFlightTickets(
-            leg.id,
-            issued.pnr,
-            booking.passengers.map((p, i) => ({
-              passengerId: p.id,
-              ticketNumber: issued.ticketNumbers[i] ?? '',
-            })),
-          );
-          leg.pnr = issued.pnr;
+        const pendingLegs = booking.flights.filter((leg) => !leg.pnr);
+        if (pendingLegs.length > 0) {
+          const airlineAttempt = await repo.countIssueAttempt(booking.id);
+          for (const leg of pendingLegs) {
+            const offer = leg.offer as { carrier?: { code?: string } };
+            const issued = await this.deps.flights.issue({
+              offerId: leg.offerId,
+              carrierCode: offer.carrier?.code ?? '',
+              bookingRef: booking.reference,
+              passengers: booking.passengers,
+              attempt: airlineAttempt,
+              scenario,
+            });
+            // The airline is still working on it: stay "Confirming with the airline..."; the
+            // next status poll (or the jobs runner) asks again.
+            if (issued.status === 'PENDING') return false;
+            await repo.setFlightTickets(
+              leg.id,
+              issued.pnr,
+              booking.passengers.map((p, i) => ({
+                passengerId: p.id,
+                ticketNumber: issued.ticketNumbers[i] ?? '',
+                segmentKey: `${leg.originCode}-${leg.destinationCode}`,
+              })),
+            );
+            leg.pnr = issued.pnr;
+          }
         }
         return await this.deps.prisma.$transaction((tx) =>
           new BookingRepository(tx).move(booking.id, ['PAYMENT_PENDING'], 'CONFIRMED', {

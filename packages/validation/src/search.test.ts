@@ -4,7 +4,7 @@ import {
   busSearchSchema,
   busSearchSchemaAt,
   cabSearchSchema,
-  flightSearchSchema,
+  flightSearchSchemaAt,
   hotelSearchSchema,
   parcelQuoteSchema,
   todayIso,
@@ -24,82 +24,57 @@ describe('dates', () => {
 });
 
 describe('flightSearchSchema', () => {
-  const base = {
-    tripType: 'ONE_WAY',
-    legs: [{ from: 'pnq', to: 'DEL', date: inDays(7) }],
-    adults: '1',
-  };
+  const now = () => new Date('2026-10-05T20:00:00Z'); // 6 Oct, 01:30 IST
+  const schema = flightSearchSchemaAt(now);
+  const base = { from: 'pnq', to: 'DEL', date: '2026-10-20', adults: '1' };
 
   it('accepts a one-way search and normalises codes and numbers', () => {
-    const parsed = flightSearchSchema.parse(base);
-    expect(parsed.legs[0]).toEqual({ from: 'PNQ', to: 'DEL', date: inDays(7) });
-    expect(parsed).toMatchObject({ adults: 1, children: 0, infants: 0, cabin: 'ECONOMY' });
+    expect(schema.parse(base)).toEqual({
+      from: 'PNQ',
+      to: 'DEL',
+      date: '2026-10-20',
+      adults: 1,
+      children: 0,
+      infants: 0,
+      cabin: 'ECONOMY',
+    });
   });
 
-  it('rejects unknown airports, same origin and destination, and past dates', () => {
-    expect(
-      messages(
-        flightSearchSchema.safeParse({
-          ...base,
-          legs: [{ from: 'XXX', to: 'DEL', date: inDays(1) }],
-        }),
-      ),
-    ).toContain('Choose an airport from the list');
-    expect(
-      messages(
-        flightSearchSchema.safeParse({
-          ...base,
-          legs: [{ from: 'DEL', to: 'DEL', date: inDays(1) }],
-        }),
-      ),
-    ).toContain('From and To must be different');
-    expect(
-      messages(
-        flightSearchSchema.safeParse({
-          ...base,
-          legs: [{ from: 'PNQ', to: 'DEL', date: inDays(-1) }],
-        }),
-      ),
-    ).toContain("Departure date can't be in the past");
+  it('rejects unknown airports, the same airport twice, and dates outside 330 days', () => {
+    expect(messages(schema.safeParse({ ...base, from: 'XXX' }))).toContain('Choose an airport');
+    expect(messages(schema.safeParse({ ...base, to: 'pnq' }))).toEqual([
+      'Choose different airports for From and To',
+    ]);
+    expect(messages(schema.safeParse({ ...base, date: '2026-10-05' }))).toEqual([
+      'Choose a date within the next 330 days',
+    ]);
+    expect(schema.safeParse({ ...base, date: '2027-09-01' }).success).toBe(true);
+    expect(messages(schema.safeParse({ ...base, date: '2027-09-02' }))).toEqual([
+      'Choose a date within the next 330 days',
+    ]);
+    expect(schema.safeParse({ ...base, trip: 'ONE_WAY' }).success).toBe(false);
   });
 
-  it('requires a return date on or after departure for round trips', () => {
-    expect(messages(flightSearchSchema.safeParse({ ...base, tripType: 'ROUND_TRIP' }))).toContain(
-      'Choose a return date',
-    );
-    expect(
-      messages(
-        flightSearchSchema.safeParse({ ...base, tripType: 'ROUND_TRIP', returnDate: inDays(3) }),
-      ),
-    ).toContain('Return must be on or after departure');
-    expect(
-      flightSearchSchema.safeParse({ ...base, tripType: 'ROUND_TRIP', returnDate: inDays(10) })
-        .success,
-    ).toBe(true);
+  it('needs the return date on or after departure', () => {
+    expect(messages(schema.safeParse({ ...base, returnDate: '2026-10-19' }))).toEqual([
+      'Return date must be on or after the departure date',
+    ]);
+    expect(schema.parse({ ...base, returnDate: '2026-10-20' }).returnDate).toBe('2026-10-20');
+    expect(schema.parse({ ...base, returnDate: '' }).returnDate).toBeUndefined();
   });
 
-  it('needs 2–5 flights in date order for multi-city', () => {
-    const legs = [
-      { from: 'PNQ', to: 'DEL', date: inDays(5) },
-      { from: 'DEL', to: 'GOI', date: inDays(3) },
-    ];
-    expect(
-      messages(
-        flightSearchSchema.safeParse({ ...base, tripType: 'MULTI_CITY', legs: legs.slice(0, 1) }),
-      ),
-    ).toContain('Add at least two flights for a multi-city trip');
-    expect(
-      messages(flightSearchSchema.safeParse({ ...base, tripType: 'MULTI_CITY', legs })),
-    ).toContain('Flights must be in date order');
-  });
-
-  it('limits travellers and infants', () => {
-    expect(messages(flightSearchSchema.safeParse({ ...base, adults: 6, children: 4 }))).toContain(
-      'Up to 9 travellers per booking (excluding infants)',
-    );
-    expect(messages(flightSearchSchema.safeParse({ ...base, adults: 1, infants: 2 }))).toContain(
+  it('applies the passenger rules with the exact messages', () => {
+    expect(messages(schema.safeParse({ ...base, adults: 6, children: 4 }))).toEqual([
+      'You can book up to 9 travellers at a time',
+    ]);
+    expect(messages(schema.safeParse({ ...base, adults: 1, infants: 2 }))).toEqual([
       'Each infant must travel with an adult',
-    );
+    ]);
+    expect(messages(schema.safeParse({ ...base, adults: 0, children: 1 }))).toEqual([
+      'Add at least one adult',
+    ]);
+    expect(schema.safeParse({ ...base, adults: 9, infants: 4 }).success).toBe(true);
+    expect(schema.safeParse({ ...base, infants: 5, adults: 5 }).success).toBe(false);
   });
 });
 

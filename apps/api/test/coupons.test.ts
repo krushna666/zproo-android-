@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { bookedFlight } from './flightFixtures';
+import { book, bookedFlight, daysAhead, searchOffers } from './flightFixtures';
 import { createTestContext, prisma, resetUsers, signUp } from './helpers';
 import { createOrder, payWithMock } from './payments';
 
@@ -98,13 +98,10 @@ describe('coupons', () => {
     await apply(ctx, first.user.accessToken, first.reference, c.code).expect(200);
     // Reapplying to the same booking is fine.
     await apply(ctx, first.user.accessToken, first.reference, c.code).expect(200);
-    const second = await request(ctx.app)
-      .post('/api/flights/book')
-      .set(bearer(first.user.accessToken))
-      .set('Idempotency-Key', crypto.randomUUID())
-      .send((await secondBookingBody(ctx)) as object)
-      .expect(201);
-    const refused = await apply(ctx, first.user.accessToken, second.body.data.reference, c.code);
+    const [other] = await searchOffers(ctx, { from: 'BOM', date: daysAhead(25) });
+    if (!other) throw new Error('No offers');
+    const second = await book(ctx, first.user.accessToken, other).expect(201);
+    const refused = await apply(ctx, first.user.accessToken, second.body.data.bookingRef, c.code);
     expect(refused.status).toBe(422);
     expect(refused.body.error.details).toEqual({ reason: 'usage_limit' });
 
@@ -113,7 +110,7 @@ describe('coupons', () => {
       data: { holdExpiresAt: new Date(Date.now() - 1000) },
     });
     await ctx.services.bookings.expireHolds();
-    await apply(ctx, first.user.accessToken, second.body.data.reference, c.code).expect(200);
+    await apply(ctx, first.user.accessToken, second.body.data.bookingRef, c.code).expect(200);
   });
 
   it('enforces the total limit under concurrent applications', async () => {
@@ -144,24 +141,3 @@ describe('coupons', () => {
     expect(codes).not.toContain('MONSOON20');
   });
 });
-
-/** A second, different flight booking body for the same user. */
-async function secondBookingBody(ctx: Ctx) {
-  const search = await request(ctx.app)
-    .get('/api/flights/search')
-    .query({
-      from: 'BOM',
-      to: 'DEL',
-      date: new Date(Date.now() + 25 * 86_400_000).toISOString().slice(0, 10),
-    })
-    .expect(200);
-  const offer = search.body.data.legs[0].offers[0];
-  return {
-    offerIds: [offer.id],
-    passengers: [
-      { type: 'ADULT', title: 'MR', firstName: 'Amit', lastName: 'Sharma', gender: 'MALE' },
-    ],
-    contact: { email: 'amit@example.com', phone: '+919876543210' },
-    expectedTotalPaise: offer.totalPaise,
-  };
-}

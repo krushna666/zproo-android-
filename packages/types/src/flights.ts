@@ -1,37 +1,10 @@
 import type { BusBookingInfo } from './buses';
 import type { BookingStatus, CabinClass, PaymentStatus } from './enums';
 
-export interface AirportInfo {
-  code: string;
-  city: string;
-  name: string;
-  country: string;
-  /** IANA time zone; flight times are shown in the airport's local time. */
-  timezone: string;
-}
-
-export interface AirlineInfo {
-  code: string;
-  name: string;
-}
-
-export interface FlightSegmentInfo {
-  airline: AirlineInfo;
-  flightNumber: string;
-  from: AirportInfo;
-  to: AirportInfo;
-  /** ISO 8601 instant (UTC). */
-  departureAt: string;
-  arrivalAt: string;
-  durationMinutes: number;
-  aircraft: string;
-}
-
-export interface PaxFare {
-  basePaise: number;
-  taxesPaise: number;
-  totalPaise: number;
-}
+/*
+ * Flight API contract (Prompt 02). Amounts are integer paise; times are ISO 8601 with the local
+ * airport's offset (e.g. +05:30); dates are local calendar dates (YYYY-MM-DD).
+ */
 
 export type PassengerType = 'ADULT' | 'CHILD' | 'INFANT';
 
@@ -41,45 +14,143 @@ export interface PaxCounts {
   infants: number;
 }
 
-export interface FlightOffer {
-  /** Opaque, provider-scoped; pass back to fetch or book the offer. */
-  id: string;
-  provider: string;
-  airline: AirlineInfo;
-  flightNumber: string;
-  from: AirportInfo;
-  to: AirportInfo;
-  departureAt: string;
-  arrivalAt: string;
-  durationMinutes: number;
-  stops: number;
-  segments: FlightSegmentInfo[];
-  layovers: { airport: AirportInfo; minutes: number }[];
-  cabin: CabinClass;
-  fareFamily: string;
-  refundable: boolean;
-  /** Airline cancellation charge per passenger, or null when non-refundable. */
-  cancellationFeePaise: number | null;
-  baggage: { cabinKg: number; checkInKg: number };
-  seatsLeft: number;
-  fares: Record<PassengerType, PaxFare>;
-  /** Price for the passengers in the search. */
-  totalPaise: number;
+/** GET /flights/airports */
+export interface AirportSuggestion {
+  iata: string;
+  city: string;
+  name: string;
+  country: string;
 }
 
-export interface FlightSearchLeg {
+export interface FlightCarrier {
+  code: string;
+  name: string;
+}
+
+export interface FlightSegment {
+  carrier: FlightCarrier;
+  /** e.g. "SF 5123" */
+  flightNo: string;
+  /** IATA codes */
+  from: string;
+  to: string;
+  /** ISO 8601 with the airport's local offset */
+  departure: string;
+  arrival: string;
+  durationMin: number;
+  aircraft: string;
+  terminalFrom: string;
+  terminalTo: string;
+}
+
+export interface FlightLayover {
+  airport: string;
+  durationMin: number;
+  /** Arrive and depart from different terminals */
+  changeOfTerminal: boolean;
+  /** Separate tickets: collect bags and check in again */
+  selfTransfer: boolean;
+  /** The connection runs past midnight */
+  overnight: boolean;
+}
+
+/** One direction of travel (an origin-to-destination journey with its connections). */
+export interface FlightSlice {
+  segments: FlightSegment[];
+  stops: number;
+  layovers: FlightLayover[];
+  durationMin: number;
+}
+
+/** A search result: one itinerary for one direction (round trips combine two). */
+export interface FlightOfferSummary {
+  offerId: string;
+  /** Offer validity (20 minutes from search); details re-price it, booking refuses it after. */
+  expiresAt: string;
+  /** The marketing carrier of the first segment */
+  carrier: FlightCarrier;
+  slices: FlightSlice[];
+  cabin: CabinClass;
+  /** Cheapest fare per adult, taxes and fees included */
+  fromPrice: number;
+  currency: 'INR';
+  /** Whether the cheapest fare is refundable */
+  refundable: boolean;
+  /** Whether the cheapest fare includes a meal */
+  mealIncluded: boolean;
+  seatsLeft: number;
+}
+
+export interface FlightSearchResponse {
+  searchId: string;
+  serverNow: string;
   from: string;
   to: string;
   date: string;
-  offers: FlightOffer[];
-}
-
-export interface FlightSearchResult {
-  legs: FlightSearchLeg[];
-  passengers: { adults: number; children: number; infants: number };
+  returnDate: string | null;
+  pax: PaxCounts;
   cabin: CabinClass;
+  offers: FlightOfferSummary[];
+  /** Round trips: the return-direction offers (booked together with an outbound offer) */
+  returnOffers: FlightOfferSummary[];
+  filters: {
+    airlines: { code: string; name: string; count: number; minPrice: number }[];
+    priceMin: number;
+    priceMax: number;
+  };
   /** True when results come from the development provider, not real airline inventory. */
   demo: boolean;
+}
+
+/** One passenger type's fare: base, taxes (GST) and fees (airport charges). */
+export interface PaxFare {
+  base: number;
+  taxes: number;
+  fees: number;
+  total: number;
+}
+
+export type FareFamilyName = 'Saver' | 'Flexi' | 'Super Flexi';
+
+export interface FareFamily {
+  /** Scoped to its offer: a fareId from another offer is refused. */
+  fareId: string;
+  name: FareFamilyName;
+  /** Per adult, all-inclusive */
+  price: number;
+  /** For all the travellers in the search */
+  total: number;
+  perPax: Record<PassengerType, PaxFare>;
+  cabinBaggageKg: number;
+  checkinBaggageKg: number;
+  /** Per traveller; 0 = free changes */
+  changeFee: number;
+  /** Per traveller; null = non-refundable */
+  cancellationFee: number | null;
+  refundable: boolean;
+  meal: 'PAID' | 'INCLUDED';
+  seatSelection: 'PAID' | 'FREE';
+  priority: boolean;
+  mostPopular: boolean;
+}
+
+/** GET /flights/:offerId — live, never cached. */
+export interface FlightOfferDetails extends FlightOfferSummary {
+  pax: PaxCounts;
+  fareFamilies: FareFamily[];
+  fareRules: string[];
+  serverNow: string;
+  /** Set when an expired offer was re-priced into this fresh one */
+  replacesOfferId: string | null;
+}
+
+/** POST /flights/book response */
+export interface FlightBookResponse {
+  bookingRef: string;
+  status: 'HELD';
+  holdExpiresAt: string;
+  serverNow: string;
+  priceBreakdown: PriceBreakdown;
 }
 
 export interface PriceLine {
@@ -104,6 +175,8 @@ export interface BookingPassengerInfo {
   firstName: string;
   lastName: string;
   dateOfBirth: string | null;
+  /** Infants: the index (in `passengers`) of the adult they travel with */
+  travellingWith: number | null;
   /** Age on the travel date, where the service asks for age (buses) */
   age: number | null;
   gender: 'MALE' | 'FEMALE' | 'OTHER';
@@ -113,9 +186,11 @@ export interface BookingPassengerInfo {
 
 export interface FlightBookingLeg {
   sequence: number;
-  offer: FlightOffer;
+  /** The offer as sold (outbound = 1, return = 2) */
+  offer: FlightOfferSummary;
+  fare: FareFamily;
   pnr: string | null;
-  tickets: { passengerId: string; ticketNumber: string }[];
+  tickets: { passengerId: string; ticketNumber: string; segmentKey: string }[];
 }
 
 export interface BookingDetails {

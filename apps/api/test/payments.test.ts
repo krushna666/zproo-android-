@@ -38,7 +38,7 @@ describe('Idempotency-Key', () => {
       book(ctx, accessToken, offer, { key }),
     ]);
     expect(results.map((r) => r.status)).toEqual([201, 201, 201]);
-    expect(new Set(results.map((r) => r.body.data.reference)).size).toBe(1);
+    expect(new Set(results.map((r) => r.body.data.bookingRef)).size).toBe(1);
     expect(await prisma.booking.count()).toBe(1);
   });
 
@@ -171,7 +171,7 @@ describe('payment verification', () => {
     const other = await book(ctx, user.accessToken, offer).expect(201);
     await verifyPayment(ctx, user.accessToken, {
       ...body,
-      bookingRef: other.body.data.reference,
+      bookingRef: other.body.data.bookingRef,
     }).expect(400);
   });
 

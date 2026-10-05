@@ -709,6 +709,34 @@ export function searchCities(
     .map((x) => x.c);
 }
 
+/** Airports matching a typed query (IATA code, city, airport name or former name), best first. */
+export function searchAirports(
+  query: string,
+  options: { limit?: number; only?: ReadonlySet<string> } = {},
+): Airport[] {
+  const q = query.trim().toLowerCase();
+  const pool = options.only ? AIRPORTS.filter((a) => options.only?.has(a.code)) : AIRPORTS;
+  const score = (a: Airport): number => {
+    if (a.code.toLowerCase() === q) return 0;
+    if (a.city.toLowerCase().startsWith(q)) return 1;
+    if (
+      a.aliases
+        ?.toLowerCase()
+        .split(/[\s,]+/)
+        .some((w) => w.startsWith(q))
+    )
+      return 2;
+    if (a.name.toLowerCase().includes(q) || a.city.toLowerCase().includes(q)) return 3;
+    return 9;
+  };
+  return pool
+    .map((a, i) => ({ a, i, s: q ? score(a) : 1 }))
+    .filter((x) => x.s < 9)
+    .sort((x, y) => x.s - y.s || x.i - y.i)
+    .slice(0, options.limit ?? 10)
+    .map((x) => x.a);
+}
+
 export function findStation(code: string): TrainStation | undefined {
   return TRAIN_STATIONS.find((s) => s.code === code);
 }

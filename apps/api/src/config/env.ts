@@ -59,6 +59,16 @@ const envSchema = z
     /** Optional path to the logo PNG used in PDFs (defaults to the web app's brand asset). */
     BRAND_LOGO_PATH: z.string().optional(),
     EMAIL_PROVIDER: z.enum(['console']).default('console'),
+    /**
+     * 32-byte key (base64) for encrypting personal documents at rest (passport numbers),
+     * AES-256-GCM. Required in production; development and tests use a fixed local key.
+     */
+    PII_ENCRYPTION_KEY: z
+      .string()
+      .refine((v) => Buffer.from(v, 'base64').length === 32, 'must be 32 bytes, base64-encoded')
+      .optional(),
+    /** International flights (passports, visas) — off until that flow is built. */
+    INTL_FLIGHTS: booleanString.default(false),
     /** NODE_ENV=test only: every OTP is 123456 so end-to-end tests can sign in. */
     ALLOW_TEST_OTP: booleanString.default(false),
   })
@@ -81,7 +91,7 @@ const envSchema = z
       }
     }
     if (env.NODE_ENV !== 'production') return;
-    for (const key of ['JWT_SECRET', 'JWT_REFRESH_SECRET'] as const) {
+    for (const key of ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'PII_ENCRYPTION_KEY'] as const) {
       if (!env[key])
         ctx.addIssue({ code: 'custom', path: [key], message: 'is required in production' });
     }
@@ -124,6 +134,11 @@ const envSchema = z
     ephemeralSecrets: !env.JWT_SECRET || !env.JWT_REFRESH_SECRET,
     JWT_SECRET: env.JWT_SECRET ?? randomBytes(48).toString('base64url'),
     JWT_REFRESH_SECRET: env.JWT_REFRESH_SECRET ?? randomBytes(48).toString('base64url'),
+    // Outside production a fixed, well-known key: only demo data is ever encrypted with it.
+    piiKey: Buffer.from(
+      env.PII_ENCRYPTION_KEY ?? 'ZHVtbXktZGV2LWtleS1ub3QtZm9yLXByb2R1Y3Rpb24=',
+      'base64',
+    ),
     accessTokenTtlSeconds: durationToSeconds(env.JWT_ACCESS_TTL),
     corsOrigins: (env.CORS_ORIGINS ?? env.FRONTEND_URL)
       .split(',')
