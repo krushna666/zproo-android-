@@ -1,0 +1,102 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/plus-jakarta-sans';
+
+/* Shared UI primitives live in packages/ui; let Tailwind see their class names. */
+@source '../../../../packages/ui/src';
+
+/*
+ * ZPROO GO design tokens. Brand red is sampled from the official logo; adjust here only
+ * (and in packages/config/src/brand.ts for emails/PDFs) if the final logo file differs.
+ */
+:root {
+  --primary: #d9141e;
+  --primary-hover: #b80f18;
+  --primary-light: #fdecec;
+  --primary-foreground: #ffffff;
+  --background: #f8fafc;
+  --foreground: #111827;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --card: #ffffff;
+  --ring: #d9141e;
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #dc2626;
+  --radius: 0.875rem;
+  --header-height: 4rem;
+  --bottom-nav-height: 4rem;
+}
+
+@theme inline {
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-light: var(--primary-light);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-card: var(--card);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --font-sans:
+    'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --radius-card: var(--radius);
+  --shadow-card: 0 1px 2px rgb(17 24 39 / 0.04), 0 4px 16px -4px rgb(17 24 39 / 0.08);
+  --shadow-raised: 0 12px 32px -12px rgb(17 24 39 / 0.18);
+
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-pop-in: pop-in 180ms ease-out;
+  --animate-slide-in-right: slide-in-right 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(0.98);
+  }
+}
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+  ::selection {
+    @apply bg-primary-light text-foreground;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,6 @@
+# Apache: serve files and prerendered pages as they are; everything else gets the app shell.
+Options -MultiViews
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ /app.html [L]

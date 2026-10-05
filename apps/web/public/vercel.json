@@ -1,0 +1,4 @@
+{
+  "cleanUrls": false,
+  "rewrites": [{ "source": "/((?!assets/).*)", "destination": "/app.html" }]
+}
