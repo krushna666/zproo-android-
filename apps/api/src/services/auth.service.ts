@@ -2,7 +2,6 @@ import type { AuthProvider, PrismaClient, RoleName } from '@prisma/client';
 import type { AuthSession, OtpSent, VerifyOtpResult } from '@zproo/types';
 import type { Identifier, SocialProvider } from '@zproo/validation';
 import type { Logger } from 'pino';
-import { AUTH } from '../config/constants';
 import { roleNames, toPublicUser } from '../models/user.dto';
 import type { IdentityVerifiers } from '../providers/identity';
 import { RefreshTokenRepository } from '../repositories/refreshToken.repository';
