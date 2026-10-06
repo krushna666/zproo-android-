@@ -45,11 +45,11 @@ export function splitGst(pricePaise: number, ac: boolean): { basePaise: number; 
 export function busFareBreakdown(
   seats: { seatNo: string; price: number }[],
   ac: boolean,
+  feesPaise: number = BUS_CONVENIENCE_FEE_PAISE,
 ): PriceBreakdown {
   const parts = seats.map((s) => splitGst(s.price, ac));
   const basePaise = parts.reduce((sum, p) => sum + p.basePaise, 0);
   const taxesPaise = parts.reduce((sum, p) => sum + p.taxPaise, 0);
-  const feesPaise = BUS_CONVENIENCE_FEE_PAISE;
   const n = seats.length;
   return {
     lines: [

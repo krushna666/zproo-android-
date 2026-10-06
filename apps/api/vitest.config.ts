@@ -12,6 +12,13 @@ export default defineConfig({
     // Test files share one database; run them one at a time.
     fileParallelism: false,
     testTimeout: 15_000,
+    // `npm run test:coverage -w @zproo/api` (Prompt 04 §7: services, providers, middleware).
+    coverage: {
+      provider: 'v8',
+      include: ['src/services/**', 'src/providers/**', 'src/middleware/**'],
+      reporter: ['text-summary', 'json-summary', 'html'],
+      reportsDirectory: 'coverage',
+    },
     env: {
       NODE_ENV: 'test',
       DATABASE_URL: databaseUrl,

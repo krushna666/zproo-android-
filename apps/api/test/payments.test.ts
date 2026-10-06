@@ -333,4 +333,91 @@ describe('RazorpayPaymentProvider', () => {
       }),
     ).rejects.toMatchObject({ errorCode: 'PROVIDER_ERROR' });
   });
+  it('re-reads payments and refunds through the API; unreachable gateway is PROVIDER_ERROR', async () => {
+    const api = vi.fn(async (url: string | URL | Request) =>
+      String(url).endsWith('/refund')
+        ? new Response(JSON.stringify({ id: 'rfnd_Q1' }), { status: 200 })
+        : new Response(
+            JSON.stringify({
+              id: 'pay_Abc123',
+              order_id: 'order_A1',
+              amount: 1249_00,
+              currency: 'INR',
+              status: 'captured',
+            }),
+            { status: 200 },
+          ),
+    );
+    const p = provider(api as typeof fetch);
+    expect(await p.fetchPayment('pay_Abc123')).toEqual({
+      paymentId: 'pay_Abc123',
+      orderId: 'order_A1',
+      amountPaise: 1249_00,
+      currency: 'INR',
+      status: 'captured',
+    });
+    // A malformed id never reaches the gateway.
+    expect(await p.fetchPayment('../orders')).toBeNull();
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(await p.refund('pay_Abc123', 500_00)).toEqual({ refundId: 'rfnd_Q1' });
+
+    const noId = vi.fn(async () => new Response('{}', { status: 200 }));
+    await expect(provider(noId as typeof fetch).refund('pay_Abc123', 1)).rejects.toMatchObject({
+      errorCode: 'PROVIDER_ERROR',
+    });
+    await expect(
+      provider(noId as typeof fetch).createOrder({ amountPaise: 1, currency: 'INR', receipt: 'x' }),
+    ).rejects.toMatchObject({ errorCode: 'PROVIDER_ERROR' });
+    const down = vi.fn(async () => {
+      throw new TypeError('fetch failed');
+    });
+    await expect(provider(down as typeof fetch).fetchPayment('pay_Abc123')).rejects.toMatchObject({
+      errorCode: 'PROVIDER_ERROR',
+      message: "We couldn't reach the payment gateway. Please try again.",
+    });
+  });
+
+  it('parses only well-formed webhook events with an event id', () => {
+    const p = provider();
+    const body = (o: unknown) => Buffer.from(JSON.stringify(o));
+    const captured = {
+      event: 'payment.captured',
+      payload: {
+        payment: {
+          entity: {
+            id: 'pay_X',
+            order_id: 'order_Y',
+            amount: 100,
+            currency: 'INR',
+            status: 'captured',
+          },
+        },
+      },
+    };
+    expect(p.parseWebhook(body(captured), 'evt_123456')).toEqual({
+      eventId: 'evt_123456',
+      type: 'payment.captured',
+      payment: {
+        paymentId: 'pay_X',
+        orderId: 'order_Y',
+        amountPaise: 100,
+        currency: 'INR',
+        status: 'captured',
+      },
+    });
+    expect(p.parseWebhook(Buffer.from('{not json'), 'evt_123456')).toBeNull();
+    expect(p.parseWebhook(body(captured), undefined)).toBeNull();
+    expect(p.parseWebhook(body(captured), 'bad id!')).toBeNull();
+    expect(p.parseWebhook(body(null), 'evt_123456')).toBeNull();
+    expect(p.parseWebhook(body({ payload: {} }), 'evt_123456')).toBeNull();
+    // An unknown entity shape is kept as an event without a payment.
+    const odd = {
+      event: 'order.paid',
+      payload: { payment: { entity: { id: 1, status: 'weird' } } },
+    };
+    expect(p.parseWebhook(body(odd), 'evt_123456')).toMatchObject({ payment: null });
+    expect(p.parseWebhook(body({ event: 'refund.created' }), 'evt_123456')).toMatchObject({
+      payment: null,
+    });
+  });
 });
