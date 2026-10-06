@@ -103,7 +103,12 @@ export default function MyBookingsPage() {
               ? paymentUrl(serviceOf(b), b.reference)
               : confirmationUrl(serviceOf(b), b.reference);
             return (
-              <li key={b.reference} className="space-y-2">
+              <li
+                key={b.reference}
+                data-testid={`booking-${b.reference}`}
+                data-status={b.status}
+                className="space-y-2"
+              >
                 <Link
                   to={href}
                   className="flex items-center gap-4 rounded-2xl border border-border bg-card p-4 shadow-card transition-colors hover:border-primary/40"

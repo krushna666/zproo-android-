@@ -201,6 +201,8 @@ function Results({ search }: { search: BusSearch }) {
                 Clear all
               </Button>
               <Button
+                data-testid="bus-filters-apply"
+
                 className="flex-1"
                 onClick={() => {
                   update(sheetFilters);
@@ -233,6 +235,7 @@ function Results({ search }: { search: BusSearch }) {
               variant="outline"
               size="sm"
               className="lg:hidden"
+              data-testid="bus-filters-open"
               onClick={() => {
                 setSheetFilters(filters);
                 setSheetOpen(true);
@@ -260,6 +263,7 @@ function Results({ search }: { search: BusSearch }) {
                   <button
                     type="button"
                     onClick={() => update(c.without)}
+                    data-testid={`bus-filter-chip-${c.key}`}
                     aria-label={`Remove filter ${c.label}`}
                     className="inline-flex min-h-9 items-center gap-1 rounded-full bg-primary-light px-3 text-xs font-semibold text-primary"
                   >
@@ -277,7 +281,11 @@ function Results({ search }: { search: BusSearch }) {
               className="space-y-3 rounded-[14px] border border-danger/30 bg-card p-5"
             >
               <p className="text-sm font-semibold text-danger">{userMessage(error)}</p>
-              <Button variant="outline" onClick={() => void refetch()}>
+              <Button
+                variant="outline"
+                data-testid="bus-results-retry"
+                onClick={() => void refetch()}
+              >
                 Retry
               </Button>
             </div>
@@ -307,7 +315,11 @@ function Results({ search }: { search: BusSearch }) {
               icon={SearchX}
               title="No buses match your filters"
               actions={
-                <Button variant="outline" onClick={() => update(EMPTY_BUS_FILTERS)}>
+                <Button
+                  data-testid="bus-results-clear"
+                  variant="outline"
+                  onClick={() => update(EMPTY_BUS_FILTERS)}
+                >
                   Clear filters
                 </Button>
               }

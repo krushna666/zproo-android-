@@ -36,14 +36,17 @@ export function createApiRouter(
   rateLimitStore: RateLimitStoreFactory,
 ): Router {
   const requireUser = authenticate(services.tokens);
-  const commerce = commerceRateLimiters(rateLimitStore);
+  const commerce = commerceRateLimiters(rateLimitStore, env.SEARCH_RATE_LIMIT);
   const router = Router();
   router.use('/health', healthRoutes(services.health));
   router.use(
     '/auth',
     authRoutes(
       createAuthController(services.auth, services.tokens, env),
-      authRateLimiters(rateLimitStore),
+      authRateLimiters(rateLimitStore, {
+        auth: env.AUTH_IP_RATE_LIMIT,
+        otp: env.OTP_IP_RATE_LIMIT,
+      }),
       requireUser,
       requireCsrf(env),
     ),

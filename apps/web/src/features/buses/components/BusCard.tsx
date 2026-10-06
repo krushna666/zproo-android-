@@ -117,6 +117,8 @@ export function BusCard({ trip }: { trip: BusTripSummary }) {
       data-price={trip.fromPrice}
       data-duration={trip.durationMin}
       data-departure={trip.departure}
+      data-ac={trip.busType.ac}
+      data-sleeper={trip.busType.sleeper}
       aria-label={`${trip.operator.name}, ${trip.busType.label}, departs ${istTime(trip.departure)}, from ${formatMoney(trip.fromPrice)}`}
       className="rounded-[14px] border border-border bg-card p-4 shadow-card sm:p-5"
     >

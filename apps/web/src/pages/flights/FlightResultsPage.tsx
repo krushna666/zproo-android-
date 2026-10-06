@@ -145,7 +145,11 @@ function Results({ search }: { search: FlightSearch }) {
         icon={SearchX}
         title="No flights match your filters"
         actions={
-          <Button variant="outline" onClick={() => update(EMPTY_FLIGHT_FILTERS)}>
+          <Button
+            data-testid="flight-results-clear"
+            variant="outline"
+            onClick={() => update(EMPTY_FLIGHT_FILTERS)}
+          >
             Clear filters
           </Button>
         }
@@ -261,6 +265,8 @@ function Results({ search }: { search: FlightSearch }) {
                 Clear all
               </Button>
               <Button
+                data-testid="flight-filters-apply"
+
                 className="flex-1"
                 onClick={() => {
                   update(sheetFilters);
@@ -293,6 +299,7 @@ function Results({ search }: { search: FlightSearch }) {
               variant="outline"
               size="sm"
               className="lg:hidden"
+              data-testid="flight-filters-open"
               onClick={() => setSheetOpen(true)}
             >
               <SlidersHorizontal aria-hidden /> Filters
@@ -317,7 +324,11 @@ function Results({ search }: { search: FlightSearch }) {
               className="space-y-3 rounded-[14px] border border-danger/30 bg-card p-5"
             >
               <p className="text-sm font-semibold text-danger">{userMessage(error)}</p>
-              <Button variant="outline" onClick={() => void refetch()}>
+              <Button
+                variant="outline"
+                data-testid="flight-results-retry"
+                onClick={() => void refetch()}
+              >
                 Retry
               </Button>
             </div>

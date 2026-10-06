@@ -12,3 +12,12 @@ playwright-report/
 test-results/
 dist-ssr/
 dump.rdb
+
+# End-to-end runs
+tests/e2e/.run/
+tests/e2e/artifacts/
+tests/**/__pycache__/
+tests/.pytest_cache/
+.pytest_cache/
+apps/web/dist-e2e/
+report.html

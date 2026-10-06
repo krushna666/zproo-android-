@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Link, NavLink } from 'react-router';
 import { Logo } from '@/components/brand/Logo';
 import { SERVICES } from '@/config/services';
+import { useAuthStore } from '@/features/auth/store';
 import { useHotkey } from '@/hooks/useHotkey';
 import { CurrencySelect } from './CurrencySelect';
 import { MobileMenu } from './MobileMenu';
@@ -14,6 +15,7 @@ const utilityLink =
   'inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-sm font-semibold text-foreground/80 transition-colors hover:bg-background hover:text-foreground';
 
 export function SiteHeader() {
+  const session = useAuthStore((s) => s.status);
   const [searchOpen, setSearchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   useHotkey(
@@ -22,7 +24,11 @@ export function SiteHeader() {
   );
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85">
+    <header
+      data-testid="site-header"
+      data-session={session}
+      className="sticky top-0 z-40 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85"
+    >
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 focus:rounded-full focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-primary-foreground"
@@ -71,6 +77,7 @@ export function SiteHeader() {
             className="md:hidden"
             onClick={() => setMenuOpen(true)}
             aria-label="Open menu"
+            data-testid="header-menu"
           >
             <Menu aria-hidden className="size-5!" />
           </Button>

@@ -226,6 +226,8 @@ describe('GET /api/buses/search', () => {
     expect(empty.body.data.trips).toEqual([]);
     const down = await search(ctx, {}, { 'X-Mock-Scenario': 'provider_down' }).expect(502);
     expect(down.body.error.code).toBe('PROVIDER_ERROR');
+    // The success cache header must not leak onto the failure (Retry would hit the cache).
+    expect(down.headers['cache-control']).toBe('no-store');
   });
 });
 

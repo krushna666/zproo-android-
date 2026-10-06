@@ -79,6 +79,9 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   else req.log.debug({ errorCode: failure.errorCode }, failure.message);
 
   if (res.headersSent) return next(err);
+  // A cacheable success header may already be set (search sets it before calling the supplier);
+  // a failure must never be cached, or "Retry" would replay it from the browser cache.
+  res.setHeader('Cache-Control', 'no-store');
   if (err instanceof RateLimitError && err.retryAfterSeconds !== undefined)
     res.setHeader('Retry-After', String(err.retryAfterSeconds));
   res.status(failure.status).json(

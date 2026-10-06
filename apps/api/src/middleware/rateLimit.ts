@@ -68,13 +68,16 @@ function bodyKey(req: Request, field: 'phone' | 'identifier'): string | undefine
  * Authentication limits. Per-target limits protect each phone/email/account whatever IP the
  * attacker uses; the per-IP limit is generous because many Indian mobile users share IPs (CGNAT).
  */
-export function authRateLimiters(storeFactory: RateLimitStoreFactory) {
+export function authRateLimiters(
+  storeFactory: RateLimitStoreFactory,
+  perIpLimits: { auth: number; otp: number } = { auth: 60, otp: AUTH.otpMaxSendsPerIpPerHour },
+) {
   const otpKey = (req: Request) => bodyKey(req, 'phone') ?? bodyKey(req, 'identifier');
   return {
     perIp: limiter(storeFactory, {
       name: 'auth-ip',
       windowMs: 10 * 60_000,
-      limit: 60,
+      limit: perIpLimits.auth,
       message: 'Too many attempts from your network. Please try again in a few minutes.',
       skip: (req) => req.path === '/refresh' || req.path === '/logout',
     }),
@@ -101,7 +104,7 @@ export function authRateLimiters(storeFactory: RateLimitStoreFactory) {
     otpPerIp: limiter(storeFactory, {
       name: 'otp-ip',
       windowMs: 60 * 60_000,
-      limit: AUTH.otpMaxSendsPerIpPerHour,
+      limit: perIpLimits.otp,
       message: 'Too many codes requested from your network. Please try again later.',
     }),
     otpVerify: limiter(storeFactory, {
@@ -131,12 +134,12 @@ function userKey(req: Request): string | undefined {
 }
 
 /** Commerce limits: searches per client IP, bookings and payments per signed-in customer. */
-export function commerceRateLimiters(storeFactory: RateLimitStoreFactory) {
+export function commerceRateLimiters(storeFactory: RateLimitStoreFactory, searchLimit = 60) {
   return {
     search: limiter(storeFactory, {
       name: 'search',
       windowMs: 60_000,
-      limit: 60,
+      limit: searchLimit,
       message: 'Too many searches. Please try again in a minute.',
     }),
     book: limiter(storeFactory, {

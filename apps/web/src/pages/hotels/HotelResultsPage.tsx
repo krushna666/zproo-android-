@@ -180,6 +180,8 @@ function Results({ search }: { search: HotelSearch }) {
                 Clear all
               </Button>
               <Button
+                data-testid="hotel-filters-apply"
+
                 className="flex-1"
                 onClick={() => {
                   update(sheetFilters);
@@ -210,6 +212,7 @@ function Results({ search }: { search: HotelSearch }) {
               variant="outline"
               size="sm"
               className="lg:hidden"
+              data-testid="hotel-filters-open"
               onClick={() => setSheetOpen(true)}
             >
               <SlidersHorizontal aria-hidden /> Filters
@@ -234,7 +237,11 @@ function Results({ search }: { search: HotelSearch }) {
               className="space-y-3 rounded-[14px] border border-danger/30 bg-card p-5"
             >
               <p className="text-sm font-semibold text-danger">{userMessage(results.error)}</p>
-              <Button variant="outline" onClick={() => void results.refetch()}>
+              <Button
+                variant="outline"
+                data-testid="hotel-results-retry"
+                onClick={() => void results.refetch()}
+              >
                 Retry
               </Button>
             </div>
@@ -264,6 +271,7 @@ function Results({ search }: { search: HotelSearch }) {
                 <>
                   {activeHotelFilterCount(filters) > 0 && (
                     <Button
+                      data-testid="hotel-results-clear"
                       variant="outline"
                       onClick={() => update({ ...EMPTY_HOTEL_FILTERS, sort: filters.sort })}
                     >

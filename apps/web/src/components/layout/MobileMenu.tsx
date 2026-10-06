@@ -96,6 +96,7 @@ export function MobileMenu({ open, onOpenChange }: MobileMenuProps) {
               <li>
                 <button
                   type="button"
+                  data-testid="menu-signout"
                   onClick={() => {
                     close();
                     void signOut().finally(() => navigate('/'));

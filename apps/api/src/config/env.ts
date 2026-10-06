@@ -31,6 +31,13 @@ const envSchema = z
     TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
     RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+    /**
+     * Per-IP limits (per-account limits are fixed). Raise only for a test stack where many browsers
+     * share one IP; production defaults suit customers behind carrier-grade NAT.
+     */
+    AUTH_IP_RATE_LIMIT: z.coerce.number().int().positive().default(60),
+    OTP_IP_RATE_LIMIT: z.coerce.number().int().positive().default(20),
+    SEARCH_RATE_LIMIT: z.coerce.number().int().positive().default(60),
     ENABLE_API_DOCS: booleanString.optional(),
 
     // Authentication. Secrets are required in production; development generates throwaway ones.

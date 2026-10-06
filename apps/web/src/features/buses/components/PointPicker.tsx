@@ -26,6 +26,7 @@ export function PointPicker({ kind, points, value, onChange, error }: PointPicke
         <label
           key={p.id}
           data-testid={`bus-${kind}-${p.id}`}
+          data-selected={value === p.id}
           className={cn(
             'flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
             value === p.id

@@ -9,7 +9,7 @@ import {
   PasswordInput,
   toast,
 } from '@zproo/ui';
-import { TOASTS } from '@zproo/validation';
+import { MESSAGES, TOASTS } from '@zproo/validation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, Navigate, useNavigate } from 'react-router';
@@ -43,7 +43,12 @@ function VerifyCode() {
   const [resending, setResending] = useState(false);
 
   const verify = async (value = code) => {
-    if (value.length !== 6 || pending) return;
+    if (pending) return;
+    if (!/^\d{6}$/.test(value)) {
+      setError(MESSAGES.otp.invalid);
+      invalidForm();
+      return;
+    }
     setError(undefined);
     setPending(true);
     try {
@@ -117,7 +122,7 @@ function VerifyCode() {
           size="lg"
           className="w-full"
           data-testid="auth-submit"
-          disabled={pending || code.length !== 6}
+          disabled={pending}
         >
           {pending ? 'Verifying...' : 'Verify'}
         </Button>

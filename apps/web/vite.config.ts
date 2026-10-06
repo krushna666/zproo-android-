@@ -56,9 +56,13 @@ export default defineConfig(({ mode }) => ({
   },
   server: {
     port: 5173,
+    // API_PROXY_TARGET: where /api goes in dev and `vite preview` (the E2E stack uses its own API).
     proxy: {
-      '/api': { target: 'http://localhost:5000', changeOrigin: true },
-      '/socket.io': { target: 'http://localhost:5000', ws: true },
+      '/api': {
+        target: process.env.API_PROXY_TARGET ?? 'http://localhost:5000',
+        changeOrigin: true,
+      },
+      '/socket.io': { target: process.env.API_PROXY_TARGET ?? 'http://localhost:5000', ws: true },
     },
   },
   build: {

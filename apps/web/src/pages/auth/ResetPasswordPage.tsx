@@ -70,10 +70,10 @@ function ResetForm({
       <AuthHeader
         title="Reset password"
         subtitle={
-          <>
+          <span data-testid="reset-notice">
             If an account exists for <strong className="text-foreground">{target}</strong>, we've
             sent a 6-digit code.
-          </>
+          </span>
         }
       />
       <form onSubmit={onSubmit} noValidate className="space-y-5">

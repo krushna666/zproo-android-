@@ -92,11 +92,16 @@ export function testRoutes(
     );
   });
 
-  // Wipes customer data (users, sessions, bookings, payments) between test runs.
+  // Wipes customer data (users, sessions, bookings, payments) and rate-limit counters between
+  // test runs, so every run starts from the same state.
   router.post('/reset', async (_req, res) => {
     await deps.prisma.$executeRawUnsafe(
       `TRUNCATE TABLE ${CUSTOMER_TABLES.join(', ')} RESTART IDENTITY CASCADE`,
     );
+    if (deps.redis?.status === 'ready') {
+      const keys = await deps.redis.keys('rl:*');
+      if (keys.length > 0) await deps.redis.del(...keys);
+    }
     sendSuccess(res, null, 'Test data reset');
   });
 

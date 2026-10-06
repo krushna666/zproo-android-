@@ -38,7 +38,7 @@ export function CheckoutShell({
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_22rem]">
         <div className="min-w-0 space-y-6">{children}</div>
         {aside && (
-          <aside className="space-y-4 lg:sticky lg:top-[calc(var(--header-height)+1rem)] lg:self-start">
+          <aside className="space-y-4 lg:sticky lg:top-[calc(var(--header-height)+1rem)] lg:max-h-[calc(100dvh-var(--header-height)-7rem)] lg:self-start lg:overflow-y-auto lg:p-1">
             {aside}
           </aside>
         )}

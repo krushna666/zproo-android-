@@ -1,0 +1,9 @@
+selenium>=4.25
+pytest>=8
+pytest-xdist>=3.6
+# Installed but never enabled: a rerun hides a flake; flakes are fixed instead (reruns = 0).
+pytest-rerunfailures>=14
+pytest-html>=4.1
+requests>=2.32
+axe-selenium-python>=2.1
+pip-audit>=2.7

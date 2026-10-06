@@ -1,3 +1,4 @@
+import { currentScenario } from '../lib/testContext';
 import type { Logger } from 'pino';
 import { AppError, ProviderError } from '../utils/errors';
 
@@ -45,18 +46,29 @@ export function withResilience<T extends object>(provider: T, options: Resilienc
   const sleep = options.sleep ?? defaultSleep;
   const reads = new Set<string>(options.reads);
 
-  let failures: number[] = [];
-  let openUntil = 0;
+  // One breaker per X-Mock-Scenario (test builds only): a simulated outage in one end-to-end test
+  // must not open the circuit for the others. In production there is never a scenario: one breaker.
+  const breakers = new Map<string, { failures: number[]; openUntil: number }>();
+  const breaker = () => {
+    const scope = currentScenario() ?? '';
+    let b = breakers.get(scope);
+    if (!b) {
+      b = { failures: [], openUntil: 0 };
+      breakers.set(scope, b);
+    }
+    return b;
+  };
 
   const unavailable = () =>
     new ProviderError("We couldn't reach the operator right now. Please try again.", options.name);
 
   function recordFailure() {
+    const b = breaker();
     const t = now();
-    failures = [...failures.filter((f) => t - f < windowMs), t];
-    if (failures.length >= threshold) {
-      openUntil = t + openMs;
-      failures = [];
+    b.failures = [...b.failures.filter((f) => t - f < windowMs), t];
+    if (b.failures.length >= threshold) {
+      b.openUntil = t + openMs;
+      b.failures = [];
       options.logger.warn({ provider: options.name }, 'Supplier circuit opened');
     }
   }
@@ -74,7 +86,7 @@ export function withResilience<T extends object>(provider: T, options: Resilienc
   }
 
   async function call(method: string, fn: () => Promise<unknown>): Promise<unknown> {
-    if (now() < openUntil) throw unavailable();
+    if (now() < breaker().openUntil) throw unavailable();
     const attempts = reads.has(method) ? retries + 1 : 1;
     for (let attempt = 0; ; attempt++) {
       const started = now();
@@ -84,7 +96,7 @@ export function withResilience<T extends object>(provider: T, options: Resilienc
           { provider: options.name, method, ms: now() - started },
           'Supplier call',
         );
-        failures = [];
+        breaker().failures = [];
         return result;
       } catch (err) {
         options.logger.warn(
@@ -99,7 +111,7 @@ export function withResilience<T extends object>(provider: T, options: Resilienc
         );
         if (!isSupplierFailure(err)) throw err;
         recordFailure();
-        if (attempt + 1 >= attempts || now() < openUntil) {
+        if (attempt + 1 >= attempts || now() < breaker().openUntil) {
           throw err instanceof ProviderError ? err : unavailable();
         }
         await sleep(backoffMs * 2 ** attempt * (1 + Math.random() * 0.5));

@@ -30,7 +30,7 @@ export function UserMenu() {
     return <span aria-hidden className="h-9 w-32 animate-pulse rounded-full bg-border/60" />;
   if (!user) {
     return (
-      <Button asChild size="sm">
+      <Button asChild size="sm" data-testid="header-login">
         <Link to="/login">Login / Sign up</Link>
       </Button>
     );
@@ -39,7 +39,10 @@ export function UserMenu() {
   const firstName = user.fullName.split(' ')[0];
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex h-10 items-center gap-2 rounded-full border border-border bg-card pl-1 pr-3 text-sm font-semibold transition-colors hover:border-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <DropdownMenuTrigger
+        data-testid="header-user"
+        className="flex h-10 items-center gap-2 rounded-full border border-border bg-card pl-1 pr-3 text-sm font-semibold transition-colors hover:border-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         <UserAvatar name={user.fullName} src={user.avatarUrl} size={32} />
         <span className="max-w-28 truncate">{firstName}</span>
         <ChevronDown aria-hidden className="size-4 text-muted" />
@@ -67,6 +70,7 @@ export function UserMenu() {
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
+          data-testid="header-signout"
           onSelect={() => {
             void signOut().finally(() => navigate('/'));
           }}
