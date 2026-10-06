@@ -13,8 +13,11 @@ import {
   toast,
 } from '@zproo/ui';
 import {
+  ageOn,
   BUS_MESSAGES,
   busTravellerSchema,
+  splitFullName,
+  todayInIst,
   travelContactSchema,
   type BusTravellerInput,
   type TravelContact,
@@ -34,6 +37,8 @@ import { CheckoutShell, NothingSelected } from '@/features/checkout/CheckoutShel
 import { ContactCard, GenderControl } from '@/features/checkout/ContactCard';
 import { PriceChangedDialog } from '@/features/checkout/PriceChangedDialog';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
+import { SavedTravellerControls } from '@/features/checkout/SavedTravellerControls';
+import { travellerName, useSaveTravellers, useSavedTravellers } from '@/features/travellers/api';
 import { userMessage } from '@/lib/apiErrors';
 import { ApiClientError } from '@/services/http';
 
@@ -127,9 +132,18 @@ function TravellerForm({ selection }: { selection: BusSelection }) {
     },
     mode: 'onTouched',
   });
-  const { register, handleSubmit, formState, control } = form;
+  const { register, handleSubmit, formState, control, setValue } = form;
   const errors = formState.errors as FieldErrors<z.output<typeof schema>>;
   const genders = useWatch({ control, name: 'travellers' });
+  const savedTravellers = useSavedTravellers().data ?? [];
+  const saveTravellers = useSaveTravellers();
+  const [keep, setKeep] = useState<boolean[]>(() => defaults.map(() => false));
+  const pick = (i: number, t: (typeof savedTravellers)[number]) => {
+    const opts = { shouldValidate: formState.isSubmitted, shouldDirty: true };
+    setValue(`travellers.${i}.name`, travellerName(t), opts);
+    if (t.dob) setValue(`travellers.${i}.age`, ageOn(t.dob, todayInIst()), opts);
+    if (t.gender) setValue(`travellers.${i}.gender`, t.gender, opts);
+  };
 
   const book = useMutation({
     mutationFn: (input: {
@@ -150,7 +164,13 @@ function TravellerForm({ selection }: { selection: BusSelection }) {
         },
         input.key,
       ),
-    onSuccess: (result) => {
+    onSuccess: (result, input) => {
+      // "Save traveller for next time": kept once the seats are held.
+      saveTravellers(
+        input.travellers
+          .filter((_, i) => keep[i])
+          .map((t) => ({ ...splitFullName(t.name), gender: t.gender })),
+      );
       useBusDraft.getState().setReference(result.bookingRef);
       void navigate(`/buses/review?ref=${encodeURIComponent(result.bookingRef)}`);
     },
@@ -219,6 +239,13 @@ function TravellerForm({ selection }: { selection: BusSelection }) {
               </CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-[2fr_1fr]">
+              <SavedTravellerControls
+                index={i}
+                saved={savedTravellers}
+                onPick={(t) => pick(i, t)}
+                keep={keep[i] ?? false}
+                onKeepChange={(on) => setKeep((k) => k.map((v, j) => (j === i ? on : v)))}
+              />
               <FormField
                 label="Full name"
                 name={`traveller-${i}-name`}

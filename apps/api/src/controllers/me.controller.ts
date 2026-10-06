@@ -1,12 +1,18 @@
+import type { SavedTravellerData } from '@zproo/validation';
 import type { RequestHandler } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { validated } from '../middleware/validate';
 import type { AuthService } from '../services/auth.service';
+import type { TravellerService } from '../services/traveller.service';
 import type { UserService } from '../services/user.service';
 import { sendSuccess } from '../utils/response';
 import { requestContext } from './auth.controller';
 
-export function createMeController(users: UserService, auth: AuthService) {
+export function createMeController(
+  users: UserService,
+  auth: AuthService,
+  travellers: TravellerService,
+) {
   const get: RequestHandler = async (req, res) => {
     sendSuccess(res, await users.getProfile(requireAuth(req).userId));
   };
@@ -27,5 +33,27 @@ export function createMeController(users: UserService, auth: AuthService) {
     sendSuccess(res, null, 'Password changed. Other devices have been signed out.');
   };
 
-  return { get, update, changePassword };
+  const listTravellers: RequestHandler = async (req, res) => {
+    sendSuccess(res, await travellers.list(requireAuth(req).userId));
+  };
+
+  const saveTraveller: RequestHandler = async (req, res) => {
+    const input = validated<SavedTravellerData>(req, 'body');
+    sendSuccess(res, await travellers.save(requireAuth(req).userId, input), 'Traveller saved');
+  };
+
+  const removeTraveller: RequestHandler = async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    await travellers.remove(requireAuth(req).userId, id);
+    sendSuccess(res, null, 'Traveller removed');
+  };
+
+  return {
+    get,
+    update,
+    changePassword,
+    travellers: listTravellers,
+    saveTraveller,
+    removeTraveller,
+  };
 }

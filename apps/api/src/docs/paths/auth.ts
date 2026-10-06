@@ -3,6 +3,8 @@ import {
   passwordLoginSchema,
   registerSchema,
   resetPasswordSchema,
+  savedTravellerIdSchema,
+  savedTravellerSchema,
   sendOtpSchema,
   socialLoginSchema,
   updateProfileSchema,
@@ -263,5 +265,56 @@ registry.registerPath({
     ),
     401: error('Not signed in'),
     403: error('Missing permission'),
+  },
+});
+
+const SavedTravellerDoc = z.object({
+  id: z.string(),
+  title: z.enum(['MR', 'MRS', 'MS', 'MISS', 'MSTR', 'DR']).nullable(),
+  firstName: z.string(),
+  lastName: z.string(),
+  gender: z.enum(['MALE', 'FEMALE', 'OTHER']).nullable(),
+  dob: z.string().nullable(),
+  updatedAt: z.string(),
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/me/travellers',
+  tags: ['Account'],
+  summary: 'Saved travellers (newest first, up to 20)',
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: ok('Saved travellers', z.array(SavedTravellerDoc)),
+    401: error('Not signed in'),
+  },
+});
+
+registry.registerPath({
+  method: 'put',
+  path: '/me/travellers',
+  tags: ['Account'],
+  summary: 'Save a traveller for next time (the same name updates the saved one)',
+  security: [{ [bearerAuth.name]: [] }],
+  request: body(savedTravellerSchema),
+  responses: {
+    200: ok('Saved traveller', SavedTravellerDoc),
+    400: error('Invalid details'),
+    401: error('Not signed in'),
+    409: error('Already 20 saved travellers'),
+  },
+});
+
+registry.registerPath({
+  method: 'delete',
+  path: '/me/travellers/{id}',
+  tags: ['Account'],
+  summary: 'Remove a saved traveller',
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: savedTravellerIdSchema },
+  responses: {
+    200: ok('Removed', z.null()),
+    401: error('Not signed in'),
+    404: error('No such traveller on this account'),
   },
 });

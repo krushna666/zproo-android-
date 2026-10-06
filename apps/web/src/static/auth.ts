@@ -4,7 +4,10 @@ import {
   passwordLoginSchema,
   registerSchema,
   resetPasswordSchema,
+  SAVED_TRAVELLERS_MAX,
+  savedTravellerSchema,
   sendOtpSchema,
+  TRAVELLER_MESSAGES,
   changePasswordSchema,
   updateProfileSchema,
   verifyOtpSchema,
@@ -20,6 +23,7 @@ import {
   save,
   sha256,
   invalid,
+  notFound,
   StaticError,
   unauthenticated,
   type StaticRequest,
@@ -163,6 +167,48 @@ export async function authRoutes(req: StaticRequest): Promise<StaticResult | nul
     user.fullName = parse(updateProfileSchema, body, 'body').fullName;
     save();
     return { data: publicUser(user), message: 'Profile updated' };
+  }
+  if (path === '/me/travellers' && method === 'GET') {
+    return {
+      data: [...(currentUser().travellers ?? [])].sort((a, b) =>
+        b.updatedAt.localeCompare(a.updatedAt),
+      ),
+    };
+  }
+  if (path === '/me/travellers' && method === 'PUT') {
+    const user = currentUser();
+    const input = parse(savedTravellerSchema, body, 'body');
+    const list = (user.travellers ??= []);
+    const existing = list.find(
+      (t) => t.firstName === input.firstName && t.lastName === input.lastName,
+    );
+    if (!existing && list.length >= SAVED_TRAVELLERS_MAX)
+      throw new StaticError(409, 'CONFLICT', TRAVELLER_MESSAGES.limit);
+    const traveller = existing ?? {
+      id: randomId(),
+      title: null,
+      firstName: input.firstName,
+      lastName: input.lastName,
+      gender: null,
+      dob: null,
+      updatedAt: '',
+    };
+    if (input.title) traveller.title = input.title;
+    if (input.gender) traveller.gender = input.gender;
+    if (input.dob) traveller.dob = input.dob;
+    traveller.updatedAt = new Date().toISOString();
+    if (!existing) list.push(traveller);
+    save();
+    return { data: traveller, message: 'Traveller saved' };
+  }
+  const travellerPath = /^\/me\/travellers\/([^/]+)$/.exec(path);
+  if (travellerPath && method === 'DELETE') {
+    const user = currentUser();
+    const before = user.travellers?.length ?? 0;
+    user.travellers = (user.travellers ?? []).filter((t) => t.id !== travellerPath[1]);
+    if (user.travellers.length === before) throw notFound('Traveller not found');
+    save();
+    return { data: null, message: 'Traveller removed' };
   }
   if (path === '/me/password' && method === 'POST') {
     const user = currentUser();

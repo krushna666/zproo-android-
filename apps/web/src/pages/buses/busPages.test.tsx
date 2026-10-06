@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useBusDraft } from '@/features/buses/draft';
 import { makeDetails, makeSearch, makeSeatMap, TRIPS } from '@/features/buses/test/fixtures';
 import type * as httpModule from '@/services/http';
-import { apiGet, apiPost, ApiClientError } from '@/services/http';
+import { apiGet, apiPost, ApiClientError, http } from '@/services/http';
 import { makeUser, renderRoute } from '@/test/render';
 
 vi.mock('@/services/http', async (importOriginal) => ({
@@ -385,6 +385,46 @@ describe('bus checkout', () => {
       },
       { headers: { 'Idempotency-Key': useBusDraft.getState().idempotencyKey } },
     );
+  });
+
+  it('fills a card from a saved traveller and saves the ticked ones after the hold', async () => {
+    const priya = {
+      id: 'trv_priya',
+      title: 'MRS' as const,
+      firstName: 'Priya',
+      lastName: 'Sharma',
+      gender: 'FEMALE' as const,
+      dob: addDays(todayInIst(), -31 * 366),
+      updatedAt: '2026-09-01T10:00:00.000Z',
+    };
+    serve((url) => (url === '/me/travellers' ? [priya] : busRoutes(url)));
+    const put = vi.spyOn(http, 'put').mockResolvedValue({ data: { data: priya } });
+    const user = userEvent.setup();
+    renderRoute('/buses/booking', makeUser());
+    await user.type(await screen.findByTestId('checkout-traveller-0-age'), '34');
+    await user.selectOptions(await screen.findByTestId('checkout-traveller-1-saved'), 'trv_priya');
+    expect(screen.getByTestId('checkout-traveller-1-name')).toHaveValue('Priya Sharma');
+    expect(screen.getByTestId('checkout-traveller-1-age')).toHaveValue(31);
+    expect(screen.getByTestId('checkout-traveller-1-gender-female')).toBeChecked();
+
+    await user.click(screen.getByTestId('checkout-traveller-0-save'));
+    post.mockResolvedValueOnce(held);
+    serve((url) =>
+      url === '/me/travellers'
+        ? [priya]
+        : url.startsWith('/bookings/')
+          ? busBooking()
+          : busRoutes(url),
+    );
+    await user.click(screen.getByTestId('checkout-travellers-continue'));
+    await screen.findByRole('heading', { level: 1, name: 'Review your booking' });
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith('/me/travellers', {
+      firstName: 'Amit',
+      lastName: 'Sharma',
+      gender: 'MALE',
+    });
+    put.mockRestore();
   });
 
   it('asks before continuing at a changed fare, then re-submits with a new key', async () => {

@@ -51,7 +51,10 @@ export function createApiRouter(
       requireCsrf(env),
     ),
   );
-  router.use('/me', meRoutes(createMeController(services.users, services.auth), requireUser));
+  router.use(
+    '/me',
+    meRoutes(createMeController(services.users, services.auth, services.travellers), requireUser),
+  );
   router.use(
     '/admin',
     adminRoutes({ users: createAdminUsersController(services.users) }, requireUser, services.rbac),

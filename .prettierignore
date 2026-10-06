@@ -4,3 +4,8 @@ coverage
 .turbo
 prisma/migrations
 package-lock.json
+
+# End-to-end reports and evidence
+artifacts/
+tests/e2e/artifacts/
+tests/e2e/.run/

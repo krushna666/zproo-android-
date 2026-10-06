@@ -36,6 +36,8 @@ import { ContactCard } from '@/features/checkout/ContactCard';
 import { GstCard } from '@/features/checkout/GstCard';
 import { PriceChangedDialog } from '@/features/checkout/PriceChangedDialog';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
+import { SavedTravellerControls } from '@/features/checkout/SavedTravellerControls';
+import { useSaveTravellers, useSavedTravellers } from '@/features/travellers/api';
 import { SelectInput } from '@/features/checkout/SelectInput';
 import { CHECKOUT_STEP } from '@/features/checkout/steps';
 import { TITLE_LABEL } from '@/features/checkout/titles';
@@ -166,7 +168,16 @@ function GuestForm({ selection }: { selection: HotelSelection }) {
     },
     mode: 'onTouched',
   });
-  const { register, handleSubmit, formState, control, getValues, subscribe } = form;
+  const { register, handleSubmit, formState, control, getValues, subscribe, setValue } = form;
+  const savedTravellers = useSavedTravellers().data ?? [];
+  const saveTravellers = useSaveTravellers();
+  const [keep, setKeep] = useState<boolean[]>(() => selection.rooms.map(() => false));
+  const pick = (i: number, t: (typeof savedTravellers)[number]) => {
+    const opts = { shouldValidate: formState.isSubmitted, shouldDirty: true };
+    if (t.title) setValue(`guests.${i}.title`, t.title, opts);
+    setValue(`guests.${i}.firstName`, t.firstName, opts);
+    setValue(`guests.${i}.lastName`, t.lastName, opts);
+  };
   const errors = formState.errors as FieldErrors<z.output<typeof schema>>;
   const requests = useWatch({ control, name: 'specialRequests' }) ?? '';
 
@@ -209,7 +220,13 @@ function GuestForm({ selection }: { selection: HotelSelection }) {
         },
         input.key,
       ),
-    onSuccess: (result) => {
+    onSuccess: (result, input) => {
+      // "Save traveller for next time": kept once the rooms are held.
+      saveTravellers(
+        input.values.guests
+          .filter((_, i) => keep[i])
+          .map((g) => ({ title: g.title, firstName: g.firstName, lastName: g.lastName })),
+      );
       useHotelDraft.getState().setReference(result.bookingRef);
       void navigate(`/hotels/review?ref=${encodeURIComponent(result.bookingRef)}`);
     },
@@ -281,6 +298,13 @@ function GuestForm({ selection }: { selection: HotelSelection }) {
               <p className="text-sm text-muted">Lead guest</p>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-[8rem_1fr_1fr]">
+              <SavedTravellerControls
+                index={i}
+                saved={savedTravellers}
+                onPick={(st) => pick(i, st)}
+                keep={keep[i] ?? false}
+                onKeepChange={(on) => setKeep((k) => k.map((v, j) => (j === i ? on : v)))}
+              />
               <FormField label="Title" name={`guest-${i}-title`} error={e?.title?.message}>
                 <SelectInput data-testid={`${prefix}-title`} {...register(`guests.${i}.title`)}>
                   {HOTEL_TITLES.map((title) => (

@@ -1,14 +1,16 @@
-"""CHK-01…06: the shared checkout (review, payment, confirmation) across services."""
+"""CHK-01…07: the shared checkout (review, payment, confirmation) across services."""
 from __future__ import annotations
 
 import re
 
 import pytest
+from selenium.webdriver.support.ui import WebDriverWait
 
 from tests.e2e.conftest import sign_in
 from tests.e2e.flows import api_book_bus, bus_to_review
 from tests.e2e.pages.base import Page
-from tests.e2e.pages.bus import find_bus_trip
+from tests.e2e.pages.bus import BusSeatsPage, BusTravellersPage, find_bus_trip
+from tests.e2e.pages.flight import FlightFaresPage, FlightTravellersPage, find_flight
 from tests.e2e.pages.checkout import ConfirmationPage, PaymentPage
 from tests.support import Api
 
@@ -103,3 +105,37 @@ def test_CHK_06_confirmation_pdf(driver, user, tmp_path):
     pdf = next(f for f in folder.iterdir() if f.suffix == ".pdf")
     confirm.w.until(lambda d: pdf.stat().st_size > 1000)
     assert pdf.read_bytes()[:5] == b"%PDF-"
+
+
+def test_CHK_07_saved_travellers(driver, user, user_api):
+    """SOP §6.3: "Save traveller for next time" at one checkout, offered on the next one, and
+    listed (removable) on the profile."""
+    trip = find_bus_trip(days=75)
+    sign_in(driver, user, f"/buses/{trip.trip_id}/seats")
+    seats = BusSeatsPage(driver).wait_loaded()
+    seats.select_seats(trip.seats[:1]).choose_points(trip.boarding, trip.dropping).continue_()
+    seats.wait_url("/buses/booking")
+    travellers = BusTravellersPage(driver).fill([("Neha Patil", 29, "FEMALE")])
+    travellers.click("checkout-traveller-0-save")
+    travellers.continue_()
+    travellers.wait_url("/buses/review?ref=")
+    WebDriverWait(driver, 15).until(lambda d: user_api.get("/me/travellers").json()["data"])
+    saved = user_api.get("/me/travellers").json()["data"]
+    assert [(t["firstName"], t["lastName"], t["gender"]) for t in saved] == [("Neha", "Patil", "FEMALE")]
+
+    offer = find_flight(days=76)
+    fares = FlightFaresPage(driver).open_offer(offer.offer_id).wait_loaded()
+    fares.continue_()
+    fares.wait_url("/flights/booking")
+    form = FlightTravellersPage(driver).wait_loaded()
+    form.select("checkout-traveller-0-saved", saved[0]["id"])
+    form.w.until(lambda d: form.attr("checkout-traveller-0-first-name", "value") == "Neha")
+    assert form.attr("checkout-traveller-0-last-name", "value") == "Patil"
+    assert form.el("checkout-traveller-0-gender-female").is_selected()
+
+    profile = Page(driver).open("/profile")
+    row = profile.visible(f"saved-traveller-{saved[0]['id']}")
+    assert "Neha Patil" in row.text
+    profile.click(f"saved-traveller-remove-{saved[0]['id']}")
+    profile.visible("saved-travellers-empty")
+    assert user_api.get("/me/travellers").json()["data"] == []

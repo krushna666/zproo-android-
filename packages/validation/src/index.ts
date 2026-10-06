@@ -5,3 +5,4 @@ export * from './search';
 export * from './coupon';
 export * from './messages';
 export * from './hotels';
+export * from './travellers';

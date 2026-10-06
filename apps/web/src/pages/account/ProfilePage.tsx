@@ -28,6 +28,7 @@ import { UserAvatar } from '@/features/auth/components/UserAvatar';
 import { errorMessage } from '@/features/auth/errors';
 import { maskPhone } from '@/features/auth/redirect';
 import { nameFormSchema } from '@/features/auth/schemas';
+import { SavedTravellersCard } from '@/features/travellers/SavedTravellersCard';
 import { signOut } from '@/features/auth/session';
 import { hasPermission, useAuthStore } from '@/features/auth/store';
 
@@ -98,6 +99,8 @@ export default function ProfilePage() {
           />
         </CardContent>
       </Card>
+
+      <SavedTravellersCard />
 
       <Card>
         <CardHeader>

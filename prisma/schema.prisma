@@ -147,6 +147,7 @@ model User {
   payments       Payment[]
   idempotency    IdempotencyKey[]
   redemptions    CouponRedemption[]
+  travellers     SavedTraveller[]
 
   @@index([status])
   @@index([createdAt])
@@ -268,6 +269,26 @@ model AuthIdentity {
   @@unique([provider, providerUserId])
   @@index([userId])
   @@map("auth_identities")
+}
+
+/// SOP §6.3: travellers kept on the profile and offered on every checkout form.
+model SavedTraveller {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  title       String?
+  firstName   String    @map("first_name")
+  lastName    String    @map("last_name")
+  gender      Gender?
+  dateOfBirth DateTime? @map("date_of_birth") @db.Date
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Saving the same person again updates them.
+  @@unique([userId, firstName, lastName])
+  @@index([userId, updatedAt])
+  @@map("saved_travellers")
 }
 
 model Address {

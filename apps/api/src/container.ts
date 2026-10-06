@@ -36,6 +36,7 @@ import { OtpService } from './services/otp.service';
 import { PasswordService } from './services/password.service';
 import { RbacService } from './services/rbac.service';
 import { TokenService } from './services/token.service';
+import { TravellerService } from './services/traveller.service';
 import { UserService } from './services/user.service';
 
 export interface Providers {
@@ -144,6 +145,7 @@ export function createServices({
       logger,
     }),
     users: new UserService(users, rbac, audit),
+    travellers: new TravellerService(prisma),
     flights: new FlightService(flightProvider, new CacheService(redis, logger), {
       internationalEnabled: env.INTL_FLIGHTS,
     }),

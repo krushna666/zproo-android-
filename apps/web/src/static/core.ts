@@ -6,6 +6,7 @@ import type {
   Permission,
   PublicUser,
   RoleName,
+  SavedTraveller,
 } from '@zproo/types';
 import { ROLE_PERMISSIONS } from '@zproo/types';
 import type { LiveHotelHold } from '@zproo/catalog';
@@ -120,6 +121,8 @@ export interface StoredUser {
   /** SHA-256 of the password (demo storage in this browser only) */
   passwordHash: string | null;
   createdAt: string;
+  /** SOP §6.3 saved travellers (absent on users stored before v4.1) */
+  travellers?: SavedTraveller[];
 }
 
 export interface StoredBooking {

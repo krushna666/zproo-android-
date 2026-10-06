@@ -38,6 +38,8 @@ import { GstCard } from '@/features/checkout/GstCard';
 import { SelectInput } from '@/features/checkout/SelectInput';
 import { PriceChangedDialog } from '@/features/checkout/PriceChangedDialog';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
+import { SavedTravellerControls } from '@/features/checkout/SavedTravellerControls';
+import { useSaveTravellers, useSavedTravellers } from '@/features/travellers/api';
 import { flightsApi, useFlightOffer } from '@/features/flights/api';
 import { ItinerarySummary } from '@/features/flights/components/ItinerarySummary';
 import { useFlightDraft, type FlightSelection } from '@/features/flights/draft';
@@ -195,7 +197,20 @@ function TravellerForm({
     },
     mode: 'onTouched',
   });
-  const { register, handleSubmit, formState, control, getValues, subscribe } = form;
+  const { register, handleSubmit, formState, control, getValues, subscribe, setValue } = form;
+  const savedTravellers = useSavedTravellers().data ?? [];
+  const saveTravellers = useSaveTravellers();
+  const [keep, setKeep] = useState<boolean[]>(() => defaults.map(() => false));
+  const pick = (i: number, t: (typeof savedTravellers)[number]) => {
+    const opts = { shouldValidate: formState.isSubmitted, shouldDirty: true };
+    const type = defaults[i]?.type ?? 'ADULT';
+    if (t.title && (PASSENGER_TITLES[type] as readonly string[]).includes(t.title))
+      setValue(`travellers.${i}.title`, t.title as FlightTravellerInput['title'], opts);
+    setValue(`travellers.${i}.firstName`, t.firstName, opts);
+    setValue(`travellers.${i}.lastName`, t.lastName, opts);
+    if (t.gender) setValue(`travellers.${i}.gender`, t.gender, opts);
+    if (t.dob) setValue(`travellers.${i}.dob`, t.dob, opts);
+  };
   const errors = formState.errors as FieldErrors<z.output<typeof schema>>;
   const watched = useWatch({ control, name: 'travellers' });
 
@@ -230,7 +245,19 @@ function TravellerForm({
         },
         input.key,
       ),
-    onSuccess: (result) => {
+    onSuccess: (result, input) => {
+      // "Save traveller for next time": kept once the seats are held.
+      saveTravellers(
+        input.values.travellers
+          .filter((_, i) => keep[i])
+          .map((t) => ({
+            title: t.title,
+            firstName: t.firstName,
+            lastName: t.lastName,
+            gender: t.gender,
+            ...(t.dob ? { dob: t.dob } : {}),
+          })),
+      );
       useFlightDraft.getState().setReference(result.bookingRef);
       void navigate(`/flights/review?ref=${encodeURIComponent(result.bookingRef)}`);
     },
@@ -301,6 +328,13 @@ function TravellerForm({
               </CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-[8rem_1fr_1fr]">
+              <SavedTravellerControls
+                index={i}
+                saved={savedTravellers}
+                onPick={(st) => pick(i, st)}
+                keep={keep[i] ?? false}
+                onKeepChange={(on) => setKeep((k) => k.map((v, j) => (j === i ? on : v)))}
+              />
               <FormField label="Title" name={`traveller-${i}-title`} error={e?.title?.message}>
                 <SelectInput data-testid={`${prefix}-title`} {...register(`travellers.${i}.title`)}>
                   {PASSENGER_TITLES[t.type].map((title) => (
