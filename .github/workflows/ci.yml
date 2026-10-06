@@ -77,4 +77,4 @@ jobs:
       - name: Build
         run: npm run build
 
-      # Phase 20 adds the Playwright E2E job here.
+      # Selenium end-to-end and security suites: .github/workflows/e2e.yml

@@ -408,7 +408,7 @@ function Results({ search }: { search: FlightSearch }) {
       </div>
 
       {roundTrip && (
-        <div className="fixed inset-x-0 bottom-[var(--bottom-nav-height)] z-30 border-t border-border bg-card/95 py-3 backdrop-blur lg:bottom-0">
+        <div className="fixed inset-x-0 bottom-[var(--bottom-nav-height)] z-30 border-t border-border bg-card py-3 lg:bottom-0">
           <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
             <div className="min-w-0 text-sm">
               <p className="truncate text-muted">

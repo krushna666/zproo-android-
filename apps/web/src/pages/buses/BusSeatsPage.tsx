@@ -240,7 +240,7 @@ function Seats({ trip, map }: { trip: BusTripDetails; map: BusSeatMap }) {
           dropping={trip.droppingPoints.find((p) => p.id === droppingId)}
         />
       </CheckoutShell>
-      <div className="fixed inset-x-0 bottom-[var(--bottom-nav-height)] z-30 border-t border-border bg-card/95 py-3 backdrop-blur lg:bottom-0">
+      <div className="fixed inset-x-0 bottom-[var(--bottom-nav-height)] z-30 border-t border-border bg-card py-3 lg:bottom-0">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">{bar}</div>
       </div>
     </div>

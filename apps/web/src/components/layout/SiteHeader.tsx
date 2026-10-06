@@ -27,7 +27,7 @@ export function SiteHeader() {
     <header
       data-testid="site-header"
       data-session={session}
-      className="sticky top-0 z-40 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85"
+      className="sticky top-0 z-40 border-b border-border bg-card"
     >
       <a
         href="#main"

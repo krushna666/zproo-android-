@@ -1,0 +1,121 @@
+# End-to-end test stack (Prompt 04 §3): Postgres 16, Redis 7, the API in test mode (mock
+# suppliers, OTP 123456, /api/test routes) and the web app built for the API with test hooks.
+# The Selenium suite runs on the host with local Chrome + chromedriver (it uses Chrome DevTools
+# commands, which a remote Selenium Grid does not expose).
+#
+#   make e2e-docker            # up --wait, run the suites, down
+#   IMAGE_REGISTRY=mirror.gcr.io/library/ make e2e-docker   # when Docker Hub rate-limits
+#
+# The repository (with node_modules from `npm ci` on a Linux x64 host) is mounted read-write;
+# credentials are for this throwaway stack only.
+name: zproo-go-e2e
+
+x-node: &node
+  image: ${IMAGE_REGISTRY:-}node:22-bookworm
+  working_dir: /repo
+  volumes:
+    - ./:/repo
+  environment: &node-env
+    TURBO_TELEMETRY_DISABLED: '1'
+    NPM_CONFIG_UPDATE_NOTIFIER: 'false'
+
+services:
+  postgres:
+    image: ${IMAGE_REGISTRY:-}postgres:16-alpine
+    environment:
+      POSTGRES_USER: zproo
+      POSTGRES_PASSWORD: zproo
+      POSTGRES_DB: zproo_e2e
+    ports: ['127.0.0.1:55432:5432']
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U zproo -d zproo_e2e']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: ${IMAGE_REGISTRY:-}redis:7-alpine
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    ports: ['127.0.0.1:56379:6379']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    <<: *node
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *node-env
+      NODE_ENV: test
+      ALLOW_TEST_OTP: 'true'
+      PORT: '5100'
+      TRUST_PROXY: '1'
+      DATABASE_URL: postgresql://zproo:zproo@postgres:5432/zproo_e2e
+      DIRECT_DATABASE_URL: postgresql://zproo:zproo@postgres:5432/zproo_e2e
+      REDIS_URL: redis://redis:6379/5
+      FRONTEND_URL: http://localhost:4300
+      CORS_ORIGINS: http://localhost:4300
+      # Every browser shares one address: per-IP limits are raised, per-account limits are not.
+      RATE_LIMIT_MAX: '100000'
+      AUTH_IP_RATE_LIMIT: '100000'
+      OTP_IP_RATE_LIMIT: '100000'
+      SEARCH_RATE_LIMIT: '600'
+      JWT_SECRET: e2e-access-secret-0123456789abcdef
+      JWT_REFRESH_SECRET: e2e-refresh-secret-0123456789abcdef
+      LOG_LEVEL: info
+    # The log is also written where the security suite reads it (SEC-17).
+    command:
+      - sh
+      - -c
+      - >-
+        npx prisma migrate deploy && npm run db:seed &&
+        mkdir -p tests/e2e/.run &&
+        cd apps/api && npx tsx src/server.ts 2>&1 | tee /repo/tests/e2e/.run/api.log
+    ports: ['127.0.0.1:5100:5100']
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:5100/api/health/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+      start_period: 30s
+
+  web:
+    <<: *node
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      <<: *node-env
+      VITE_DATA_SOURCE: api
+      VITE_TEST_HOOKS: 'true'
+      VITE_API_URL: ''
+      API_PROXY_TARGET: http://api:5100
+    command:
+      - sh
+      - -c
+      - >-
+        cd apps/web && npx vite build --outDir dist-e2e --emptyOutDir &&
+        npx vite preview --outDir dist-e2e --host 0.0.0.0 --port 4300 --strictPort
+    ports: ['127.0.0.1:4300:4300']
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:4300/api/health/ready').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 100
+      start_period: 60s

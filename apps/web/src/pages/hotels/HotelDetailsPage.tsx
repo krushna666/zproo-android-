@@ -416,7 +416,7 @@ function Hotel({
       </section>
 
       {stay && (
-        <div className="fixed inset-x-0 bottom-[var(--bottom-nav-height)] z-30 border-t border-border bg-card/95 py-3 backdrop-blur lg:bottom-0">
+        <div className="fixed inset-x-0 bottom-[var(--bottom-nav-height)] z-30 border-t border-border bg-card py-3 lg:bottom-0">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
             <div>
               <p className="text-xs text-muted" data-testid="hotel-rooms-selected">
