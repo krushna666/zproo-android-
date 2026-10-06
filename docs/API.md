@@ -1,208 +1,212 @@
 # API
 
-- Base URL: `/api` (development: `http://localhost:5000/api`)
-- Interactive docs: `/api/docs` (Swagger UI) and `/api/docs/openapi.json`. Enabled by default
-  outside production (`ENABLE_API_DOCS`).
-- The OpenAPI document is generated from the same Zod schemas the API validates with.
+- Base URL: `/api` (development `http://localhost:5000/api`; the E2E stack uses `:5100`).
+- Interactive docs: `/api/docs` (Swagger UI) and `/api/docs/openapi.json`, generated from the
+  same Zod schemas the API validates with. On by default outside production (`ENABLE_API_DOCS`).
+- JSON only, request bodies up to 100 kB. Every body, query and path is validated with a strict
+  schema: unknown keys are a `400 VALIDATION_ERROR`.
+- Money is integer **paise** everywhere. Prices and totals are computed on the server; clients
+  send IDs, selections and coupon codes, plus the total they were shown (`expectedTotal`) so a
+  changed price is caught, never trusted.
 
-## Response envelope
+## Envelopes
+
+Success:
 
 ```json
 { "success": true, "message": "Success", "data": {} }
 ```
 
+Failure (no stack traces, SQL or supplier payloads, in any environment):
+
 ```json
 {
-  "success": false,
-  "message": "Validation failed",
-  "errorCode": "VALIDATION_ERROR",
-  "data": null,
-  "details": [{ "path": "body.phone", "message": "Enter a valid 10-digit mobile number" }],
-  "requestId": "0538849f-36e1-4e3d-ba46-dc6a47022590"
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Please fix the errors",
+    "requestId": "0538849f-36e1-4e3d-ba46-dc6a47022590",
+    "details": {
+      "fields": { "phone": "Enter a valid 10-digit mobile number" },
+      "issues": [{ "path": "body.phone", "message": "Enter a valid 10-digit mobile number" }]
+    }
+  }
 }
 ```
 
-`requestId` matches the `X-Request-Id` response header and the server logs. Clients may send a
-well-formed `X-Request-Id` (8–128 chars of `A-Z a-z 0-9 . _ -`) to correlate across services.
+`requestId` equals the `X-Request-Id` response header and the server log line. Clients may send a
+well-formed `X-Request-Id` (8–128 chars of `A-Z a-z 0-9 . _ -`). Errors are always
+`Cache-Control: no-store`.
 
 ## Error codes
 
-| HTTP | `errorCode`               | When                                                            |
-| ---- | ------------------------- | --------------------------------------------------------------- |
-| 400  | `BAD_REQUEST`             | Malformed JSON or request                                       |
-| 400  | `VALIDATION_ERROR`        | Input failed validation (`details` lists each field)            |
-| 401  | `UNAUTHENTICATED`         | Not signed in, or session expired                               |
-| 401  | `INVALID_CREDENTIALS`     | Wrong mobile number/email or password                           |
-| 400  | `INVALID_OTP`             | Wrong code (message says how many attempts are left)            |
-| 400  | `OTP_EXPIRED`             | Code expired, already used, or too many attempts                |
-| 403  | `ACCOUNT_DISABLED`        | Account suspended or deactivated                                |
-| 400  | `PROVIDER_NOT_CONFIGURED` | That social sign-in is not enabled                              |
-| 403  | `FORBIDDEN`               | Authenticated but lacking permission                            |
-| 404  | `NOT_FOUND`               | Unknown route or record                                         |
-| 409  | `CONFLICT`                | Unique constraint (e.g. phone already registered)               |
-| 409  | `OFFER_EXPIRED`           | The fare is no longer sold; search again                        |
-| 409  | `PRICE_CHANGED`           | Fare differs from `expectedTotalPaise` (new total in `details`) |
-| 409  | `SOLD_OUT`                | Not enough seats left to hold                                   |
-| 409  | `SEAT_UNAVAILABLE`        | A chosen bus seat was taken by someone else                     |
-| 409  | `BOOKING_EXPIRED`         | Seat hold ran out before payment completed                      |
-| 409  | `INVALID_STATE`           | Action not allowed in the booking's current status              |
-| 402  | `PAYMENT_ERROR`           | Payment failed or could not be verified                         |
-| 413  | `PAYLOAD_TOO_LARGE`       | Body over 100 kB                                                |
-| 429  | `RATE_LIMITED`            | Too many requests (see `RateLimit` headers)                     |
-| 500  | `DATABASE_ERROR`          | Unexpected database error                                       |
-| 500  | `INTERNAL_ERROR`          | Anything unexpected (details are logged, never returned)        |
-| 502  | `PROVIDER_ERROR`          | An upstream supplier (airline, payment…) failed                 |
-| 503  | `SERVICE_UNAVAILABLE`     | A dependency is down                                            |
+| HTTP | `code`                    | When                                                                       |
+| ---- | ------------------------- | -------------------------------------------------------------------------- |
+| 400  | `BAD_REQUEST`             | Malformed JSON or request                                                  |
+| 400  | `VALIDATION_ERROR`        | Input failed validation (`details.fields` / `details.issues`)              |
+| 400  | `INVALID_OTP`             | Wrong code (the message says how many attempts are left)                   |
+| 400  | `OTP_EXPIRED`             | Code expired, already used, or too many attempts                           |
+| 400  | `PROVIDER_NOT_CONFIGURED` | That social sign-in is not enabled                                         |
+| 400  | `PAYMENT_ERROR`           | Payment signature, order or webhook rejected                               |
+| 401  | `UNAUTHENTICATED`         | Not signed in; token missing, expired, tampered, wrong `alg`/`aud`/`iss`   |
+| 401  | `INVALID_CREDENTIALS`     | Wrong mobile number/email or password                                      |
+| 403  | `ACCOUNT_DISABLED`        | Account suspended or deactivated                                           |
+| 403  | `FORBIDDEN`               | Signed in but not allowed (another customer's booking, missing CSRF)       |
+| 404  | `NOT_FOUND`               | No such route or record (on this account)                                  |
+| 409  | `PRICE_CHANGED`           | The price moved; `details.oldTotal`, `details.newTotal`                    |
+| 409  | `SEAT_UNAVAILABLE`        | Seats taken meanwhile; `details.seats`                                     |
+| 409  | `ROOM_UNAVAILABLE`        | Room sold out meanwhile                                                    |
+| 409  | `FARE_UNAVAILABLE`        | Fare or offer no longer sold                                               |
+| 409  | `IDEMPOTENCY_CONFLICT`    | Same `Idempotency-Key` with a different body                               |
+| 409  | `BOOKING_CLOSED`          | Sales closed for that departure                                            |
+| 409  | `INVALID_STATE`           | Action not allowed in the booking's state (e.g. cancel twice)              |
+| 409  | `CONFLICT`                | Limit or uniqueness (e.g. 20 saved travellers)                             |
+| 410  | `HOLD_EXPIRED`            | The hold ran out before payment                                            |
+| 413  | `PAYLOAD_TOO_LARGE`       | Body over 100 kB                                                           |
+| 422  | `COUPON_INVALID`          | `details.reason`: `expired`, `not_applicable`, `min_amount`, `usage_limit` |
+| 429  | `RATE_LIMITED`            | With `Retry-After` and `details.retryAfter` (seconds)                      |
+| 500  | `INTERNAL_ERROR`          | "Something went wrong. Please try again."                                  |
+| 500  | `DATABASE_ERROR`          | Database failure (generic message)                                         |
+| 502  | `PROVIDER_ERROR`          | Supplier unreachable after retries / circuit open                          |
+| 503  | `SERVICE_UNAVAILABLE`     | Dependency down                                                            |
 
-## Endpoints
+The web app maps codes to the SOP copy (`apps/web/src/lib/apiErrors.ts`).
 
-### System
+## Authentication
 
-| Method | Path                | Description                                                            |
-| ------ | ------------------- | ---------------------------------------------------------------------- |
-| GET    | `/api/health`       | Health report: version, uptime, database and Redis status (always 200) |
-| GET    | `/api/health/ready` | Readiness probe: 200 when all dependencies are up, else 503            |
-| GET    | `/api/health/live`  | Liveness probe: 200 while the process serves requests                  |
+- **Access token**: JWT HS256 (algorithm pinned; `iss`, `aud`, `exp` checked), 15 minutes
+  (`JWT_ACCESS_TTL`), sent as `Authorization: Bearer <token>`. The web app keeps it in memory.
+- **Refresh token**: random value in `zp_rt` (`HttpOnly`, `SameSite=Strict`, path `/api/auth`,
+  `Secure` in production), 30 days (`REFRESH_TOKEN_TTL_DAYS`). Rotated on every refresh; replaying
+  an old one revokes every session of that user.
+- **CSRF** on `/auth/refresh` and `/auth/logout`: the browser `Origin` (or `Referer`) must be an
+  allowed web origin, and `X-CSRF-Token` must equal the `zp_csrf` cookie (double submit).
+- **Development** SMS/email providers return the code as `devCode` (for the in-app hint); their
+  console output masks the recipient and redacts the code. They are refused in production.
 
-Health endpoints are exempt from rate limiting.
+| Method | Path                      | Auth          | Description                                                                             |
+| ------ | ------------------------- | ------------- | --------------------------------------------------------------------------------------- |
+| POST   | `/auth/send-otp`          | —             | `{ phone }` → 6-digit code (same answer for new and existing numbers)                   |
+| POST   | `/auth/verify-otp`        | —             | `{ phone, otp }` → signed in, or `SIGNUP_REQUIRED` + `signupToken` for a new number     |
+| POST   | `/auth/register`          | signup token  | `{ signupToken, fullName, email?, password? }` → 201, signed in                         |
+| POST   | `/auth/login`             | —             | `{ identifier, password }` (mobile number or email)                                     |
+| POST   | `/auth/social/{provider}` | —             | `google` / `apple` ID token (when its client ID is configured)                          |
+| POST   | `/auth/refresh`           | cookie + CSRF | New access token, rotated cookie                                                        |
+| POST   | `/auth/logout`            | cookie + CSRF | End this session (idempotent)                                                           |
+| POST   | `/auth/logout-all`        | bearer        | End every session                                                                       |
+| POST   | `/auth/forgot-password`   | —             | `{ identifier }` → same status, body shape and timing whether or not the account exists |
+| POST   | `/auth/reset-password`    | —             | `{ identifier, otp, newPassword }`; signs out all sessions                              |
 
-### Authentication
+Sign-in responses are `{ user, accessToken, expiresIn }` and set the cookies.
 
-| Method | Path                              | Auth           | Description                                                                         |
-| ------ | --------------------------------- | -------------- | ----------------------------------------------------------------------------------- |
-| POST   | `/api/auth/send-otp`              | —              | Send a 6-digit code to a mobile number (same response for new and existing numbers) |
-| POST   | `/api/auth/verify-otp`            | —              | Existing user → signed in. New number → `SIGNUP_REQUIRED` + 15-minute `signupToken` |
-| POST   | `/api/auth/register`              | signup token   | Create the account (name, optional email and password) and sign in                  |
-| POST   | `/api/auth/login`                 | —              | Mobile number or email + password                                                   |
-| POST   | `/api/auth/social/{google,apple}` | —              | Sign in with a provider ID token (enabled when its client ID is configured)         |
-| POST   | `/api/auth/refresh`               | refresh cookie | Rotate the refresh cookie, return a new access token                                |
-| POST   | `/api/auth/logout`                | refresh cookie | End this device's session (idempotent)                                              |
-| POST   | `/api/auth/logout-all`            | bearer         | End every session on every device                                                   |
-| POST   | `/api/auth/forgot-password`       | —              | Send a reset code by SMS or email (always the same response)                        |
-| POST   | `/api/auth/reset-password`        | —              | Code + new password; signs out all sessions                                         |
+## Account
 
-Every sign-in response has the shape `{ user, accessToken, expiresIn }` and sets the refresh cookie.
+| Method | Path                  | Description                                                                                       |
+| ------ | --------------------- | ------------------------------------------------------------------------------------------------- |
+| GET    | `/me`                 | The signed-in user with roles and permissions                                                     |
+| PATCH  | `/me`                 | `{ fullName }`                                                                                    |
+| POST   | `/me/password`        | `{ currentPassword, newPassword }`; other devices are signed out                                  |
+| GET    | `/me/travellers`      | Saved travellers, newest first (SOP §6.3)                                                         |
+| PUT    | `/me/travellers`      | `{ firstName, lastName?, title?, gender?, dob? }`; the same name updates; max 20 (`409 CONFLICT`) |
+| DELETE | `/me/travellers/{id}` | Remove one (another account's id is `404`)                                                        |
 
-- **Access token**: JWT (HS256), 15 minutes, sent as `Authorization: Bearer <token>`. The web app
-  keeps it in memory only.
-- **Refresh token**: random 256-bit value in an `HttpOnly`, `SameSite=Lax` cookie `zp_rt` scoped to
-  `/api/auth` (`Secure` in production), valid 30 days. Each use returns a new one. Replaying an old
-  one is treated as theft and ends that session everywhere.
-- **Development**: with `SMS_PROVIDER=console`, `send-otp` and `forgot-password` responses include
-  `devCode`, and the code is printed in the API terminal. The console provider is refused in
-  production.
+## Search and inventory (public)
 
-Mobile OTP sign-up flow:
+| Method | Path                      | Cache        | Description                                                                             |
+| ------ | ------------------------- | ------------ | --------------------------------------------------------------------------------------- |
+| GET    | `/buses/cities?q=`        | —            | City suggestions                                                                        |
+| GET    | `/buses/search`           | private, 60s | `from`, `to` (city codes), `date` (YYYY-MM-DD, today…+120 days)                         |
+| GET    | `/buses/{tripId}`         | —            | Operator, coach, photos, boarding/dropping points, policies                             |
+| GET    | `/buses/{tripId}/seats`   | `no-store`   | Seat map with live status and per-seat prices                                           |
+| GET    | `/flights/airports?q=`    | —            | Airport suggestions                                                                     |
+| GET    | `/flights/search`         | private, 60s | `from`, `to`, `date`, `returnDate?`, `adults`, `children`, `infants`, `cabin`           |
+| GET    | `/flights/{offerId}`      | `no-store`   | Live price, fare families, rules; `?reprice=1` re-prices an expired offer (20 min TTL)  |
+| GET    | `/hotels/destinations?q=` | —            | Cities, areas and hotels                                                                |
+| GET    | `/hotels/search`          | private, 60s | `destinationId`, `checkIn`, `checkOut`, `rooms` (`2-0\|1-1:5`), filters, `sort`, `page` |
+| GET    | `/hotels/{hotelId}`       | —            | Gallery, amenities, house rules, policies                                               |
+| GET    | `/hotels/{hotelId}/rooms` | `no-store`   | Room types and rates for the stay                                                       |
 
-```
-POST /auth/send-otp { phone }                   → { expiresIn: 300, resendIn: 60 }
-POST /auth/verify-otp { phone, otp }            → { status: "SIGNUP_REQUIRED", signupToken, phone }
-POST /auth/register { signupToken, fullName, email?, password? } → 201 { user, accessToken, expiresIn } + cookie
-```
+## Booking (signed in, `Idempotency-Key` header required)
 
-### Account
+| Method | Path                                         | Description                                                                                                        |
+| ------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| POST   | `/buses/book`                                | Hold seats (`BOOKING_HOLD_MINUTES`, 15) → `{ bookingRef, status: HELD, holdExpiresAt, serverNow, priceBreakdown }` |
+| POST   | `/flights/book`                              | Hold seats (15 min, or the airline's limit if shorter); one or two legs                                            |
+| POST   | `/hotels/book`                               | Hold rooms (15 min); one lead guest per room; `specialRequests` stored as plain text                               |
+| POST   | `/{buses,flights,hotels}/{reference}/cancel` | Cancel a confirmed booking (owner); refund per policy                                                              |
 
-| Method | Path      | Auth   | Description                                       |
-| ------ | --------- | ------ | ------------------------------------------------- |
-| GET    | `/api/me` | bearer | The signed-in user with roles and permissions     |
-| PATCH  | `/api/me` | bearer | Update profile (`fullName`); other fields ignored |
+Same key + same body replays the first response; same key + different body is
+`409 IDEMPOTENCY_CONFLICT`. Concurrent holds on the last seat or room: exactly one succeeds.
 
-### Admin
+## Bookings, coupons, payments (signed in)
 
-Every `/api/admin/*` route requires `admin:access` plus its own permission.
+| Method | Path                                 | Description                                                                                                                                                                    |
+| ------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/bookings`                          | Your bookings, newest first                                                                                                                                                    |
+| GET    | `/bookings/{reference}`              | Details (owner, or staff with `booking:read:any`; others `403`, no data)                                                                                                       |
+| GET    | `/bookings/{reference}/ticket.pdf`   | E-ticket / voucher PDF (confirmed bookings), `no-store`                                                                                                                        |
+| GET    | `/bookings/{reference}/cancellation` | Refund estimate from the server before cancelling                                                                                                                              |
+| POST   | `/coupons/apply`                     | `{ bookingRef, code }` → recomputed price                                                                                                                                      |
+| POST   | `/coupons/remove`                    | `{ bookingRef }`                                                                                                                                                               |
+| POST   | `/payments/create`                   | `{ bookingRef }` → order for the **booking's** amount (reuses an open order)                                                                                                   |
+| POST   | `/payments/verify`                   | `{ bookingRef, orderId, paymentId, signature }`: HMAC-SHA256 checked in constant time, order/amount/currency must match, then the supplier issues and the booking is confirmed |
+| POST   | `/payments/fail`                     | `{ orderId, reason }`; the booking stays payable until the hold ends                                                                                                           |
+| POST   | `/payments/webhook`                  | Gateway webhook (raw body, `X-Razorpay-Signature`, `X-Razorpay-Event-Id`); each event once; verify and webhook race safely                                                     |
+| POST   | `/payments/mock/complete`            | **Mock gateway only** (never in production): returns `success` / `failure` like the real checkout                                                                              |
 
-| Method | Path               | Permission      | Description                                                                       |
-| ------ | ------------------ | --------------- | --------------------------------------------------------------------------------- |
-| GET    | `/api/admin/users` | `user:read:any` | Paginated users; `search` (name, phone, email), `role`, `status`, `page`, `limit` |
+A capture after the hold expired leaves the booking expired and marks the payment
+`REFUND_DUE`. Supplier issue failures are retried by status lookup, then `REFUND_DUE`.
 
-### Flights (Phase 4)
+## Admin
 
-| Method | Path                     | Auth             | Description                                                                                                                  |
-| ------ | ------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/flights/search`    | —                | `trip`, `from`, `to`, `date`, `return` or `legs=PNQ.DEL.2026-10-25,…`; `adults`, `children`, `infants`, `cabin`. Cached 60 s |
-| GET    | `/api/flights/{offerId}` | —                | Current price and seats for one offer; `adults`, `children`, `infants`                                                       |
-| POST   | `/api/flights/book`      | `booking:create` | Holds seats and creates a `HELD` booking. **Requires `Idempotency-Key`**                                                     |
+Every `/admin/*` route needs `admin:access` plus its own permission.
 
-`POST /api/flights/book` body: `{ offerIds, passengers[], contact: { email, phone }, expectedTotalPaise }`.
-The server re-prices every offer; if the total differs it answers `409 PRICE_CHANGED` and nothing is
-held. Retrying with the same `Idempotency-Key` returns the original booking. Seats are held for
-`BOOKING_HOLD_MINUTES`; unpaid bookings are then cancelled and the seats released (a job runs every
-minute on each API instance; the state change is conditional, so instances never double-release).
+| Method | Path           | Permission      | Description                                                  |
+| ------ | -------------- | --------------- | ------------------------------------------------------------ |
+| GET    | `/admin/users` | `user:read:any` | Users; `search`, `role`, `status`, `page`, `limit` (max 100) |
 
-### Buses (Phase 5)
+## System
 
-| Method | Path                        | Auth             | Description                                                                                     |
-| ------ | --------------------------- | ---------------- | ----------------------------------------------------------------------------------------------- |
-| GET    | `/api/buses/search`         | —                | `from`, `to` (city codes, e.g. `pune`, `mumbai`), `date`. Departures in time order. Cached 60 s |
-| GET    | `/api/buses/{tripId}`       | —                | Operator, coach, amenities, boarding/dropping points with times, cancellation policy            |
-| GET    | `/api/buses/{tripId}/seats` | —                | Seat layout per deck with live availability and per-seat price incl. GST (never cached)         |
-| POST   | `/api/buses/book`           | `booking:create` | Holds the seats and creates a `HELD` booking. **Requires `Idempotency-Key`**                    |
+| Method | Path            | Description                                             |
+| ------ | --------------- | ------------------------------------------------------- |
+| GET    | `/health`       | Version, uptime, database and Redis status (always 200) |
+| GET    | `/health/ready` | 200 when every dependency is up, else 503 (readiness)   |
+| GET    | `/health/live`  | 200 while the process serves requests (liveness)        |
 
-`POST /api/buses/book` body: `{ tripId, boardingPointId, droppingPointId, passengers: [{ seatNumber, firstName, lastName, age, gender }], contact, expectedTotalPaise }`.
-One traveller per seat, up to 6. Ladies-only seats need a female traveller (`400` otherwise). The
-server re-prices the seats (`409 PRICE_CHANGED`) and holds them atomically (`409 SEAT_UNAVAILABLE`
-if any was taken). Payment, tickets (`/bookings/{reference}/ticket.pdf`) and hold expiry work exactly
-as for flights; booking details carry a `bus` object instead of `flights`.
+## Test hooks (`NODE_ENV=test` only)
 
-### Hotels (Phase 7, `HOTEL_PROVIDER=mock` today; planned vendor: a hotel aggregator / bed-bank API)
+Never mounted otherwise, and the server refuses to start if they would be (`assertTestEnvironment`).
 
-| Method | Path                             | Auth             | Description                                                                                                                      |
-| ------ | -------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/hotels/destinations`       | —                | `q`: cities, areas and hotels `[{ id, type: CITY\|AREA\|HOTEL, name, city, state }]`                                             |
-| GET    | `/api/hotels/search`             | —                | `destinationId`, `checkIn`, `checkOut`, `rooms` (`2-0\|2-1:7`), filters, `sort`, `page`, `pageSize` ≤ 30. Cached 60 s            |
-| GET    | `/api/hotels/{hotelId}`          | —                | Gallery, amenities by group, house rules, check-in/out times, cancellation summary                                               |
-| GET    | `/api/hotels/{hotelId}/rooms`    | —                | Room types and rates for `checkIn`, `checkOut`, `rooms`, with nightly prices (never cached)                                      |
-| POST   | `/api/hotels/book`               | `booking:create` | Holds rooms for 15 minutes; `409 ROOM_UNAVAILABLE` (`details.roomTypeId`) or `409 PRICE_CHANGED`. **Requires `Idempotency-Key`** |
-| POST   | `/api/hotels/{reference}/cancel` | owner            | Full refund before the free-cancellation deadline, all but the first night after it, ₹0 for non-refundable; closed from check-in |
+| Method / header                 | Description                                                                                                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /test/users`              | Create a signed-in user → `{ user, phone, password, accessToken, refreshToken }`                                                                                      |
+| `POST /test/reset`              | Truncate customer data and rate-limit keys                                                                                                                            |
+| `POST /test/jobs/release-holds` | Run the hold-release job now                                                                                                                                          |
+| `X-Test-Now: <ISO time>`        | The server clock for this request (hold expiry, "today")                                                                                                              |
+| `X-Mock-Scenario: <name>`       | Forced supplier behaviour: `provider_down`, `slow`, `no_results`, `price_changed`, `seat_taken`, `room_sold_out`, `fare_unavailable`, `issue_pending`, `issue_failed` |
+| `ALLOW_TEST_OTP=true`           | Every OTP is `123456` (refused in production)                                                                                                                         |
 
-Messages: `You can book up to 30 nights at a time`, `You can book up to 8 rooms at a time`,
-`Add the age of each child`, `This room fits up to 3 adults`. Special requests are plain text
-(markup removed, ≤ 300 characters). Booking details carry a `hotel` object; the PDF is a voucher with
-the hotel's confirmation number.
+## Rate limits
 
-### Bookings
+Shared across instances through Redis (allowed through if Redis is down; per-code attempt limits
+in PostgreSQL still apply). Every 429 carries `Retry-After`.
 
-| Method | Path                                   | Permission         | Description                                                        |
-| ------ | -------------------------------------- | ------------------ | ------------------------------------------------------------------ |
-| GET    | `/api/bookings`                        | `booking:read:own` | The signed-in user's bookings, newest first                        |
-| GET    | `/api/bookings/{reference}`            | `booking:read:own` | Details. Other users' bookings are `403` unless `booking:read:any` |
-| GET    | `/api/bookings/{reference}/ticket.pdf` | `booking:read:own` | E-ticket PDF; `409` until the booking is confirmed                 |
+| Scope                          | Limit                              | Key            |
+| ------------------------------ | ---------------------------------- | -------------- |
+| All `/api` routes              | 300 / minute (`RATE_LIMIT_MAX`)    | IP             |
+| `/auth/*`                      | 60 / 10 min (`AUTH_IP_RATE_LIMIT`) | IP             |
+| Sending a code                 | 1 / 30 s and 5 / hour              | phone or email |
+| Sending codes from one address | 20 / hour (`OTP_IP_RATE_LIMIT`)    | IP             |
+| Verifying a code               | 20 / 15 min, 5 tries per code      | phone or email |
+| Password login                 | 10 / 15 min                        | account        |
+| Searches                       | 60 / minute (`SEARCH_RATE_LIMIT`)  | IP             |
+| Bookings, payments             | 10 / minute each                   | user           |
 
-### Payments
-
-| Method | Path                             | Permission       | Description                                                                                                 |
-| ------ | -------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| POST   | `/api/payments/create`           | `booking:create` | `{ bookingReference }` → order for the booking's amount (reuses an open order)                              |
-| POST   | `/api/payments/verify`           | `booking:create` | `{ paymentId, providerPaymentId, signature }`; signature checked server-side, then the booking is confirmed |
-| POST   | `/api/payments/{paymentId}/fail` | `booking:create` | Record a failed/abandoned attempt; the booking stays payable until the hold ends                            |
-| POST   | `/api/payments/mock/complete`    | `booking:create` | **Development only** (not mounted in production): simulates the gateway returning `success` or `failure`    |
-
-The amount always comes from the booking on the server; the client's view of the payment is never
-trusted. If a payment is captured after the hold expired, the booking stays cancelled and the
-payment is recorded as `FAILED` with "refund due" for finance (audit `PAYMENT_REFUND_DUE`).
-
-The full endpoint plan (flights, buses, trains, hotels, rides, holidays, parcels, wallet, bookings,
-payments, offers, support, admin) is in
-[IMPLEMENTATION_PLAN.md §5](IMPLEMENTATION_PLAN.md#5-api-architecture); each is documented here as
-its phase ships.
-
-### Rate limits
-
-| Scope                                  | Limit                             | Key                      |
-| -------------------------------------- | --------------------------------- | ------------------------ |
-| All `/api` routes                      | 300 / minute (configurable)       | IP                       |
-| `/api/auth/*` (except refresh, logout) | 60 / 10 minutes                   | IP (generous: CGNAT)     |
-| Sending a code (per flow)              | 1 / minute                        | phone or email           |
-| Sending a code (all flows)             | 5 / hour                          | phone or email           |
-| Verifying a code                       | 20 / 15 minutes, 5 tries per code | phone or email           |
-| Password login                         | 10 / 15 minutes                   | account (phone or email) |
-
-Limits are shared across API instances through Redis. If Redis is down, requests are allowed
-through; the per-code attempt limit in PostgreSQL still applies.
+`TRUST_PROXY` sets how many proxy hops are trusted for the client IP.
 
 ## Conventions
 
-- JSON only; request bodies up to 100 kB.
 - Pagination: `?page=1&limit=20` (max 100) → `data: { items, page, limit, total }`.
-- Money: integer minor units (paise) with an explicit currency.
-- Mutations that move money require an `Idempotency-Key` header (from Phase 4).
+- Dates are IST calendar dates (`YYYY-MM-DD`); timestamps are ISO 8601 UTC. Responses that drive
+  countdowns include `serverNow`.
+- Security headers on every response: CSP, HSTS, `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer`, COOP/CORP; no `X-Powered-By`. CORS allows only `CORS_ORIGINS`.

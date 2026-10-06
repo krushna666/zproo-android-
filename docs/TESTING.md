@@ -40,11 +40,38 @@ the router) under CPU throttling.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every pull request: install → format check → lint →
-typecheck → migrate a fresh Postgres → verify the schema matches the migrations → seed → test →
-build. Any failure blocks the PR.
+- `.github/workflows/ci.yml` (every pull request): install → format check → lint → typecheck →
+  migrate a fresh Postgres → verify the schema matches the migrations → seed → test → build.
+- `.github/workflows/e2e.yml` (every pull request): unit/API tests, then the end-to-end stack,
+  the Selenium suite on desktop and mobile and the API security suite, uploading HTML reports
+  and failure evidence. Make **E2E / Suites** a required check in branch protection.
 
-## Coming next
+## End-to-end and security suites (Selenium, Python)
 
-- Phase 20: Playwright end-to-end journeys (signup → OTP → search → book → pay → ticket for flights,
-  buses, trains, hotels, cabs, wallet) added to CI.
+```bash
+python3 -m pip install -r tests/requirements.txt   # Python 3.12, Chrome + chromedriver
+make e2e                # local Postgres/Redis: migrate, seed, start, wait, run, stop
+make e2e-docker         # the same on docker-compose.test.yml
+                        # (IMAGE_REGISTRY=mirror.gcr.io/library/ when Docker Hub rate-limits)
+scripts/e2e-stack.sh    # start only: API in test mode on :5100, web E2E build on :4300
+scripts/e2e-run.sh tests/e2e/test_bus.py -n 4 [--viewport mobile]
+```
+
+| File                                  | Cases                                                                                                                                                                                |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `tests/e2e/test_auth.py`              | AUTH-01…17: login, OTP, sign-up, reset, deep login, open redirects, refresh, reuse, multi-tab logout, rate limit                                                                     |
+| `tests/e2e/test_bus.py`               | BUS-01…22: search, filters, sort, seats, ladies seats, happy path + PDF, scenarios, hold expiry, coupons, double pay, cancel                                                         |
+| `tests/e2e/test_flight.py`            | FLT-01…16: search, pax rules, filters, fare families (keyboard), re-price, ages, one-way and round trip, scenarios, deep login, session expiry, 390px layout                         |
+| `tests/e2e/test_hotel.py`             | HTL-01…16: search rules, filters, sort, lightbox, occupancy, multi-room + voucher, scenarios, XSS, non-refundable cancel, 30 Dec → 2 Jan, deep login                                 |
+| `tests/e2e/test_checkout_shared.py`   | CHK-01…07: terms, declined then retried payment, empty checkout, other user's booking, totals, PDF download, saved travellers                                                        |
+| `tests/e2e/test_sop_ui.py`            | SOP-01…12 from computed styles: brand red, forbidden reds, font, radii, pills, field errors, toast, titles, theme colour, loading copy, reduced motion, 64px bars                    |
+| `tests/e2e/test_a11y.py`              | axe-core (0 serious/critical) on every journey step, keyboard-only bus booking, accessible names, 44px touch targets on phones                                                       |
+| `tests/security/test_api_security.py` | SEC-01…18: IDOR, tampering, signatures, webhooks, idempotency, races, JWTs, SQLi, rate limits, CORS, headers, production errors and hooks, enumeration, CSRF, logs, dependency audit |
+
+Rules: `data-testid` locators only, explicit waits only (`time.sleep` fails the run), each test
+creates its own user and data through `/api/test/*`, reruns are installed but set to 0. On
+failure the screenshot, page source, browser console and last API responses are saved under
+`tests/e2e/artifacts/<test>/`. The test clock (`zproo_clock_offset_ms` cookie → `X-Test-Now`) and
+supplier scenarios (`zproo_mock_scenario` cookie → `X-Mock-Scenario`) work in test builds only.
+SEC-13/14 start the API with production behaviour (`apps/api/test/support/productionServer.ts`)
+because production refuses the mock suppliers.

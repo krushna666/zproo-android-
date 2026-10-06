@@ -220,7 +220,7 @@ registry.registerPath({
   method: 'post',
   path: '/buses/book',
   tags,
-  summary: 'Hold seats for 10 minutes and create a booking awaiting payment',
+  summary: 'Hold seats for 15 minutes (BOOKING_HOLD_MINUTES) and create a booking awaiting payment',
   description:
     'Requires an `Idempotency-Key` header. One traveller per seat, up to 6. Ladies-only seats ' +
     'require a female traveller.',
