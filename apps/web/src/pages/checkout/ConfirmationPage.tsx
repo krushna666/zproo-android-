@@ -132,7 +132,8 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
               {booking.reference}
             </strong>
           </p>
-          <p className="flex items-center gap-1.5 text-sm text-muted">
+          {/* Muted grey is too faint on the green panel (WCAG AA); body colour instead. */}
+          <p className="flex items-center gap-1.5 text-sm">
             <Mail aria-hidden className="size-4" /> Details are saved in your account and linked to{' '}
             {booking.contact.email}.
           </p>

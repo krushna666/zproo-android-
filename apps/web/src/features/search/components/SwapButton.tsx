@@ -20,7 +20,7 @@ export function SwapButton({
       aria-label={label}
       data-testid={testId}
       className={cn(
-        'z-10 grid size-10 place-items-center rounded-full border border-border bg-card text-primary shadow-sm transition-transform hover:rotate-180 hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'z-10 grid size-11 place-items-center md:size-10 rounded-full border border-border bg-card text-primary shadow-sm transition-transform hover:rotate-180 hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className,
       )}
     >

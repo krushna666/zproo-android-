@@ -89,6 +89,9 @@ export default defineConfig(({ mode }) => ({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
+    // Full-page tests render the whole route tree; under a parallel `turbo run test` (API suite
+    // on the same CPUs) they can pass 5s. They are slow, not hanging: allow 20s.
+    testTimeout: 20_000,
     // Page tests mock the API client; the static engine has its own tests (src/static).
     env: { VITE_DATA_SOURCE: 'api' },
   },

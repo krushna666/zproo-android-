@@ -96,9 +96,7 @@ function DeckGrid({
               <Venus aria-hidden className="absolute right-0.5 top-0.5 size-3" />
             )}
             <span>{seat.seatNo}</span>
-            {open && (
-              <span className="font-medium tabular-nums opacity-80">{formatMoney(seat.price)}</span>
-            )}
+            {open && <span className="font-medium tabular-nums">{formatMoney(seat.price)}</span>}
           </button>
         );
       })}

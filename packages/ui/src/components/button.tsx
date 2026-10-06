@@ -16,10 +16,11 @@ export const buttonVariants = cva(
         destructive: 'bg-danger text-white hover:bg-danger/90',
       },
       size: {
-        sm: 'h-9 px-4 text-sm',
+        // 44px touch targets on phones (WCAG 2.5.5 / SOP 2.6); SOP sizes from md up.
+        sm: 'h-11 px-4 text-sm md:h-9',
         md: 'h-11 px-6 text-sm',
         lg: 'h-12 px-8 text-base',
-        icon: 'size-10',
+        icon: 'size-11 md:size-10',
       },
     },
     defaultVariants: { variant: 'default', size: 'md' },

@@ -21,7 +21,7 @@ export function QuickDates({
           type="button"
           data-testid={testIdPrefix && `${testIdPrefix}-${(label as string).toLowerCase()}`}
           onClick={() => onPick(date as string)}
-          className="rounded-full bg-background px-3 py-1 font-semibold ring-1 ring-border transition-colors hover:text-primary hover:ring-primary/40"
+          className="inline-flex min-h-11 items-center rounded-full bg-background px-3 py-1 font-semibold md:min-h-0 ring-1 ring-border transition-colors hover:text-primary hover:ring-primary/40"
         >
           {label}
         </button>

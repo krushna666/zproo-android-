@@ -70,8 +70,7 @@
   --color-warning: var(--warning);
   --color-danger: var(--danger);
 
-  --font-sans:
-    'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
   --radius-card: var(--radius);
   --shadow-card: 0 1px 2px rgb(17 24 39 / 0.04), 0 4px 16px -4px rgb(17 24 39 / 0.08);

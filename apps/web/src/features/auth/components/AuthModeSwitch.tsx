@@ -6,7 +6,7 @@ export function AuthModeSwitch() {
   const { search } = useLocation();
   const item = ({ isActive }: { isActive: boolean }) =>
     cn(
-      'flex h-10 flex-1 items-center justify-center rounded-full text-sm font-bold transition-colors',
+      'flex h-11 flex-1 items-center justify-center rounded-full text-sm font-bold transition-colors',
       isActive
         ? 'bg-primary text-primary-foreground shadow-sm'
         : 'text-foreground/70 hover:text-foreground',

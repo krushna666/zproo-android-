@@ -15,7 +15,7 @@ export function FormAlert({
       role={tone === 'error' ? 'alert' : 'status'}
       className={cn(
         'flex items-start gap-2.5 rounded-xl px-3.5 py-3 text-sm font-medium',
-        tone === 'error' ? 'bg-danger/8 text-danger' : 'bg-success/10 text-success',
+        tone === 'error' ? 'bg-danger/8 text-danger' : 'bg-success/10 text-green-800',
       )}
     >
       <Icon aria-hidden className="mt-0.5 size-4 shrink-0" />

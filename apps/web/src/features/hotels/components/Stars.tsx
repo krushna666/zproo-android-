@@ -20,7 +20,7 @@ export function Stars({ count, className }: { count: number; className?: string 
 export function RatingBadge({ rating, label }: { rating: number; label: string }) {
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className="rounded-md bg-success px-1.5 py-0.5 text-xs font-bold text-primary-foreground tabular-nums">
+      <span className="rounded-md bg-green-700 px-1.5 py-0.5 text-xs font-bold text-primary-foreground tabular-nums">
         {rating.toFixed(1)}
       </span>
       <span className="text-sm font-semibold">{label}</span>

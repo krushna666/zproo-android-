@@ -14,7 +14,7 @@ export function BookingSteps({
   return (
     <ol
       aria-label="Booking progress"
-      className="flex items-center gap-1 overflow-x-auto text-xs sm:gap-2 sm:text-sm"
+      className="flex flex-wrap items-center gap-1 gap-y-2 text-xs sm:gap-2 sm:text-sm"
     >
       {steps.map((step, i) => {
         const done = i < current;
@@ -38,7 +38,8 @@ export function BookingSteps({
             <span
               className={cn(
                 'font-semibold',
-                active ? 'text-foreground' : 'hidden text-muted sm:inline',
+                // Phones show only the current step's name; the others stay readable to screen readers.
+                active ? 'text-foreground' : 'sr-only text-muted sm:not-sr-only',
               )}
             >
               {step}

@@ -166,23 +166,21 @@ export function FlightSearchForm({ initial }: { initial?: Partial<FlightSearch> 
           control={control}
           name="returnDate"
           render={({ field }) => (
-            <div className={cn(trip === 'ONE_WAY' && 'opacity-60')}>
-              <DateField
-                label="Return"
-                value={field.value ?? ''}
-                onChange={(v) => {
-                  field.onChange(v);
-                  if (v && trip === 'ONE_WAY') setTrip('ROUND_TRIP');
-                }}
-                min={date || today}
-                max={maxDate}
-                icon={<CalendarDays aria-hidden />}
-                emptyHint="Add return"
-                error={errors.returnDate?.message}
-                testId="flight-search-return"
-                disabled={trip === 'ONE_WAY'}
-              />
-            </div>
+            <DateField
+              label="Return"
+              value={field.value ?? ''}
+              onChange={(v) => {
+                field.onChange(v);
+                if (v && trip === 'ONE_WAY') setTrip('ROUND_TRIP');
+              }}
+              min={date || today}
+              max={maxDate}
+              icon={<CalendarDays aria-hidden />}
+              emptyHint="Add return"
+              error={errors.returnDate?.message}
+              testId="flight-search-return"
+              disabled={trip === 'ONE_WAY'}
+            />
           )}
         />
         <PopoverField

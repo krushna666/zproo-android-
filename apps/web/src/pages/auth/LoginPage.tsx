@@ -66,7 +66,7 @@ export default function LoginPage() {
             aria-checked={method === value}
             onClick={() => setMethod(value)}
             className={cn(
-              'h-10 rounded-xl border transition-colors',
+              'h-11 rounded-xl border transition-colors',
               method === value
                 ? 'border-primary bg-primary-light text-primary'
                 : 'border-border text-foreground/70 hover:border-foreground/30',

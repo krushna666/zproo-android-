@@ -27,7 +27,7 @@ export function PriceSummary({
           {price.feesPaise === 0 && (
             <div className="flex justify-between gap-3">
               <dt className="text-muted">Convenience fee</dt>
-              <dd className="font-semibold text-success">Free</dd>
+              <dd className="font-semibold text-green-700">Free</dd>
             </div>
           )}
           <div className="flex justify-between gap-3 border-t border-border pt-3 text-base font-extrabold">

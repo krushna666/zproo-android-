@@ -18,7 +18,7 @@ function CopyCode({ code }: { code: string }) {
           })
           .catch(() => undefined);
       }}
-      className="flex items-center gap-2 rounded-xl border-2 border-dashed border-primary/40 bg-primary-light/60 px-3 py-1.5 font-mono text-sm font-bold tracking-wider text-primary transition-colors hover:border-primary"
+      className="flex min-h-11 items-center gap-2 rounded-xl border-2 border-dashed border-primary/40 bg-primary-light/60 px-3 py-1.5 font-mono text-sm font-bold tracking-wider text-primary transition-colors hover:border-primary"
       aria-label={copied ? `${code} copied` : `Copy code ${code}`}
     >
       {code}

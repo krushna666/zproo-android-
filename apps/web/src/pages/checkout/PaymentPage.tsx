@@ -167,7 +167,14 @@ function Payment({ booking }: { booking: BookingDetails }) {
                     <Icon aria-hidden className="size-5 text-primary" />
                     <span>
                       <span className="block text-sm font-semibold">{label}</span>
-                      <span className="block text-xs text-muted">{hint}</span>
+                      <span
+                        className={cn(
+                          'block text-xs',
+                          method === id ? 'text-foreground' : 'text-muted',
+                        )}
+                      >
+                        {hint}
+                      </span>
                     </span>
                   </button>
                 ))}

@@ -7,13 +7,14 @@ export function SearchWidgetSkeleton() {
     <div
       role="status"
       aria-label="Loading search"
+      aria-busy="true"
       className="rounded-[1.75rem] border border-border bg-card shadow-raised"
     >
       <div className="flex gap-1 overflow-hidden border-b border-border px-3 pt-3 sm:px-5 lg:justify-between">
         {SERVICES.map(({ type, label, icon: Icon }) => (
           <div
             key={type}
-            className="flex min-w-[4.75rem] shrink-0 flex-col items-center gap-1 px-3 pb-3 pt-2 text-xs font-semibold text-foreground/40 sm:text-sm"
+            className="flex min-w-[4.75rem] shrink-0 flex-col items-center gap-1 px-3 pb-3 pt-2 text-xs font-semibold text-muted sm:text-sm"
           >
             <span className="grid size-10 place-items-center rounded-2xl bg-background">
               <Icon aria-hidden className="size-5" />

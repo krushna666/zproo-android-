@@ -15,6 +15,7 @@ export function FieldShell({ id, label, icon, error, className, children }: Fiel
   return (
     <div className={cn('min-w-0', className)}>
       <div
+        data-field-shell
         className={cn(
           'relative flex h-full min-h-[4.25rem] items-start gap-3 rounded-2xl border bg-card px-4 py-2.5 transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/20 hover:border-foreground/25',
           error ? 'border-danger' : 'border-border',
@@ -22,13 +23,14 @@ export function FieldShell({ id, label, icon, error, className, children }: Fiel
       >
         {icon && <span className="mt-5 text-primary [&_svg]:size-5">{icon}</span>}
         <div className="min-w-0 flex-1">
+          {/* The label's overlay makes the whole box a tap target for its control. */}
           <label
             htmlFor={id}
-            className="block text-[11px] font-bold uppercase tracking-wider text-muted"
+            className="block text-[11px] font-bold uppercase tracking-wider text-muted after:absolute after:inset-0 after:rounded-2xl after:content-['']"
           >
             {label}
           </label>
-          {children}
+          <div className="relative z-[1]">{children}</div>
         </div>
       </div>
       {error && (
