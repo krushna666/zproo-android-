@@ -230,7 +230,11 @@ describe('mobile OTP sign-up', () => {
       .send({ phone: uniquePhone() })
       .expect(200);
     expect(res.body.data.devCode).toMatch(/^\d{6}$/);
-    expect(lines.join('')).toContain(res.body.data.devCode);
+    // The console shows that a code was sent, never the code or the full number (logs are kept).
+    const printed = lines.join('');
+    expect(printed).toContain('[DEV SMS → +91 ');
+    expect(printed).not.toContain(res.body.data.devCode);
+    expect(printed).toMatch(/XXXXXX/);
   });
 });
 

@@ -158,7 +158,7 @@ export class AuthService {
       });
     }
     // Same answer for unknown accounts, so the response never reveals who is registered.
-    return { expiresIn: AUTH.resetOtpTtlSeconds, resendIn: AUTH.otpResendSeconds };
+    return this.deps.otp.decoy(identifier.type === 'phone' ? 'SMS' : 'EMAIL', 'PASSWORD_RESET');
   }
 
   async resetPassword(

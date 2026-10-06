@@ -84,6 +84,19 @@ export class OtpService {
     };
   }
 
+  /**
+   * The answer `issue` gives, without storing or sending anything: for accounts that don't exist,
+   * so the response (development `devCode` included) never reveals who is registered.
+   */
+  decoy(channel: OtpChannel, purpose: OtpPurpose): OtpSent {
+    const provider = channel === 'SMS' ? this.sms : this.email;
+    return {
+      expiresIn: OtpService.ttlSeconds(purpose),
+      resendIn: AUTH.otpResendSeconds,
+      ...(provider.isDevelopment && { devCode: this.testCode ?? randomDigits(AUTH.otpLength) }),
+    };
+  }
+
   /** Verifies and consumes the newest live code for `target`. Returns the purpose it was issued for. */
   async verify(target: string, purposes: OtpPurpose[], code: string): Promise<OtpPurpose> {
     const otp = await this.repo.findLatest(target, purposes);

@@ -21,3 +21,4 @@ tests/.pytest_cache/
 .pytest_cache/
 apps/web/dist-e2e/
 report.html
+tests/security/production-api-*.log

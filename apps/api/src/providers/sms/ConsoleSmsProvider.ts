@@ -1,3 +1,4 @@
+import { devConsoleLine } from '../devConsole';
 import type { SmsMessage, SmsProvider } from './SmsProvider';
 
 /**
@@ -14,6 +15,6 @@ export class ConsoleSmsProvider implements SmsProvider {
   ) {}
 
   async send({ to, body }: SmsMessage): Promise<void> {
-    this.write(`\n[DEV SMS → ${to}] ${body}\n\n`);
+    this.write(devConsoleLine('SMS', to, body));
   }
 }

@@ -185,3 +185,21 @@ describe('password reset', () => {
     });
   });
 });
+
+describe('POST /api/auth/forgot-password with a development email provider', () => {
+  it('answers unknown accounts with the same shape, devCode included', async () => {
+    const { ConsoleEmailProvider } = await import('../src/providers/email/ConsoleEmailProvider');
+    const ctx = createTestContext({ providers: { email: new ConsoleEmailProvider(() => {}) } });
+    await signUp(ctx, { email: 'meera@example.com' });
+    const known = await request(ctx.app)
+      .post('/api/auth/forgot-password')
+      .send({ identifier: 'meera@example.com' })
+      .expect(200);
+    const unknown = await request(ctx.app)
+      .post('/api/auth/forgot-password')
+      .send({ identifier: 'nobody@example.com' })
+      .expect(200);
+    expect(Object.keys(unknown.body.data).sort()).toEqual(Object.keys(known.body.data).sort());
+    expect(unknown.body.data.devCode).toMatch(/^\d{6}$/);
+  });
+});
