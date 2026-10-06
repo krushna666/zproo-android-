@@ -35,3 +35,26 @@ def api_book_bus(api: Api, trip: BusTrip, seats: list[str] | None = None, **extr
     r = api.book("/buses/book", body)
     assert r.status_code == 201, r.text
     return r.json()["data"]
+
+
+ADULT_NAMES = [("Amit", "Sharma"), ("Priya", "Sharma"), ("Kabir", "Sharma"), ("Neha", "Patil")]
+
+
+def flight_to_review(driver, user, offer_id: str, return_id: str | None = None,
+                     fare_id: str | None = None, pax: dict | None = None,
+                     travellers: list | None = None) -> ReviewPage:
+    """Signed in: fare page → travellers → review (seats held)."""
+    from tests.e2e.pages.flight import FlightFaresPage, FlightTravellersPage
+
+    sign_in(driver, user, f"/flights/offer/{offer_id}" + (f"?return={return_id}" if return_id else ""))
+    fares = FlightFaresPage(driver).wait_loaded()
+    if fare_id:
+        fares.choose(fare_id)
+    fares.continue_()
+    fares.wait_url("/flights/booking")
+    page = FlightTravellersPage(driver).wait_loaded()
+    pax = pax or {"adults": 1, "children": 0, "infants": 0}
+    page.fill(travellers or [(*ADULT_NAMES[i], "MALE", None) for i in range(pax["adults"])])
+    page.continue_()
+    page.wait_url("/flights/review?ref=")
+    return ReviewPage(driver).wait_loaded()

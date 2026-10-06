@@ -220,7 +220,7 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
               </li>
             ))}
             {!booking.hotel &&
-              booking.passengers.map((p) => {
+              booking.passengers.map((p, i) => {
                 const tickets = p.seatNumber
                   ? [`Seat ${p.seatNumber}`]
                   : booking.flights
@@ -234,7 +234,10 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
                         {p.age !== null ? `${p.age} yrs` : p.type.toLowerCase()}
                       </Badge>
                     </span>
-                    <span className="font-mono text-xs text-muted">
+                    <span
+                      className="font-mono text-xs text-muted"
+                      data-testid={`confirm-tickets-${i}`}
+                    >
                       {tickets.join(' · ') || 'Ticket pending'}
                     </span>
                   </li>

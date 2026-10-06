@@ -262,7 +262,7 @@ function GuestForm({ selection }: { selection: HotelSelection }) {
         <div role="alert" className="space-y-3" data-testid="hotel-book-error">
           <FormAlert>{userMessage(otherError)}</FormAlert>
           {soldOut && (
-            <Button asChild variant="outline">
+            <Button asChild variant="outline" data-testid="hotel-choose-another">
               <Link to={selection.detailsUrl}>Choose another room</Link>
             </Button>
           )}

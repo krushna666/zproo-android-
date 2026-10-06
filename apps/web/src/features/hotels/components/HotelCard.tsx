@@ -21,6 +21,8 @@ export function HotelCard({
       data-price={hotel.pricePerNight}
       data-stars={hotel.stars}
       data-rating={hotel.rating}
+      data-free-cancellation={hotel.freeCancellation}
+      data-amenities={hotel.amenities.join(',')}
       aria-label={`${hotel.name}, ${hotel.stars} star, ${hotel.area}, ${inr(hotel.pricePerNight)} per night`}
       className="grid overflow-hidden rounded-[14px] border border-border bg-card shadow-card sm:grid-cols-[14rem_1fr]"
     >
