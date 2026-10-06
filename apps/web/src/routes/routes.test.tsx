@@ -17,7 +17,7 @@ describe('routing', () => {
 
   it.each([
     ['/trains', 'Trains', 6],
-    ['/hotels/results', 'Hotel results', 7],
+    ['/cabs', 'Cabs', 8],
     ['/offers', 'Offers', 13],
   ])('renders the planned page for %s', async (path, title, phase) => {
     renderRoute(path);

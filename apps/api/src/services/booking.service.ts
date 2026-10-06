@@ -4,6 +4,8 @@ import type {
   BookingListItem,
   BusBookResponse,
   FlightBookResponse,
+  HotelBookResponse,
+  HotelBookingInfo,
 } from '@zproo/types';
 import type { Redis } from 'ioredis';
 import { OPEN_HOLD_STATUSES, generateBookingReference } from '@zproo/utils';
@@ -11,14 +13,20 @@ import {
   BUS_MESSAGES,
   FLIGHT_MESSAGES,
   flightAgeIssues,
+  HOTEL_MESSAGES,
+  nightsBetween,
+  roomFitsMessage,
   type BookBusInput,
   type BookFlightInput,
+  type BookHotelInput,
 } from '@zproo/validation';
+import { hotelPriceBreakdown, type QuotedRoom } from '@zproo/catalog';
 import { acquireLock } from '../lib/lock';
 import type { Logger } from 'pino';
 import { toBookResult, toBookingDetails, toBookingListItem } from '../models/booking.dto';
 import type { BusProvider } from '../providers/bus';
 import type { FlightProvider } from '../providers/flight';
+import type { HotelProvider } from '../providers/hotel';
 import { BookingRepository, type BookingRecord } from '../repositories/booking.repository';
 import { PaymentRepository } from '../repositories/payment.repository';
 import {
@@ -28,6 +36,7 @@ import {
   InvalidStateError,
   NotFoundError,
   PriceChangedError,
+  RoomUnavailableError,
   SeatUnavailableError,
   ValidationError,
 } from '../utils/errors';
@@ -42,6 +51,7 @@ interface BookingServiceDeps {
   prisma: PrismaClient;
   flights: FlightProvider;
   buses: BusProvider;
+  hotels: HotelProvider;
   audit: AuditService;
   logger: Logger;
   holdMinutes: number;
@@ -89,6 +99,184 @@ export class BookingService {
       () => this.newBusBooking(userId, input, idempotencyKey, ctx),
       (record) => toBookResult(record, this.now()),
     );
+  }
+
+  /** POST /hotels/book — returns `{ bookingRef, status, holdExpiresAt, serverNow, priceBreakdown }`. */
+  createHotelBooking(
+    userId: string,
+    input: BookHotelInput,
+    idempotencyKey: string,
+    ctx: RequestContext,
+  ): Promise<HotelBookResponse> {
+    return this.idempotent(
+      userId,
+      idempotencyKey,
+      () => this.newHotelBooking(userId, input, idempotencyKey, ctx),
+      (record) => toBookResult(record, this.now()),
+    );
+  }
+
+  /**
+   * Holds hotel rooms for a booking, in the order the contract requires:
+   *  1. validate: stay dates (IST, ≤ 30 nights, not past), each room's guests fit its room type,
+   *     the rate belongs to the room type (special requests were sanitised by the schema);
+   *  2. re-check availability and re-price live → ROOM_UNAVAILABLE / PRICE_CHANGED;
+   *  3. under Redis locks (`lock:hotel:<hotelId>:<rateId>:<checkIn>`) and per-room-type advisory
+   *     locks, one transaction: supplier hold (15 min) + booking (HELD) + stay + rooms + event.
+   * The browser's expectedTotal is only compared; the stored amounts come from the supplier.
+   */
+  private async newHotelBooking(
+    userId: string,
+    input: BookHotelInput,
+    idempotencyKey: string,
+    ctx: RequestContext,
+  ): Promise<BookingRecord> {
+    // 1. Dates against the API clock.
+    const today = localDate(this.now(), 'Asia/Kolkata');
+    const nights = nightsBetween(input.checkIn, input.checkOut);
+    const issues: { path: string; message: string }[] = [];
+    if (input.checkIn < today)
+      issues.push({ path: 'body.checkIn', message: HOTEL_MESSAGES.checkInPast });
+    else if (nightsBetween(today, input.checkIn) > 365)
+      issues.push({ path: 'body.checkIn', message: HOTEL_MESSAGES.checkInWindow });
+    if (nights < 1) issues.push({ path: 'body.checkOut', message: HOTEL_MESSAGES.checkOut });
+    else if (nights > 30) issues.push({ path: 'body.checkOut', message: HOTEL_MESSAGES.maxNights });
+    if (issues.length > 0) throw new ValidationError(issues);
+
+    const details = await this.deps.hotels.details(input.hotelId);
+    if (!details)
+      throw new NotFoundError('This hotel is no longer available. Please search again.');
+    const stay = { hotelId: input.hotelId, checkIn: input.checkIn, checkOut: input.checkOut };
+
+    // 2. Live availability and price (occupancy and rate checks come with the quote).
+    const quote = await this.deps.hotels.quote(
+      stay,
+      input.rooms.map((r) => ({
+        roomTypeId: r.roomTypeId,
+        rateId: r.rateId,
+        adults: r.adults,
+        childAges: r.childAges,
+      })),
+    );
+    if (!quote) throw new NotFoundError('This hotel is no longer available. Please search again.');
+    if (!quote.ok) {
+      if (quote.error === 'ROOM_UNAVAILABLE') throw new RoomUnavailableError(quote.roomTypeId);
+      if (quote.error === 'OCCUPANCY')
+        throw new ValidationError([
+          {
+            path: `body.rooms.${quote.index}.${quote.field}`,
+            message: roomFitsMessage(quote.max, quote.field === 'adults' ? 'adults' : 'children'),
+          },
+        ]);
+      throw new ValidationError([
+        { path: `body.rooms.${quote.index}.rateId`, message: HOTEL_MESSAGES.rate },
+      ]);
+    }
+    const price = hotelPriceBreakdown(quote.rooms, nights);
+    if (price.totalPaise !== input.expectedTotal)
+      throw new PriceChangedError(input.expectedTotal, price.totalPaise);
+
+    // 3. Hold and write.
+    const holdExpiresAt = new Date(this.now().getTime() + this.deps.holdMinutes * 60_000);
+    const perType = new Map<string, number>();
+    for (const r of input.rooms) perType.set(r.roomTypeId, (perType.get(r.roomTypeId) ?? 0) + 1);
+    const locks = await this.lockKeys(
+      [
+        ...new Set(
+          input.rooms.map((r) => `lock:hotel:${input.hotelId}:${r.rateId}:${input.checkIn}`),
+        ),
+      ],
+      () => new RoomUnavailableError(input.rooms[0]?.roomTypeId),
+    );
+    try {
+      return await this.createHeld(userId, 'HOTEL', ctx, async (reference, tx) => {
+        const created = await new BookingRepository(tx).create({
+          reference,
+          userId,
+          serviceType: 'HOTEL',
+          status: 'HELD',
+          paymentStatus: 'CREATED',
+          baseAmountPaise: price.basePaise,
+          taxAmountPaise: price.taxesPaise,
+          feeAmountPaise: price.feesPaise,
+          totalAmountPaise: price.totalPaise,
+          contactEmail: input.contact.email,
+          contactPhone: input.contact.mobile,
+          travelDate: new Date(`${input.checkIn}T00:00:00Z`),
+          holdExpiresAt,
+          idempotencyKey,
+          metadata: {
+            demo: this.deps.hotels.isDemo,
+            provider: this.deps.hotels.name,
+            ...(input.gstDetails && { gst: input.gstDetails }),
+          },
+          // Lead guests, one per room (the voucher and My bookings list them).
+          passengers: {
+            create: input.rooms.map((r, i) => ({
+              sequence: i + 1,
+              type: 'ADULT' as const,
+              title: r.leadGuest.title,
+              firstName: r.leadGuest.firstName,
+              lastName: r.leadGuest.lastName,
+              gender: leadGuestGender(r.leadGuest.title),
+            })),
+          },
+          hotel: {
+            create: {
+              provider: this.deps.hotels.name,
+              hotelId: details.hotelId,
+              hotelName: details.name,
+              address: details.address,
+              checkIn: new Date(`${input.checkIn}T00:00:00Z`),
+              checkOut: new Date(`${input.checkOut}T00:00:00Z`),
+              nights,
+              specialRequests: input.specialRequests || null,
+              hotel: {
+                hotelId: details.hotelId,
+                name: details.name,
+                stars: details.stars,
+                address: details.address,
+                city: details.city,
+                phone: details.phone,
+                checkInTime: details.checkInTime,
+                checkOutTime: details.checkOutTime,
+                images: details.images.slice(0, 3),
+                houseRules: details.houseRules,
+              } satisfies HotelBookingInfo['hotel'] as unknown as Prisma.InputJsonValue,
+            },
+          },
+          hotelRooms: {
+            create: quote.rooms.map((q: QuotedRoom, i) => ({
+              sequence: i + 1,
+              roomTypeId: q.roomTypeId,
+              roomName: q.roomName,
+              rateId: q.rateId,
+              boardBasis: q.boardBasis,
+              refundable: q.refundable,
+              freeCancellationUntil: q.freeCancellationUntil
+                ? new Date(q.freeCancellationUntil)
+                : null,
+              adults: q.adults,
+              childAges: q.childAges,
+              leadGuest: input.rooms[i]?.leadGuest ?? {},
+              price: q.price,
+              taxes: q.taxes,
+              nightly: q.nightlyBreakdown,
+            })),
+          },
+        });
+        await this.deps.hotels.hold(
+          stay,
+          [...perType].map(([roomTypeId, count]) => ({ roomTypeId, count })),
+          created.id,
+          holdExpiresAt,
+          tx,
+        );
+        return created;
+      });
+    } finally {
+      await locks.release();
+    }
   }
 
   /**
@@ -373,21 +561,30 @@ export class BookingService {
    * don't both reach the database; the unique (trip, seat, active) constraint is the final guard.
    * Without Redis (tests, outages) the constraint alone keeps holds exclusive.
    */
-  private async lockSeats(tripId: string, seats: string[]) {
+  private lockSeats(tripId: string, seats: string[]) {
+    return this.lockKeys(
+      seats.map((seatNo) => `lock:bus:${tripId}:${seatNo}`),
+      (key) => new SeatUnavailableError([key.split(':').at(-1) ?? '']),
+    );
+  }
+
+  /**
+   * Takes short Redis locks (SET NX PX) on `keys`, sorted so overlapping requests always lock in
+   * the same order; a key already locked fails with `busy(key)`. Without Redis (tests, outages)
+   * the database guards (constraints, advisory locks) alone keep holds exclusive.
+   */
+  private async lockKeys(keys: string[], busy: (key: string) => Error) {
     const redis = this.deps.redis;
     const held: { release(): Promise<void> }[] = [];
     const releaseAll = async () => {
       await Promise.allSettled(held.map((l) => l.release()));
     };
     if (!redis || redis.status !== 'ready') return { release: releaseAll };
-    // Sorted, so two bookings of overlapping seats always lock in the same order.
-    for (const seatNo of [...seats].sort()) {
-      const lock = await acquireLock(redis, `lock:bus:${tripId}:${seatNo}`, 10_000).catch(
-        () => null,
-      );
+    for (const key of [...keys].sort()) {
+      const lock = await acquireLock(redis, key, 10_000).catch(() => null);
       if (!lock) {
         await releaseAll();
-        throw new SeatUnavailableError([seatNo]);
+        throw busy(key);
       }
       held.push(lock);
     }
@@ -491,6 +688,7 @@ export class BookingService {
   async releaseInventory(booking: BookingRecord, tx: Prisma.TransactionClient): Promise<void> {
     if (booking.flights.length > 0) await this.deps.flights.release(booking.id, tx);
     if (booking.bus) await this.deps.buses.release(booking.id, tx);
+    if (booking.hotel) await this.deps.hotels.release(booking.id, tx);
   }
 
   // ───────── internals ─────────
@@ -521,7 +719,7 @@ export class BookingService {
   /** Holds inventory and writes a booking in one transaction (via `create`), with a unique reference. */
   private async createHeld(
     userId: string,
-    service: 'FLIGHT' | 'BUS',
+    service: 'FLIGHT' | 'BUS' | 'HOTEL',
     ctx: RequestContext,
     create: (reference: string, tx: Prisma.TransactionClient) => Promise<BookingRecord>,
   ): Promise<BookingRecord> {
@@ -551,7 +749,7 @@ export class BookingService {
 
   /** Booking references are random; on the (very rare) collision, try again with a new one. */
   private async withUniqueReference<T>(
-    service: 'FLIGHT' | 'BUS',
+    service: 'FLIGHT' | 'BUS' | 'HOTEL',
     create: (reference: string) => Promise<T>,
   ): Promise<T> {
     for (let attempt = 0; ; attempt++) {
@@ -575,6 +773,13 @@ function splitName(name: string): { firstName: string; lastName: string } {
   const parts = name.trim().split(/\s+/);
   if (parts.length === 1) return { firstName: parts[0] ?? '', lastName: '' };
   return { firstName: parts.slice(0, -1).join(' '), lastName: parts.at(-1) ?? '' };
+}
+
+/** Hotels ask for a title only; the stored gender follows it. */
+function leadGuestGender(title: string): 'MALE' | 'FEMALE' | 'OTHER' {
+  if (title === 'MR' || title === 'MSTR') return 'MALE';
+  if (title === 'MRS' || title === 'MS' || title === 'MISS') return 'FEMALE';
+  return 'OTHER';
 }
 
 /** Title printed on bus tickets, from gender and age. */

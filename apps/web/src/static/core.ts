@@ -8,6 +8,7 @@ import type {
   RoleName,
 } from '@zproo/types';
 import { ROLE_PERMISSIONS } from '@zproo/types';
+import type { LiveHotelHold } from '@zproo/catalog';
 import { formatMoney } from '@zproo/utils';
 import type { z } from 'zod';
 
@@ -56,6 +57,14 @@ export const seatUnavailable = (seats: string[]) =>
     'SEAT_UNAVAILABLE',
     `Seat ${seats.length <= 1 ? (seats[0] ?? '') : `${seats.slice(0, -1).join(', ')} and ${seats.at(-1) ?? ''}`} was just booked by someone else. Please choose another seat.`,
     { seats },
+  );
+
+export const roomUnavailable = (roomTypeId?: string) =>
+  new StaticError(
+    409,
+    'ROOM_UNAVAILABLE',
+    'This room just sold out. Please choose another room.',
+    roomTypeId ? { roomTypeId } : undefined,
   );
 
 export const fareUnavailable = () =>
@@ -120,7 +129,8 @@ export interface StoredBooking {
   /** Inventory held by the booking (flight seats per offer, or bus seats) */
   holds:
     | { kind: 'flight'; itineraryKey: string; seats: number }[]
-    | { kind: 'bus'; tripId: string; seats: { seatNo: string; female: boolean }[] }[];
+    | { kind: 'bus'; tripId: string; seats: { seatNo: string; female: boolean }[] }[]
+    | ({ kind: 'hotel'; hotelId: string } & LiveHotelHold)[];
 }
 
 export interface StoredPayment {

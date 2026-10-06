@@ -4,3 +4,4 @@ export * from './enums';
 export * from './flights';
 export * from './permissions';
 export * from './buses';
+export * from './hotels';

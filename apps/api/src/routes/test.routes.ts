@@ -35,6 +35,9 @@ const CUSTOMER_TABLES = [
   'flight_seat_holds',
   'bus_bookings',
   'bus_seat_holds',
+  'hotel_booking_rooms',
+  'hotel_booking_details',
+  'hotel_room_holds',
   'booking_passengers',
   'bookings',
 ];

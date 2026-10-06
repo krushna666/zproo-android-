@@ -6,6 +6,7 @@ import { createAuthController } from '../controllers/auth.controller';
 import { createBookingsController } from '../controllers/bookings.controller';
 import { createBusesController } from '../controllers/buses.controller';
 import { createFlightsController } from '../controllers/flights.controller';
+import { createHotelsController } from '../controllers/hotels.controller';
 import { createPaymentsController } from '../controllers/payments.controller';
 import { createMeController } from '../controllers/me.controller';
 import { authenticate } from '../middleware/auth';
@@ -17,7 +18,13 @@ import {
 } from '../middleware/rateLimit';
 import { adminRoutes } from './admin.routes';
 import { authRoutes } from './auth.routes';
-import { bookingRoutes, busRoutes, flightRoutes, paymentRoutes } from './commerce.routes';
+import {
+  bookingRoutes,
+  busRoutes,
+  flightRoutes,
+  hotelRoutes,
+  paymentRoutes,
+} from './commerce.routes';
 import { couponRoutes } from './coupon.routes';
 import { healthRoutes } from './health.routes';
 import { meRoutes } from './me.routes';
@@ -60,6 +67,16 @@ export function createApiRouter(
     '/buses',
     busRoutes(
       createBusesController(services.buses, services.bookings, services.cancellations),
+      requireUser,
+      services.rbac,
+      services.idempotency,
+      commerce,
+    ),
+  );
+  router.use(
+    '/hotels',
+    hotelRoutes(
+      createHotelsController(services.hotels, services.bookings, services.cancellations),
       requireUser,
       services.rbac,
       services.idempotency,

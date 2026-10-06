@@ -2,7 +2,7 @@ import type { BookingListItem, BookingStatus } from '@zproo/types';
 import { Badge, Button, FormAlert, Skeleton } from '@zproo/ui';
 import { formatMoney } from '@zproo/utils';
 import { todayInIst } from '@zproo/validation';
-import { Bus, ChevronRight, Plane, Ticket } from 'lucide-react';
+import { BedDouble, Bus, ChevronRight, Plane, Ticket } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { Seo } from '@/components/seo/Seo';
@@ -10,7 +10,7 @@ import { errorMessage } from '@/features/auth/errors';
 import { useMyBookings } from '@/features/checkout/api';
 import { BOOKING_STATUS_LABEL, isAwaitingPayment } from '@/features/checkout/status';
 import { CancelBooking } from '@/features/checkout/CancelBookingDialog';
-import { confirmationUrl, paymentUrl } from '@/features/checkout/links';
+import { confirmationUrl, paymentUrl, serviceOf } from '@/features/checkout/links';
 import { travelDate } from '@/features/flights/format';
 
 const STATUS = BOOKING_STATUS_LABEL;
@@ -37,9 +37,9 @@ function tabOf(b: BookingListItem): Tab {
   return b.travelDate >= today() && b.status !== 'COMPLETED' ? 'upcoming' : 'completed';
 }
 
-const serviceOf = (b: BookingListItem) => (b.serviceType === 'BUS' ? 'bus' : 'flight');
+const ICON = { flight: Plane, bus: Bus, hotel: BedDouble } as const;
 
-/** The signed-in customer's flight and bus bookings. */
+/** The signed-in customer's flight, bus and hotel bookings. */
 export default function MyBookingsPage() {
   const { data, isPending, error } = useMyBookings();
   const [tab, setTab] = useState<Tab>('upcoming');
@@ -98,7 +98,7 @@ export default function MyBookingsPage() {
         <ul className="space-y-3">
           {bookings.map((b) => {
             const status = STATUS[b.status];
-            const Icon = b.serviceType === 'BUS' ? Bus : Plane;
+            const Icon = ICON[serviceOf(b)];
             const href = isAwaitingPayment(b)
               ? paymentUrl(serviceOf(b), b.reference)
               : confirmationUrl(serviceOf(b), b.reference);

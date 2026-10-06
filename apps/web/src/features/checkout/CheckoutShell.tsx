@@ -1,5 +1,5 @@
 import { Button } from '@zproo/ui';
-import { ArrowLeft, Bus, PlaneTakeoff } from 'lucide-react';
+import { ArrowLeft, BedDouble, Bus, PlaneTakeoff } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { Seo } from '@/components/seo/Seo';
@@ -61,6 +61,13 @@ const NOTHING = {
     text: 'Search for buses and pick your seats to continue booking.',
     to: '/buses',
     cta: 'Search buses',
+  },
+  hotel: {
+    icon: BedDouble,
+    title: 'No room selected',
+    text: 'Search for hotels and choose your rooms to continue booking.',
+    to: '/hotels',
+    cta: 'Search hotels',
   },
 } as const;
 

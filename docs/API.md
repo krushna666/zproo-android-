@@ -144,6 +144,22 @@ server re-prices the seats (`409 PRICE_CHANGED`) and holds them atomically (`409
 if any was taken). Payment, tickets (`/bookings/{reference}/ticket.pdf`) and hold expiry work exactly
 as for flights; booking details carry a `bus` object instead of `flights`.
 
+### Hotels (Phase 7, `HOTEL_PROVIDER=mock` today; planned vendor: a hotel aggregator / bed-bank API)
+
+| Method | Path                             | Auth             | Description                                                                                                                      |
+| ------ | -------------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/api/hotels/destinations`       | —                | `q`: cities, areas and hotels `[{ id, type: CITY\|AREA\|HOTEL, name, city, state }]`                                             |
+| GET    | `/api/hotels/search`             | —                | `destinationId`, `checkIn`, `checkOut`, `rooms` (`2-0\|2-1:7`), filters, `sort`, `page`, `pageSize` ≤ 30. Cached 60 s            |
+| GET    | `/api/hotels/{hotelId}`          | —                | Gallery, amenities by group, house rules, check-in/out times, cancellation summary                                               |
+| GET    | `/api/hotels/{hotelId}/rooms`    | —                | Room types and rates for `checkIn`, `checkOut`, `rooms`, with nightly prices (never cached)                                      |
+| POST   | `/api/hotels/book`               | `booking:create` | Holds rooms for 15 minutes; `409 ROOM_UNAVAILABLE` (`details.roomTypeId`) or `409 PRICE_CHANGED`. **Requires `Idempotency-Key`** |
+| POST   | `/api/hotels/{reference}/cancel` | owner            | Full refund before the free-cancellation deadline, all but the first night after it, ₹0 for non-refundable; closed from check-in |
+
+Messages: `You can book up to 30 nights at a time`, `You can book up to 8 rooms at a time`,
+`Add the age of each child`, `This room fits up to 3 adults`. Special requests are plain text
+(markup removed, ≤ 300 characters). Booking details carry a `hotel` object; the PDF is a voucher with
+the hotel's confirmation number.
+
 ### Bookings
 
 | Method | Path                                   | Permission         | Description                                                        |

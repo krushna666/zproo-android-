@@ -10,10 +10,15 @@ import type {
   FareFamily,
   FlightBookingLeg,
   FlightOfferSummary,
+  HotelBookResponse,
+  HotelBookingInfo,
+  HotelLeadGuest,
+  BoardBasis,
   PassengerType,
   PriceBreakdown,
 } from '@zproo/types';
 import type { BookingRecord } from '../repositories/booking.repository';
+import { hotelPriceBreakdown, toLocalIso } from '@zproo/catalog';
 import { BUS_AC_GST_PERCENT } from '../services/busPricing';
 import { flightPriceBreakdown } from '../services/flightPricing';
 import { clock } from '../lib/testContext';
@@ -35,6 +40,37 @@ function busInfo(booking: BookingRecord): BusBookingInfo | null {
     boardingPoint: bus.boardingPoint as unknown as BusPoint,
     droppingPoint: bus.droppingPoint as unknown as BusPoint,
     pnr: bus.pnr,
+  };
+}
+
+type HotelSnapshot = HotelBookingInfo['hotel'];
+
+function hotelInfo(booking: BookingRecord): HotelBookingInfo | null {
+  const hotel = booking.hotel;
+  if (!hotel) return null;
+  return {
+    hotel: hotel.hotel as unknown as HotelSnapshot,
+    checkIn: isoDate(hotel.checkIn),
+    checkOut: isoDate(hotel.checkOut),
+    nights: hotel.nights,
+    rooms: booking.hotelRooms.map((r) => ({
+      roomTypeId: r.roomTypeId,
+      roomName: r.roomName,
+      rateId: r.rateId,
+      boardBasis: r.boardBasis as BoardBasis,
+      refundable: r.refundable,
+      freeCancellationUntil: r.freeCancellationUntil
+        ? toLocalIso(r.freeCancellationUntil.getTime(), 'Asia/Kolkata')
+        : null,
+      adults: r.adults,
+      childAges: r.childAges,
+      leadGuest: r.leadGuest as unknown as HotelLeadGuest,
+      price: r.price,
+      nightlyBreakdown: r.nightly as unknown as { date: string; price: number }[],
+    })),
+    specialRequests: hotel.specialRequests,
+    confirmationNo: hotel.confirmationNo,
+    supplierRef: hotel.supplierRef,
   };
 }
 
@@ -130,6 +166,9 @@ function priceLines(booking: BookingRecord): PriceBreakdown['lines'] {
 }
 
 function fareLines(booking: BookingRecord): PriceBreakdown['lines'] {
+  if (booking.hotel)
+    return hotelPriceBreakdown(booking.hotelRooms, booking.hotel.nights, booking.feeAmountPaise)
+      .lines;
   if (booking.serviceType === 'FLIGHT')
     return flightPriceBreakdown(
       booking.flights.map((f) => f.fare as unknown as FareFamily),
@@ -153,7 +192,8 @@ function fareLines(booking: BookingRecord): PriceBreakdown['lines'] {
 export function toBookingDetails(booking: BookingRecord, now: Date = clock.now()): BookingDetails {
   return {
     reference: booking.reference,
-    serviceType: booking.serviceType === 'BUS' ? 'BUS' : 'FLIGHT',
+    serviceType:
+      booking.serviceType === 'BUS' ? 'BUS' : booking.serviceType === 'HOTEL' ? 'HOTEL' : 'FLIGHT',
     status: booking.status,
     paymentStatus: booking.paymentStatus,
     createdAt: booking.createdAt.toISOString(),
@@ -191,6 +231,7 @@ export function toBookingDetails(booking: BookingRecord, now: Date = clock.now()
     })),
     flights: flightLegs(booking),
     bus: busInfo(booking),
+    hotel: hotelInfo(booking),
     demo: Boolean((booking.metadata as { demo?: boolean } | null)?.demo),
   };
 }
@@ -199,7 +240,7 @@ export function toBookingDetails(booking: BookingRecord, now: Date = clock.now()
 export function toBookResult(
   booking: BookingRecord,
   now: Date = clock.now(),
-): BusBookResponse & FlightBookResponse {
+): BusBookResponse & FlightBookResponse & HotelBookResponse {
   return {
     bookingRef: booking.reference,
     status: 'HELD',
@@ -210,6 +251,21 @@ export function toBookResult(
 }
 
 export function toBookingListItem(booking: BookingRecord): BookingListItem {
+  if (booking.hotel) {
+    const rooms = booking.hotelRooms.length;
+    const nights = booking.hotel.nights;
+    return {
+      reference: booking.reference,
+      serviceType: booking.serviceType,
+      status: booking.status,
+      paymentStatus: booking.paymentStatus,
+      title: booking.hotel.hotelName,
+      subtitle: `${rooms} room${rooms === 1 ? '' : 's'} · ${nights} night${nights === 1 ? '' : 's'}`,
+      travelDate: isoDate(booking.travelDate),
+      totalPaise: booking.totalAmountPaise,
+      createdAt: booking.createdAt.toISOString(),
+    };
+  }
   if (booking.bus) {
     const seats = booking.bus.seats;
     return {

@@ -1,11 +1,18 @@
 import { Permission } from '@zproo/types';
 import { BOOKING_REFERENCE_PATTERN } from '@zproo/utils';
-import { bookBusSchema, bookFlightSchema, busTripIdSchema } from '@zproo/validation';
+import {
+  bookBusSchema,
+  bookFlightSchema,
+  bookHotelSchema,
+  busTripIdSchema,
+  hotelIdSchema,
+} from '@zproo/validation';
 import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import type { createBookingsController } from '../controllers/bookings.controller';
 import type { createBusesController } from '../controllers/buses.controller';
 import type { createFlightsController } from '../controllers/flights.controller';
+import type { createHotelsController } from '../controllers/hotels.controller';
 import type { createPaymentsController } from '../controllers/payments.controller';
 import { authorize } from '../middleware/auth';
 import { idempotent } from '../middleware/idempotency';
@@ -122,6 +129,51 @@ export function flightRoutes(
     }),
     c.offer,
   );
+  return router;
+}
+
+export function hotelRoutes(
+  c: ReturnType<typeof createHotelsController>,
+  authenticate: RequestHandler,
+  rbac: RbacService,
+  idempotency: IdempotencyService,
+  limits: CommerceLimits,
+): Router {
+  const router = Router();
+  const hotelParams = z.strictObject({ hotelId: hotelIdSchema });
+  router.get(
+    '/destinations',
+    validate({
+      query: z.strictObject({
+        q: z
+          .string()
+          .trim()
+          .min(1, 'Type a city, area or hotel')
+          .max(60)
+          .regex(/^[A-Za-z0-9 '&-]+$/, 'Use letters and numbers only'),
+      }),
+    }),
+    c.destinations,
+  );
+  router.get('/search', limits.search, c.search);
+  router.post(
+    '/book',
+    authenticate,
+    limits.book,
+    authorize(rbac, Permission.BOOKING_CREATE),
+    idempotent(idempotency),
+    validate({ body: bookHotelSchema }),
+    c.book,
+  );
+  router.post(
+    '/:reference/cancel',
+    authenticate,
+    authorize(rbac, Permission.BOOKING_CANCEL_OWN),
+    validate({ params: referenceParams }),
+    c.cancel,
+  );
+  router.get('/:hotelId', validate({ params: hotelParams }), c.details);
+  router.get('/:hotelId/rooms', validate({ params: hotelParams }), c.rooms);
   return router;
 }
 

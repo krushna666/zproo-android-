@@ -19,15 +19,8 @@ import {
   localDay,
   localTime,
 } from '@/features/flights/format';
-
-const TITLE: Record<string, string> = {
-  MR: 'Mr',
-  MRS: 'Mrs',
-  MS: 'Ms',
-  MSTR: 'Master',
-  MISS: 'Miss',
-  MX: 'Mx',
-};
+import { titleLabel } from '@/features/checkout/titles';
+import { StaySummary } from '@/features/hotels/components/StaySummary';
 
 /** Printable e-ticket (Print → Save as PDF). Used by the static website instead of the PDF API. */
 export default function TicketPage() {
@@ -44,7 +37,9 @@ export default function TicketPage() {
   if (booking.status !== 'CONFIRMED' && booking.status !== 'COMPLETED') {
     return (
       <div className="mx-auto max-w-xl px-4 py-12">
-        <FormAlert>The e-ticket is available once the booking is confirmed.</FormAlert>
+        <FormAlert>
+          Your {booking.hotel ? 'voucher' : 'e-ticket'} is available once the booking is confirmed.
+        </FormAlert>
       </div>
     );
   }
@@ -53,9 +48,11 @@ export default function TicketPage() {
 
 function Ticket({ booking }: { booking: BookingDetails }) {
   const bus = booking.bus;
+  const hotel = booking.hotel;
+  const kind = hotel ? 'Hotel voucher' : 'E-ticket';
   return (
     <div className="min-h-screen bg-background py-6 print:bg-white print:py-0">
-      <Seo title={`E-ticket ${booking.reference}`} noIndex />
+      <Seo title={`${kind} ${booking.reference}`} noIndex />
       <div className="mx-auto mb-4 flex max-w-3xl justify-end px-4 print:hidden">
         <Button onClick={() => window.print()}>
           <Printer aria-hidden /> Print / Save as PDF
@@ -67,7 +64,7 @@ function Ticket({ booking }: { booking: BookingDetails }) {
             aria-hidden
             className="pointer-events-none absolute inset-0 grid -rotate-[30deg] place-items-center text-5xl font-black tracking-widest text-primary/10"
           >
-            DEMO — NOT VALID FOR TRAVEL
+            {hotel ? 'DEMO — NOT A VALID VOUCHER' : 'DEMO — NOT VALID FOR TRAVEL'}
           </p>
         )}
         <header className="flex items-start justify-between border-b-2 border-primary pb-4">
@@ -76,7 +73,7 @@ function Ticket({ booking }: { booking: BookingDetails }) {
           </div>
           <div className="flex items-start gap-4 text-right">
             <div>
-              <p className="text-xl font-extrabold">E-TICKET</p>
+              <p className="text-xl font-extrabold">{kind.toUpperCase()}</p>
               <p className="text-sm text-muted">
                 Booking <span className="font-mono">{booking.reference}</span>
               </p>
@@ -86,7 +83,8 @@ function Ticket({ booking }: { booking: BookingDetails }) {
         </header>
         {booking.demo && (
           <p className="mt-4 rounded-lg bg-warning/10 px-3 py-2 text-xs font-semibold text-foreground">
-            Demo booking — simulated inventory and payment, not valid for travel.
+            Demo booking — simulated inventory and payment,{' '}
+            {hotel ? 'not a valid hotel voucher.' : 'not valid for travel.'}
           </p>
         )}
 
@@ -107,7 +105,16 @@ function Ticket({ booking }: { booking: BookingDetails }) {
         </dl>
 
         <section className="mt-6 space-y-3">
-          {bus ? (
+          {hotel ? (
+            <>
+              <p className="flex justify-between gap-3 text-sm">
+                <span className="text-muted">Hotel confirmation number</span>
+                <span className="font-mono font-bold text-primary">{hotel.confirmationNo}</span>
+              </p>
+              <StaySummary stay={hotel} />
+              <p className="text-xs text-muted">Hotel phone {hotel.hotel.phone}</p>
+            </>
+          ) : bus ? (
             <div className="rounded-xl border border-border p-4">
               <div className="flex justify-between gap-3">
                 <p className="font-bold">
@@ -197,7 +204,7 @@ function Ticket({ booking }: { booking: BookingDetails }) {
           )}
         </section>
 
-        <section className="mt-6">
+        <section className={hotel ? 'hidden' : 'mt-6'}>
           <h2 className="text-sm font-extrabold uppercase text-primary">Travellers</h2>
           <table className="mt-2 w-full text-sm">
             <thead className="text-left text-xs text-muted">
@@ -211,7 +218,7 @@ function Ticket({ booking }: { booking: BookingDetails }) {
               {booking.passengers.map((p) => (
                 <tr key={p.id} className="border-t border-border">
                   <td className="py-1.5">
-                    {bus ? '' : `${TITLE[p.title] ?? p.title} `}
+                    {bus ? '' : `${titleLabel(p.title)} `}
                     {p.firstName} {p.lastName}
                   </td>
                   <td className="py-1.5">
@@ -252,7 +259,22 @@ function Ticket({ booking }: { booking: BookingDetails }) {
         <section className="mt-6 text-xs text-muted">
           <h2 className="text-sm font-extrabold uppercase text-primary">Important information</h2>
           <ul className="mt-2 list-disc space-y-1 pl-5">
-            {bus ? (
+            {hotel ? (
+              <>
+                <li>Please show this voucher and a valid photo ID at check-in.</li>
+                <li>
+                  Check-in from {hotel.hotel.checkInTime}; check-out by {hotel.hotel.checkOutTime}.
+                </li>
+                {hotel.hotel.houseRules
+                  .filter((r) => !/photo ID/.test(r))
+                  .map((r) => (
+                    <li key={r}>{r}</li>
+                  ))}
+                <li>
+                  Cancellations follow the terms shown for each room. Manage it in My bookings.
+                </li>
+              </>
+            ) : bus ? (
               <>
                 <li>Reach your boarding point 15 minutes before the time shown.</li>
                 <li>

@@ -51,13 +51,16 @@ describe('other URLs', () => {
     );
     expect(
       hotelsUrl({
-        city: 'goa',
+        destinationId: 'city_GOI',
         checkIn: '2026-12-01',
         checkOut: '2026-12-03',
-        rooms: 1,
-        adults: 2,
-        children: 0,
+        rooms: [
+          { adults: 2, childAges: [] },
+          { adults: 2, childAges: [7] },
+        ],
       }),
-    ).toBe('/hotels/results?city=goa&checkIn=2026-12-01&checkOut=2026-12-03&rooms=1&adults=2');
+    ).toBe(
+      '/hotels/search?destinationId=city_GOI&checkIn=2026-12-01&checkOut=2026-12-03&rooms=2-0%7C2-1%3A7',
+    );
   });
 });

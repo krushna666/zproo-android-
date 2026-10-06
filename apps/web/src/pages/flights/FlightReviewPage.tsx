@@ -16,14 +16,7 @@ import { useFlightDraft } from '@/features/flights/draft';
 import { inr } from '@/features/flights/format';
 import { useCountdown } from '@/hooks/useCountdown';
 import { userMessage } from '@/lib/apiErrors';
-
-const TITLE: Record<string, string> = {
-  MR: 'Mr',
-  MRS: 'Mrs',
-  MS: 'Ms',
-  MSTR: 'Master',
-  MISS: 'Miss',
-};
+import { titleLabel } from '@/features/checkout/titles';
 
 export default function FlightReviewPage() {
   const [params] = useSearchParams();
@@ -143,7 +136,7 @@ function Review({ booking }: { booking: BookingDetails }) {
             {booking.passengers.map((p) => (
               <li key={p.id} className="flex flex-wrap justify-between gap-3 py-2">
                 <span className="font-semibold">
-                  {TITLE[p.title] ?? p.title} {p.firstName} {p.lastName}
+                  {titleLabel(p.title)} {p.firstName} {p.lastName}
                 </span>
                 <span className="text-muted">
                   {p.type.charAt(0) + p.type.slice(1).toLowerCase()}

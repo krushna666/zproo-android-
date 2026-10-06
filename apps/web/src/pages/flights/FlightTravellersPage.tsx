@@ -26,7 +26,7 @@ import {
   type FlightTravellerInput,
 } from '@zproo/validation';
 import { ArrowRight, PlaneTakeoff } from 'lucide-react';
-import { useEffect, useState, type ComponentProps } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm, useWatch, type FieldErrors } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router';
 import { z } from 'zod';
@@ -34,6 +34,8 @@ import { invalidForm } from '@/features/auth/errors';
 import { useAuthStore } from '@/features/auth/store';
 import { CheckoutShell, NothingSelected } from '@/features/checkout/CheckoutShell';
 import { ContactCard, GenderControl } from '@/features/checkout/ContactCard';
+import { GstCard } from '@/features/checkout/GstCard';
+import { SelectInput } from '@/features/checkout/SelectInput';
 import { PriceChangedDialog } from '@/features/checkout/PriceChangedDialog';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
 import { flightsApi, useFlightOffer } from '@/features/flights/api';
@@ -42,14 +44,8 @@ import { useFlightDraft, type FlightSelection } from '@/features/flights/draft';
 import { localDateOf } from '@/features/flights/format';
 import { userMessage } from '@/lib/apiErrors';
 import { ApiClientError } from '@/services/http';
+import { TITLE_LABEL } from '@/features/checkout/titles';
 
-const TITLE_LABEL: Record<string, string> = {
-  MR: 'Mr',
-  MRS: 'Mrs',
-  MS: 'Ms',
-  MSTR: 'Master',
-  MISS: 'Miss',
-};
 const TYPE_LABEL: Record<PassengerType, string> = {
   ADULT: 'Adult',
   CHILD: 'Child',
@@ -120,15 +116,6 @@ function Travellers({ selection }: { selection: FlightSelection }) {
         />
       )}
     </CheckoutShell>
-  );
-}
-
-function Select(props: ComponentProps<'select'>) {
-  return (
-    <select
-      {...props}
-      className="flex h-11 w-full rounded-xl border border-border bg-card px-3 text-sm focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 aria-invalid:border-danger"
-    />
   );
 }
 
@@ -315,13 +302,13 @@ function TravellerForm({
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-[8rem_1fr_1fr]">
               <FormField label="Title" name={`traveller-${i}-title`} error={e?.title?.message}>
-                <Select data-testid={`${prefix}-title`} {...register(`travellers.${i}.title`)}>
+                <SelectInput data-testid={`${prefix}-title`} {...register(`travellers.${i}.title`)}>
                   {PASSENGER_TITLES[t.type].map((title) => (
                     <option key={title} value={title}>
                       {TITLE_LABEL[title]}
                     </option>
                   ))}
-                </Select>
+                </SelectInput>
               </FormField>
               <FormField
                 label="First & middle name"
@@ -374,7 +361,7 @@ function TravellerForm({
                   name={`traveller-${i}-infantOfIndex`}
                   error={e?.infantOfIndex?.message}
                 >
-                  <Select
+                  <SelectInput
                     data-testid={`${prefix}-infant-of`}
                     {...register(`travellers.${i}.infantOfIndex`, {
                       setValueAs: (v: string) => (v === '' ? undefined : Number(v)),
@@ -386,7 +373,7 @@ function TravellerForm({
                           `Adult ${adults.findIndex((x) => x.i === index) + 1}`}
                       </option>
                     ))}
-                  </Select>
+                  </SelectInput>
                 </FormField>
               )}
             </CardContent>
@@ -400,41 +387,18 @@ function TravellerForm({
         errors={{ email: errors.contact?.email?.message, mobile: errors.contact?.mobile?.message }}
       />
 
-      <Card>
-        <CardContent className="space-y-4 p-4 sm:p-5">
-          <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm font-semibold">
-            <input
-              type="checkbox"
-              checked={withGst}
-              data-testid="checkout-gst-toggle"
-              onChange={(e) => {
-                setWithGst(e.target.checked);
-                if (!e.target.checked) form.setValue('gst', undefined);
-              }}
-              className="size-4 accent-primary"
-            />
-            Add GST details for a business booking (optional)
-          </label>
-          {withGst && (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="GSTIN" name="gstin" error={errors.gst?.gstin?.message}>
-                <Input data-testid="checkout-gstin" autoComplete="off" {...register('gst.gstin')} />
-              </FormField>
-              <FormField
-                label="Company name"
-                name="companyName"
-                error={errors.gst?.companyName?.message}
-              >
-                <Input
-                  data-testid="checkout-gst-company"
-                  autoComplete="organization"
-                  {...register('gst.companyName')}
-                />
-              </FormField>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <GstCard
+        enabled={withGst}
+        onToggle={(on) => {
+          setWithGst(on);
+          if (!on) form.setValue('gst', undefined);
+        }}
+        register={(field) => register(`gst.${field}`)}
+        errors={{
+          gstin: errors.gst?.gstin?.message,
+          companyName: errors.gst?.companyName?.message,
+        }}
+      />
 
       <div className="flex justify-end">
         <Button

@@ -4,7 +4,8 @@ import type {
   CabSearch,
   FlightSearch,
   HolidaySearch,
-  HotelSearch,
+  HotelSearchForm,
+  RoomInput,
   ParcelQuote,
   TrainSearch,
 } from '@zproo/validation';
@@ -44,6 +45,7 @@ export {
   DEFAULT_LEAD_DAYS,
   flightSearchInputFromParams as parseFlightSearch,
 } from '@zproo/validation';
+import { serializeRooms } from '@zproo/validation';
 
 // ───────── Other services ─────────
 
@@ -53,15 +55,19 @@ export const busesUrl = (s: Pick<BusSearch, 'from' | 'to' | 'date'>, extra = '')
 export const trainsUrl = (s: TrainSearch) =>
   `/trains/results?${qs({ from: s.from, to: s.to, date: s.date, class: s.travelClass === 'ALL' ? undefined : s.travelClass })}`;
 
-export const hotelsUrl = (s: HotelSearch) =>
-  `/hotels/results?${qs({
-    city: s.city,
+// /hotels/search?destinationId=city_GOI&checkIn=…&checkOut=…&rooms=2-0|2-1:7
+export const hotelsUrl = (
+  s: Pick<HotelSearchForm, 'destinationId' | 'checkIn' | 'checkOut'> & {
+    rooms: readonly RoomInput[];
+  },
+  extra = '',
+) =>
+  `/hotels/search?${qs({
+    destinationId: s.destinationId,
     checkIn: s.checkIn,
     checkOut: s.checkOut,
-    rooms: s.rooms,
-    adults: s.adults,
-    children: s.children || undefined,
-  })}`;
+    rooms: serializeRooms(s.rooms),
+  })}${extra ? `&${extra}` : ''}`;
 
 export const cabsUrl = (s: CabSearch) =>
   `/cabs?${qs({ pickup: s.pickup, drop: s.drop, when: s.when, date: s.when === 'LATER' ? s.date : undefined, time: s.when === 'LATER' ? s.time : undefined })}`;
@@ -80,5 +86,6 @@ export const flightDealUrl = (from: string, to: string) =>
   `/flights/search?${qs({ from, to, adults: 1, cabin: 'ECONOMY' })}`;
 export const busRouteUrl = (from: string, to: string) => `/buses/search?${qs({ from, to })}`;
 export const trainRouteUrl = (from: string, to: string) => `/trains/results?${qs({ from, to })}`;
+/** A city's hotels with default dates (links in prerendered pages can't carry a date). */
 export const hotelCityUrl = (city: string) =>
-  `/hotels/results?${qs({ city, rooms: 1, adults: 2 })}`;
+  `/hotels/search?${qs({ destinationId: `city_${city}`, rooms: '2-0' })}`;

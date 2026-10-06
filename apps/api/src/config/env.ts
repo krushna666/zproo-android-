@@ -47,6 +47,8 @@ const envSchema = z
     SMS_PROVIDER: z.enum(['console']).default('console'),
     FLIGHT_PROVIDER: z.enum(['mock']).default('mock'),
     BUS_PROVIDER: z.enum(['mock']).default('mock'),
+    /** Hotel inventory: `mock` today; planned vendor: a hotel aggregator / bed-bank API. */
+    HOTEL_PROVIDER: z.enum(['mock']).default('mock'),
     PAYMENT_PROVIDER: z.enum(['mock', 'razorpay']).default('mock'),
     RAZORPAY_KEY_ID: z
       .string()
@@ -103,8 +105,13 @@ const envSchema = z
         message: 'console provider is not allowed in production',
       });
     }
-    // Mock suppliers would sell invented flights and buses; a mock payment provider would confirm unpaid bookings.
-    for (const key of ['FLIGHT_PROVIDER', 'BUS_PROVIDER', 'PAYMENT_PROVIDER'] as const) {
+    // Mock suppliers would sell invented flights, buses and hotels; a mock payment provider would confirm unpaid bookings.
+    for (const key of [
+      'FLIGHT_PROVIDER',
+      'BUS_PROVIDER',
+      'HOTEL_PROVIDER',
+      'PAYMENT_PROVIDER',
+    ] as const) {
       if (env[key] === 'mock') {
         ctx.addIssue({
           code: 'custom',

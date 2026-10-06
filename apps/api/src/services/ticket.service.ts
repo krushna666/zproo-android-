@@ -1,6 +1,12 @@
 import { BRAND } from '@zproo/config';
 import { findMockAirline } from '@zproo/catalog';
-import type { BookingDetails, BusBookingInfo, FlightBookingLeg } from '@zproo/types';
+import {
+  BOARD_BASIS_LABELS,
+  type BookingDetails,
+  type BusBookingInfo,
+  type FlightBookingLeg,
+  type HotelBookingInfo,
+} from '@zproo/types';
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 
@@ -51,11 +57,13 @@ export class TicketService {
   constructor(private readonly logoPath: string | undefined) {}
 
   /**
-   * Flight or bus e-ticket. Demo bookings carry a watermark so they can never pass as a real
+   * Flight or bus e-ticket, or hotel voucher. Demo bookings carry a watermark so they can never pass as a real
    * ticket.
    */
   async ticket(booking: BookingDetails, options: { demo: boolean }): Promise<Buffer> {
     const bus = booking.bus;
+    const hotel = booking.hotel;
+    const kind = hotel ? 'Hotel voucher' : 'E-ticket';
     // A QR of the booking reference, for check-in staff to scan.
     const qr = await QRCode.toBuffer(booking.reference, {
       margin: 1,
@@ -65,7 +73,7 @@ export class TicketService {
     const doc = new PDFDocument({
       size: 'A4',
       margin: 40,
-      info: { Title: `E-ticket ${booking.reference}`, Author: BRAND.name },
+      info: { Title: `${kind} ${booking.reference}`, Author: BRAND.name },
     });
     const chunks: Buffer[] = [];
     doc.on('data', (c: Buffer) => chunks.push(c));
@@ -83,7 +91,10 @@ export class TicketService {
         .fontSize(54)
         .fillColor(RED)
         .opacity(0.08);
-      doc.text('DEMO — NOT VALID FOR TRAVEL', 20, 400, { width: 560, align: 'center' });
+      doc.text(hotel ? 'DEMO — NOT A VALID VOUCHER' : 'DEMO — NOT VALID FOR TRAVEL', 20, 400, {
+        width: 560,
+        align: 'center',
+      });
       doc.restore().opacity(1);
     }
 
@@ -94,7 +105,7 @@ export class TicketService {
       .font('Helvetica-Bold')
       .fontSize(18)
       .fillColor(DARK)
-      .text('E-TICKET', left, 40, { width, align: 'right' });
+      .text(kind.toUpperCase(), left, 40, { width, align: 'right' });
     doc
       .font('Helvetica')
       .fontSize(9)
@@ -115,7 +126,9 @@ export class TicketService {
         .fontSize(9)
         .fillColor(DARK)
         .text(
-          `Demo booking from the development ${bus ? 'bus' : 'flight'} provider — not valid for travel.`,
+          hotel
+            ? 'Demo booking from the development hotel provider — not a valid voucher.'
+            : `Demo booking from the development ${bus ? 'bus' : 'flight'} provider — not valid for travel.`,
           left + 10,
           y + 9,
         );
@@ -149,11 +162,50 @@ export class TicketService {
 
     for (const leg of booking.flights) y = this.flightBlock(doc, leg, y, left, width);
     if (bus) y = this.busBlock(doc, bus, y, left, width);
+    if (hotel) y = this.hotelBlock(doc, hotel, y, left, width);
 
-    // Passengers
-    y = this.heading(doc, 'Travellers', y, left);
+    // Passengers (hotels: the rooms with their lead guests)
+    y = this.heading(doc, hotel ? 'Rooms' : 'Travellers', y, left);
     doc.font('Helvetica-Bold').fontSize(9).fillColor(MUTED);
-    if (bus) {
+    if (hotel) {
+      doc
+        .text('#', left, y)
+        .text('ROOM / LEAD GUEST', left + 24, y)
+        .text('GUESTS', left + 250, y)
+        .text('BOARD · CANCELLATION', left + 330, y);
+      y += 16;
+      hotel.rooms.forEach((r, i) => {
+        const g = r.leadGuest;
+        const children = r.childAges.length;
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(DARK);
+        doc.text(String(i + 1), left, y).text(pdfText(r.roomName), left + 24, y, { width: 220 });
+        doc
+          .font('Helvetica')
+          .text(
+            `${r.adults} adult${r.adults === 1 ? '' : 's'}${children > 0 ? `, ${children} child${children === 1 ? '' : 'ren'} (${r.childAges.join(', ')})` : ''}`,
+            left + 250,
+            y,
+            { width: 76 },
+          )
+          .text(BOARD_BASIS_LABELS[r.boardBasis], left + 330, y, { width: width - 330 });
+        doc
+          .fontSize(9)
+          .fillColor(MUTED)
+          .text(pdfText(`${g.title} ${g.firstName} ${g.lastName}`), left + 24, y + 14, {
+            width: 220,
+          })
+          .text(
+            r.refundable && r.freeCancellationUntil
+              ? `Free cancellation until ${date(r.freeCancellationUntil, 'Asia/Kolkata')}, ${time(r.freeCancellationUntil, 'Asia/Kolkata')}`
+              : 'Non-refundable',
+            left + 330,
+            y + 14,
+            { width: width - 330 },
+          );
+        y += 34;
+      });
+      y += 4;
+    } else if (bus) {
       doc
         .text('#', left, y)
         .text('NAME', left + 24, y)
@@ -226,29 +278,42 @@ export class TicketService {
 
     // Important information
     y = this.heading(doc, 'Important information', y, left);
-    const notes = bus
+    const notes = hotel
       ? [
-          `Reporting time: reach ${bus.boardingPoint.name} by ${time(reportingTime(bus.boardingPoint.time), 'Asia/Kolkata')} — 15 minutes before departure. Buses do not wait for late passengers.`,
-          bus.trip.policies.idProof,
-          `Operator helpline: ${bus.trip.operator.name}, ${bus.trip.operator.phone}.`,
-          `Cancellation: ${bus.trip.cancellationPolicy
-            .map((r) =>
-              r.hoursBefore > 0
-                ? `${r.refundPercent}% refund more than ${r.hoursBefore}h before departure`
-                : 'no refund after that',
-            )
-            .join('; ')}.`,
+          'Please show this voucher and a valid photo ID at check-in.',
+          `Check-in from ${hotel.hotel.checkInTime}; check-out by ${hotel.hotel.checkOutTime}.`,
+          ...hotel.hotel.houseRules.filter((r) => !/photo ID/.test(r)),
+          ...(hotel.specialRequests
+            ? [
+                `Special requests (not guaranteed): ${pdfText(hotel.specialRequests.replace(/\n+/g, ' '))}`,
+              ]
+            : []),
+          `Hotel phone: ${hotel.hotel.phone}.`,
+          'Cancellations follow the terms shown for each room. Manage your booking in My Bookings.',
         ]
-      : [
-          'Carry a valid government photo ID (passport for international travel). Names must match the ID.',
-          'Web check-in opens 48 hours and closes 60 minutes before departure: check in on the airline website or app to save time at the airport.',
-          'Check-in counters close 45 minutes before departure for domestic flights and 60 minutes for international flights.',
-          ...[...new Set(booking.flights.map((f) => f.offer.carrier.code))].map((code) => {
-            const airline = findMockAirline(code);
-            return `${airline?.name ?? code} helpline: ${airline?.phone ?? 'see the airline website'}.`;
-          }),
-          'Cancellations and changes follow the airline fare rules shown at booking. Manage your booking in My Bookings.',
-        ];
+      : bus
+        ? [
+            `Reporting time: reach ${bus.boardingPoint.name} by ${time(reportingTime(bus.boardingPoint.time), 'Asia/Kolkata')} — 15 minutes before departure. Buses do not wait for late passengers.`,
+            bus.trip.policies.idProof,
+            `Operator helpline: ${bus.trip.operator.name}, ${bus.trip.operator.phone}.`,
+            `Cancellation: ${bus.trip.cancellationPolicy
+              .map((r) =>
+                r.hoursBefore > 0
+                  ? `${r.refundPercent}% refund more than ${r.hoursBefore}h before departure`
+                  : 'no refund after that',
+              )
+              .join('; ')}.`,
+          ]
+        : [
+            'Carry a valid government photo ID (passport for international travel). Names must match the ID.',
+            'Web check-in opens 48 hours and closes 60 minutes before departure: check in on the airline website or app to save time at the airport.',
+            'Check-in counters close 45 minutes before departure for domestic flights and 60 minutes for international flights.',
+            ...[...new Set(booking.flights.map((f) => f.offer.carrier.code))].map((code) => {
+              const airline = findMockAirline(code);
+              return `${airline?.name ?? code} helpline: ${airline?.phone ?? 'see the airline website'}.`;
+            }),
+            'Cancellations and changes follow the airline fare rules shown at booking. Manage your booking in My Bookings.',
+          ];
     doc.font('Helvetica').fontSize(9).fillColor(DARK);
     for (const note of notes) {
       doc.text(`•  ${note}`, left, y, { width });
@@ -358,6 +423,70 @@ export class TicketService {
       .fontSize(10)
       .fillColor(DARK)
       .text(`Seat${bus.seats.length === 1 ? '' : 's'}: ${bus.seats.join(', ')}`, x, y + 124);
+    return y + height + 16;
+  }
+
+  /** The property, dates, nights and the hotel's confirmation number. */
+  private hotelBlock(
+    doc: PDFKit.PDFDocument,
+    hotel: HotelBookingInfo,
+    y: number,
+    left: number,
+    width: number,
+  ): number {
+    const height = 128;
+    doc.roundedRect(left, y, width, height, 8).lineWidth(1).strokeColor(BORDER).stroke();
+    const x = left + 16;
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(13)
+      .fillColor(DARK)
+      .text(pdfText(hotel.hotel.name), x, y + 14, { width: width - 200 });
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(10)
+      .fillColor(RED)
+      .text(
+        hotel.confirmationNo ? `Confirmation no. ${hotel.confirmationNo}` : 'Confirmation pending',
+        x,
+        y + 14,
+        { width: width - 32, align: 'right' },
+      );
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .fillColor(MUTED)
+      .text(`${'*'.repeat(hotel.hotel.stars)}  ·  ${pdfText(hotel.hotel.address)}`, x, y + 32, {
+        width: width - 32,
+      })
+      .text(`Phone ${hotel.hotel.phone}`, x, y + 46);
+    const third = (width - 32) / 3;
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .fillColor(MUTED)
+      .text('CHECK-IN', x, y + 70)
+      .text('CHECK-OUT', x + third, y + 70)
+      .text('STAY', x + 2 * third, y + 70);
+    const day = (d: string) => date(`${d}T12:00:00+05:30`, 'Asia/Kolkata');
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(11)
+      .fillColor(DARK)
+      .text(day(hotel.checkIn), x, y + 84)
+      .text(day(hotel.checkOut), x + third, y + 84)
+      .text(
+        `${hotel.nights} night${hotel.nights === 1 ? '' : 's'} · ${hotel.rooms.length} room${hotel.rooms.length === 1 ? '' : 's'}`,
+        x + 2 * third,
+        y + 84,
+      );
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .fillColor(MUTED)
+      .text(`From ${hotel.hotel.checkInTime}`, x, y + 100)
+      .text(`Until ${hotel.hotel.checkOutTime}`, x + third, y + 100);
+    if (hotel.supplierRef) doc.text(`Supplier ref. ${hotel.supplierRef}`, x + 2 * third, y + 100);
     return y + height + 16;
   }
 

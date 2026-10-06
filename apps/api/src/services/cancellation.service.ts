@@ -4,13 +4,14 @@ import type { Logger } from 'pino';
 import { clock } from '../lib/testContext';
 import type { BusProvider } from '../providers/bus';
 import type { FlightProvider } from '../providers/flight';
+import type { HotelProvider } from '../providers/hotel';
 import type { PaymentProvider } from '../providers/payment';
 import { BookingRepository, type BookingRecord } from '../repositories/booking.repository';
 import { InvalidStateError, NotFoundError } from '../utils/errors';
 import type { AuditService, RequestContext } from './audit.service';
 import type { BookingService } from './booking.service';
 import { busRefund } from './busPricing';
-import { FLIGHT_CANCEL_CUTOFF_HOURS, flightRefund } from '@zproo/catalog';
+import { FLIGHT_CANCEL_CUTOFF_HOURS, flightRefund, hotelRefund } from '@zproo/catalog';
 import type { BusCancellationRule, FareFamily } from '@zproo/types';
 
 interface CancellationDeps {
@@ -18,6 +19,7 @@ interface CancellationDeps {
   bookings: BookingService;
   buses: BusProvider;
   flights: FlightProvider;
+  hotels: HotelProvider;
   payments: PaymentProvider;
   audit: AuditService;
   logger: Logger;
@@ -69,6 +71,8 @@ export class CancellationService {
         throw new InvalidStateError('This booking was already changed. Please refresh.');
       if (booking.bus) await this.deps.buses.cancel(booking.id, booking.bus.pnr, tx);
       if (booking.flights.length > 0) await this.deps.flights.cancel(booking.id, tx);
+      if (booking.hotel)
+        await this.deps.hotels.cancel(booking.id, booking.hotel.confirmationNo, tx);
       if (quote.refundAmount <= 0) return 'CANCELLED' as const;
       await repo.move(booking.id, ['CANCELLED'], 'REFUND_PENDING', {
         actor: 'system',
@@ -133,6 +137,30 @@ export class CancellationService {
         policy,
       );
       return { ...base, cancellable: true, refundAmount: refundPaise, refundPercent };
+    }
+    if (booking.hotel) {
+      const result = hotelRefund({
+        rooms: booking.hotelRooms.map((r) => ({
+          refundable: r.refundable,
+          freeCancellationUntil: r.freeCancellationUntil?.toISOString() ?? null,
+          price: r.price,
+          nightlyBreakdown: r.nightly as unknown as { date: string; price: number }[],
+        })),
+        checkIn: booking.hotel.checkIn.toISOString().slice(0, 10),
+        paidPaise: booking.totalAmountPaise,
+        feesPaise: booking.feeAmountPaise,
+        now: this.now(),
+      });
+      if (!result.cancellable) return { ...base, cancellable: false, reason: result.reason };
+      return {
+        ...base,
+        cancellable: true,
+        refundAmount: result.refundPaise,
+        refundPercent:
+          booking.totalAmountPaise > 0
+            ? Math.floor((result.refundPaise * 100) / booking.totalAmountPaise)
+            : 0,
+      };
     }
     const first = booking.flights[0];
     if (first) {

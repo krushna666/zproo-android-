@@ -16,6 +16,8 @@ export const bookingInclude = {
   passengers: { orderBy: { sequence: 'asc' } },
   flights: { orderBy: { sequence: 'asc' }, include: { tickets: true } },
   bus: true,
+  hotel: true,
+  hotelRooms: { orderBy: { sequence: 'asc' } },
   coupon: { select: { code: true } },
 } satisfies Prisma.BookingInclude;
 
@@ -109,6 +111,14 @@ export class BookingRepository {
 
   setBusPnr(bookingId: string, pnr: string) {
     return this.db.busBooking.update({ where: { bookingId }, data: { pnr } });
+  }
+
+  /** The hotel's confirmation number and the supplier's reference. */
+  setHotelConfirmation(bookingId: string, confirmationNo: string, supplierRef: string) {
+    return this.db.hotelBookingDetail.update({
+      where: { bookingId },
+      data: { confirmationNo, supplierRef },
+    });
   }
 
   /** The airline's PNR and one e-ticket per traveller for a direction. */

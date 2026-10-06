@@ -249,6 +249,7 @@ export function flightRoutes(req: StaticRequest): StaticResult | null {
           tickets: [],
         })),
         bus: null,
+        hotel: null,
       },
       holdMinutes,
     );

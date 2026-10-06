@@ -3,6 +3,7 @@ import type { BookingStatus, PaymentOrder, PaymentStatus } from '@zproo/types';
 import type { Logger } from 'pino';
 import { OPEN_HOLD_STATUSES } from '@zproo/utils';
 import type { BusProvider } from '../providers/bus';
+import type { HotelProvider } from '../providers/hotel';
 import type { FlightProvider } from '../providers/flight';
 import { MockPaymentProvider, type PaymentProvider } from '../providers/payment';
 import { BookingRepository } from '../repositories/booking.repository';
@@ -30,6 +31,7 @@ interface PaymentServiceDeps {
   provider: PaymentProvider;
   flights: FlightProvider;
   buses: BusProvider;
+  hotels: HotelProvider;
   bookings: BookingService;
   audit: AuditService;
   logger: Logger;
@@ -388,6 +390,7 @@ export class PaymentService {
       // Paid seats no longer lapse with the hold.
       await new BusRepository(tx).markPaid(payment.bookingId);
       await this.deps.flights.markPaid(payment.bookingId, tx);
+      await this.deps.hotels.markPaid(payment.bookingId, tx);
       // A booking still HELD (paid without an order step, e.g. via webhook) catches up first.
       await new BookingRepository(tx).move(payment.bookingId, ['HELD'], 'PAYMENT_PENDING', {
         actor,
@@ -463,6 +466,7 @@ export class PaymentService {
         passengers: { orderBy: { sequence: 'asc' } },
         flights: { orderBy: { sequence: 'asc' } },
         bus: true,
+        hotel: true,
       },
     });
     if (booking?.status !== 'PAYMENT_PENDING' || booking.paymentStatus !== 'CAPTURED') return false;
@@ -478,6 +482,11 @@ export class PaymentService {
             booking.reference,
           );
           await repo.setBusPnr(booking.id, issued.pnr);
+        }
+        if (booking.hotel && !booking.hotel.confirmationNo) {
+          const issued = await this.deps.hotels.issue(booking.hotel.hotelId, booking.reference);
+          await repo.setHotelConfirmation(booking.id, issued.confirmationNo, issued.supplierRef);
+          booking.hotel.confirmationNo = issued.confirmationNo;
         }
         const pendingLegs = booking.flights.filter((leg) => !leg.pnr);
         if (pendingLegs.length > 0) {

@@ -100,6 +100,7 @@ function busBooking(overrides: Partial<BookingDetails> = {}): BookingDetails {
       droppingPoint: TRIP.droppingPoints[1] as (typeof TRIP.droppingPoints)[number],
       pnr: null,
     },
+    hotel: null,
     ...overrides,
   };
 }

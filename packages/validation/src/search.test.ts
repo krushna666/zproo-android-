@@ -5,7 +5,6 @@ import {
   busSearchSchemaAt,
   cabSearchSchema,
   flightSearchSchemaAt,
-  hotelSearchSchema,
   parcelQuoteSchema,
   todayIso,
   trainSearchSchema,
@@ -135,29 +134,6 @@ describe('ground transport', () => {
         }),
       ),
     ).toContain('Choose when to be picked up');
-  });
-});
-
-describe('hotelSearchSchema', () => {
-  const base = { city: 'goa', checkIn: inDays(10), checkOut: inDays(13), rooms: 1, adults: 2 };
-
-  it('accepts a valid stay', () => {
-    expect(hotelSearchSchema.safeParse(base).success).toBe(true);
-  });
-
-  it('checks nights, adults per room and room capacity', () => {
-    expect(messages(hotelSearchSchema.safeParse({ ...base, checkOut: inDays(10) }))).toContain(
-      'Check-out must be after check-in',
-    );
-    expect(messages(hotelSearchSchema.safeParse({ ...base, checkOut: inDays(45) }))).toContain(
-      'Stays can be up to 30 nights',
-    );
-    expect(messages(hotelSearchSchema.safeParse({ ...base, rooms: 3, adults: 2 }))).toContain(
-      'Each room needs at least one adult',
-    );
-    expect(messages(hotelSearchSchema.safeParse({ ...base, adults: 4, children: 2 }))).toContain(
-      'Up to 4 guests per room — add a room',
-    );
   });
 });
 

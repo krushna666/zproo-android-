@@ -3,6 +3,7 @@ import { BookingStatus, CabinClass, PaymentStatus } from '@zproo/types';
 import { z } from 'zod';
 import { ErrorResponse, registry, successEnvelope } from '../openapi';
 import { BusBookingInfo } from './buses';
+import { HotelBookingInfo } from './hotels';
 
 const bearer = [{ bearerAuth: [] }];
 const json = (schema: z.ZodType) => ({ 'application/json': { schema } });
@@ -155,7 +156,7 @@ const BookingDetails = registry.register(
   'BookingDetails',
   z.object({
     reference: z.string().openapi({ example: 'ZF7K4Q2M9XPA' }),
-    serviceType: z.enum(['FLIGHT', 'BUS']),
+    serviceType: z.enum(['FLIGHT', 'BUS', 'HOTEL']),
     status: z.enum(Object.values(BookingStatus) as [string, ...string[]]),
     paymentStatus: z.enum(Object.values(PaymentStatus) as [string, ...string[]]),
     createdAt: z.iso.datetime(),
@@ -193,6 +194,7 @@ const BookingDetails = registry.register(
       }),
     ),
     bus: BusBookingInfo.nullable(),
+    hotel: HotelBookingInfo.nullable(),
     demo: z.boolean(),
   }),
 );

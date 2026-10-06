@@ -3,6 +3,7 @@ import {
   FLIGHT_CANCEL_CUTOFF_HOURS,
   findMockAirline,
   flightRefund,
+  hotelRefund,
 } from '@zproo/catalog';
 import { DEMO_COUPONS, findCity, type DemoCoupon } from '@zproo/config';
 import type {
@@ -178,6 +179,20 @@ const cityName = (code: string) => findCity(code)?.name ?? code;
 function listItem(b: StoredBooking): BookingListItem {
   const d = b.details;
   const n = d.passengers.length;
+  if (d.hotel) {
+    const rooms = d.hotel.rooms.length;
+    return {
+      reference: d.reference,
+      serviceType: 'HOTEL',
+      status: d.status,
+      paymentStatus: d.paymentStatus,
+      title: d.hotel.hotel.name,
+      subtitle: `${rooms} room${rooms === 1 ? '' : 's'} · ${d.hotel.nights} night${d.hotel.nights === 1 ? '' : 's'}`,
+      travelDate: d.travelDate,
+      totalPaise: d.price.totalPaise,
+      createdAt: d.createdAt,
+    };
+  }
   if (d.bus) {
     return {
       reference: d.reference,
@@ -208,7 +223,7 @@ function listItem(b: StoredBooking): BookingListItem {
   };
 }
 
-/** Airline-style PNR and ticket numbers, or an operator PNR for buses. */
+/** Airline-style PNR and ticket numbers, an operator PNR for buses, or a hotel confirmation. */
 function issueTickets(d: BookingDetails): void {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   d.flights = d.flights.map((leg) => {
@@ -226,13 +241,37 @@ function issueTickets(d: BookingDetails): void {
     };
   });
   if (d.bus) d.bus = { ...d.bus, pnr: `${d.bus.trip.operator.code}${randomDigits(7)}` };
+  if (d.hotel)
+    d.hotel = {
+      ...d.hotel,
+      confirmationNo: `${d.hotel.hotel.hotelId.slice(4, 7)}${randomDigits(7)}`,
+      supplierRef: `MB-${Array.from({ length: 8 }, () => alphabet[randomInt(alphabet.length)]).join('')}`,
+    };
 }
 
-/** Same rules as the API's CancellationService: confirmed bus bookings, refund by policy tier. */
+/** Same rules as the API's CancellationService (bus tiers, airline fees, hotel deadlines). */
 function cancellationQuote(d: BookingDetails): CancellationQuote {
   const base = { bookingRef: d.reference, refundAmount: 0, refundPercent: 0 };
   if (d.status !== 'CONFIRMED')
     return { ...base, cancellable: false, reason: 'Only confirmed bookings can be cancelled.' };
+  if (d.hotel) {
+    const result = hotelRefund({
+      rooms: d.hotel.rooms,
+      checkIn: d.hotel.checkIn,
+      paidPaise: d.price.totalPaise,
+      feesPaise: d.price.feesPaise,
+      now: new Date(),
+    });
+    if (!result.cancellable)
+      return { ...base, cancellable: false, ...(result.reason && { reason: result.reason }) };
+    return {
+      ...base,
+      cancellable: true,
+      refundAmount: result.refundPaise,
+      refundPercent:
+        d.price.totalPaise > 0 ? Math.floor((result.refundPaise * 100) / d.price.totalPaise) : 0,
+    };
+  }
   const firstLeg = d.flights[0];
   if (firstLeg) {
     const departure = firstLeg.offer.slices[0]?.segments[0]?.departure ?? '';
@@ -306,12 +345,12 @@ export function bookingRoutes(req: StaticRequest): StaticResult | null {
     return { data: { bookingRef: d.reference, status: 'EXPIRED' }, message: 'Hold released' };
   }
 
-  const cancel = /^\/(buses|flights)\/([^/]+)\/cancel$/.exec(path);
+  const cancel = /^\/(buses|flights|hotels)\/([^/]+)\/cancel$/.exec(path);
   if (method === 'POST' && cancel) {
     const booking = ownBooking(cancel[2] as string);
     const d = booking.details;
-    if (d.serviceType !== (cancel[1] === 'buses' ? 'BUS' : 'FLIGHT'))
-      throw notFound('Booking not found');
+    const service = { buses: 'BUS', flights: 'FLIGHT', hotels: 'HOTEL' }[cancel[1] as string];
+    if (d.serviceType !== service) throw notFound('Booking not found');
     const q = cancellationQuote(d);
     if (!q.cancellable)
       throw new StaticError(409, 'INVALID_STATE', q.reason ?? 'This booking can’t be cancelled');

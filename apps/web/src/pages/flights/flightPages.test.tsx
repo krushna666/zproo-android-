@@ -83,6 +83,7 @@ function flightBooking(overrides: Partial<BookingDetails> = {}): BookingDetails 
     ],
     flights: [{ sequence: 1, offer: OFFER, fare, pnr: null, tickets: [] }],
     bus: null,
+    hotel: null,
     ...overrides,
   };
 }

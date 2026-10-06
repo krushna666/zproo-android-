@@ -1,4 +1,5 @@
 import type { BusBookingInfo } from './buses';
+import type { HotelBookingInfo } from './hotels';
 import type { BookingStatus, CabinClass, PaymentStatus } from './enums';
 
 /*
@@ -195,7 +196,7 @@ export interface FlightBookingLeg {
 
 export interface BookingDetails {
   reference: string;
-  serviceType: 'FLIGHT' | 'BUS';
+  serviceType: 'FLIGHT' | 'BUS' | 'HOTEL';
   status: BookingStatus;
   paymentStatus: PaymentStatus;
   createdAt: string;
@@ -214,6 +215,8 @@ export interface BookingDetails {
   flights: FlightBookingLeg[];
   /** Bus journey (bus bookings; null otherwise) */
   bus: BusBookingInfo | null;
+  /** Hotel stay (hotel bookings; null otherwise) */
+  hotel: HotelBookingInfo | null;
   /** Booked against a development provider: simulated inventory and payment. */
   demo: boolean;
 }

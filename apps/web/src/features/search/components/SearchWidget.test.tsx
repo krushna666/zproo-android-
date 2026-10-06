@@ -113,15 +113,39 @@ describe('SearchWidget — other services', () => {
     expect(location()).toBe(`/buses/search?from=PNQ&to=BOM&date=${addDays(todayInIst(), 1)}`);
   });
 
-  it('keeps hotel check-out after check-in', async () => {
+  it('keeps hotel check-out after check-in and shows the nights', async () => {
     const user = userEvent.setup();
     const { location } = renderWidget();
     await user.click(screen.getByRole('tab', { name: 'Hotels' }));
     const checkIn = await screen.findByLabelText('Check-in');
     fireEvent.change(checkIn, { target: { value: inDays(20) } });
-    await user.click(screen.getByRole('button', { name: 'Search Hotels' }));
+    expect(screen.getByTestId('hotel-nights')).toHaveTextContent('1 night');
+    await user.click(screen.getByTestId('hotel-search-submit'));
     await screen.findByText('results page');
-    expect(location()).toContain(`checkIn=${inDays(20)}&checkOut=${inDays(21)}`);
+    expect(location()).toBe(
+      `/hotels/search?destinationId=city_GOI&checkIn=${inDays(20)}&checkOut=${inDays(21)}&rooms=2-0`,
+    );
+  });
+
+  it('asks for each child age and adds rooms', async () => {
+    const user = userEvent.setup();
+    const { location } = renderWidget();
+    await user.click(screen.getByRole('tab', { name: 'Hotels' }));
+    await user.click(await screen.findByTestId('hotel-guests-open'));
+    await user.click(screen.getByTestId('hotel-add-room'));
+    await user.click(screen.getByTestId('hotel-room-2-children-inc'));
+    await user.click(screen.getByTestId('hotel-guests-done'));
+    expect(screen.getByTestId('hotel-guests-open')).toHaveTextContent('2 rooms · 5 guests');
+    await user.click(screen.getByTestId('hotel-search-submit'));
+    expect(await screen.findByText('Add the age of each child')).toBeInTheDocument();
+    expect(location()).toBe('/');
+    await user.click(screen.getByTestId('hotel-guests-open'));
+    expect(screen.getByTestId('hotel-room-2-child-1-age')).toHaveAttribute('aria-invalid', 'true');
+    await user.selectOptions(screen.getByTestId('hotel-room-2-child-1-age'), '7');
+    await user.click(screen.getByTestId('hotel-guests-done'));
+    await user.click(screen.getByTestId('hotel-search-submit'));
+    await screen.findByText('results page');
+    expect(decodeURIComponent(location())).toContain('rooms=2-0|2-1:7');
   });
 
   it('validates cab addresses', async () => {

@@ -6,6 +6,7 @@ import { buildOpenApiDocument } from './openapi';
 import './paths/auth';
 import './paths/buses';
 import './paths/flights';
+import './paths/hotels';
 
 /** Serves `/api/docs` (Swagger UI) and `/api/docs/openapi.json`. */
 export function docsRouter(version: string): Router {

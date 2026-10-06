@@ -10,8 +10,9 @@ import { bookingRoutes } from './bookings';
 import { busRoutes } from './buses';
 import { StaticError, type StaticRequest, type StaticResult } from './core';
 import { flightRoutes } from './flights';
+import { hotelRoutes } from './hotels';
 
-const ROUTERS = [authRoutes, flightRoutes, busRoutes, bookingRoutes];
+const ROUTERS = [authRoutes, flightRoutes, busRoutes, hotelRoutes, bookingRoutes];
 
 async function route(req: StaticRequest): Promise<StaticResult> {
   if (req.method === 'GET' && req.path.startsWith('/health')) {

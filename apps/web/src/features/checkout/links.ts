@@ -1,10 +1,17 @@
-import type { BookingDetails } from '@zproo/types';
 import type { CheckoutService } from './steps';
 
-const BASE: Record<CheckoutService, string> = { flight: '/flights', bus: '/buses' };
+const BASE: Record<CheckoutService, string> = {
+  flight: '/flights',
+  bus: '/buses',
+  hotel: '/hotels',
+};
 
-export const serviceOf = (booking: Pick<BookingDetails, 'serviceType'>): CheckoutService =>
-  booking.serviceType === 'BUS' ? 'bus' : 'flight';
+export const serviceOf = (booking: { serviceType: string }): CheckoutService =>
+  booking.serviceType === 'BUS' ? 'bus' : booking.serviceType === 'HOTEL' ? 'hotel' : 'flight';
+
+/** The service a shared checkout page (payment, confirmation) was opened for. */
+export const serviceFromPath = (pathname: string): CheckoutService =>
+  pathname.startsWith('/buses') ? 'bus' : pathname.startsWith('/hotels') ? 'hotel' : 'flight';
 
 export const paymentUrl = (service: CheckoutService, reference: string) =>
   `${BASE[service]}/payment?ref=${encodeURIComponent(reference)}`;

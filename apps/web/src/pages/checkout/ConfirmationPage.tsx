@@ -15,23 +15,19 @@ import { CircleCheck, Download, Home, Mail, Ticket } from 'lucide-react';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router';
 import { errorMessage } from '@/features/auth/errors';
 import { checkoutApi, useBooking } from '@/features/checkout/api';
-import { CHECKOUT_STEP, type CheckoutService } from '@/features/checkout/steps';
-import { paymentUrl, searchHome, serviceOf } from '@/features/checkout/links';
+import { CHECKOUT_STEP, SERVICE_TEXT, type CheckoutService } from '@/features/checkout/steps';
+import { paymentUrl, searchHome, serviceFromPath, serviceOf } from '@/features/checkout/links';
 import { isAwaitingPayment, isConfirmed, isConfirming } from '@/features/checkout/status';
 import { TripSummary } from '@/features/checkout/TripSummary';
 import { CheckoutShell } from '@/features/checkout/CheckoutShell';
 import { DemoBanner } from '@/features/checkout/DemoBanner';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
+import { titleLabel } from '@/features/checkout/titles';
 
-const TITLE = { MR: 'Mr', MRS: 'Mrs', MS: 'Ms', MSTR: 'Master', MISS: 'Miss' } as Record<
-  string,
-  string
->;
-
-/** Confirmation for any booking (flights and buses), at /flights/… and /buses/confirmation. */
+/** Confirmation for any booking, at /flights/…, /buses/… and /hotels/confirmation. */
 export default function ConfirmationPage() {
   const [params] = useSearchParams();
-  const service: CheckoutService = useLocation().pathname.startsWith('/buses') ? 'bus' : 'flight';
+  const service: CheckoutService = serviceFromPath(useLocation().pathname);
   const step = CHECKOUT_STEP[service].done;
   const reference = params.get('ref');
   // Tickets are issued just after payment; poll briefly until the PNR appears.
@@ -61,10 +57,13 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
   const step = CHECKOUT_STEP[service].done;
   const download = useMutation({ mutationFn: () => checkoutApi.downloadTicket(booking.reference) });
   const confirmed = isConfirmed(booking.status);
-  const ticketsIssued = booking.bus
-    ? Boolean(booking.bus.pnr)
-    : booking.flights.every((f) => f.pnr);
+  const ticketsIssued = booking.hotel
+    ? Boolean(booking.hotel.confirmationNo)
+    : booking.bus
+      ? Boolean(booking.bus.pnr)
+      : booking.flights.every((f) => f.pnr);
   const demo = booking.demo;
+  const text = SERVICE_TEXT[service];
 
   if (isConfirming(booking)) {
     return (
@@ -79,9 +78,7 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
             className="size-5 animate-spin rounded-full border-2 border-primary-light border-t-primary"
           />
           <span>
-            <strong className="block">
-              Confirming with the {service === 'bus' ? 'operator' : 'airline'}...
-            </strong>
+            <strong className="block">Confirming with the {text.supplier}...</strong>
             <span className="text-sm text-muted">
               Booking <span className="font-mono">{booking.reference}</span>. This usually takes a
               few seconds; you can leave this page and check My bookings.
@@ -97,7 +94,7 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
       <CheckoutShell step={step} service={service} title="Booking not confirmed">
         <FormAlert>
           {refundDue
-            ? `We couldn't confirm your ticket with the ${service === 'bus' ? 'operator' : 'airline'}. Your refund of ${formatMoney(booking.price.totalPaise)} has been started.`
+            ? `We couldn't confirm your ${service === 'hotel' ? 'rooms' : 'ticket'} with the ${text.supplier}. Your refund of ${formatMoney(booking.price.totalPaise)} has been started.`
             : `Booking ${booking.reference} is ${booking.status.toLowerCase().replace('_', ' ')}. If money was debited, it will be refunded to the original payment method.`}
         </FormAlert>
         <Button asChild>
@@ -126,7 +123,9 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
       <div className="flex items-start gap-4 rounded-2xl border border-success/30 bg-success/10 p-5">
         <CircleCheck aria-hidden className="size-8 shrink-0 text-success" />
         <div className="min-w-0 space-y-1">
-          <p className="text-lg font-bold">Your trip is booked!</p>
+          <p className="text-lg font-bold">
+            {service === 'hotel' ? 'Your stay is booked!' : 'Your trip is booked!'}
+          </p>
           <p className="text-sm">
             Booking reference{' '}
             <strong className="font-mono tracking-wide" data-testid="confirm-booking-ref">
@@ -144,7 +143,7 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
       <div className="flex flex-wrap items-center gap-3">
         <Button asChild size="lg" variant="outline" aria-disabled={!ticketsIssued}>
           <Link to={`/tickets/${encodeURIComponent(booking.reference)}`}>
-            <Ticket aria-hidden /> View e-ticket
+            <Ticket aria-hidden /> View {text.document}
           </Link>
         </Button>
         <Button
@@ -158,22 +157,23 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
         <Button asChild size="lg" variant="ghost">
           <Link to="/bookings">Go to My bookings</Link>
         </Button>
-        {!ticketsIssued && (
-          <span className="text-sm text-muted">
-            Issuing tickets with the {service === 'bus' ? 'operator' : 'airline'}…
-          </span>
-        )}
+        {!ticketsIssued && <span className="text-sm text-muted">{text.confirming}</span>}
       </div>
       {download.error && <FormAlert>{errorMessage(download.error)}</FormAlert>}
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">
-            {booking.bus ? 'Operator PNR' : 'Airline PNR'}
-          </CardTitle>
+          <CardTitle className="text-base">{text.reference}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-3">
-          {booking.bus ? (
+          {booking.hotel ? (
+            <div className="rounded-xl border border-border px-4 py-2">
+              <p className="text-xs text-muted">{booking.hotel.hotel.name}</p>
+              <p className="font-mono text-lg font-bold tracking-widest" data-testid="confirm-pnr">
+                {booking.hotel.confirmationNo ?? '··········'}
+              </p>
+            </div>
+          ) : booking.bus ? (
             <div className="rounded-xl border border-border px-4 py-2">
               <p className="text-xs text-muted">
                 {booking.bus.trip.operator.name} · {booking.bus.trip.serviceNumber}
@@ -205,30 +205,41 @@ function Confirmation({ booking }: { booking: BookingDetails }) {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Travellers</CardTitle>
+          <CardTitle className="text-base">{booking.hotel ? 'Guests' : 'Travellers'}</CardTitle>
         </CardHeader>
         <CardContent>
           <ol className="divide-y divide-border text-sm">
-            {booking.passengers.map((p) => {
-              const tickets = p.seatNumber
-                ? [`Seat ${p.seatNumber}`]
-                : booking.flights
-                    .map((f) => f.tickets.find((t) => t.passengerId === p.id)?.ticketNumber)
-                    .filter(Boolean);
-              return (
-                <li key={p.id} className="flex flex-wrap justify-between gap-2 py-2">
-                  <span className="font-semibold">
-                    {TITLE[p.title] ?? p.title} {p.firstName} {p.lastName}{' '}
-                    <Badge variant="outline" className="ml-1">
-                      {p.age !== null ? `${p.age} yrs` : p.type.toLowerCase()}
-                    </Badge>
-                  </span>
-                  <span className="font-mono text-xs text-muted">
-                    {tickets.join(' · ') || 'Ticket pending'}
-                  </span>
-                </li>
-              );
-            })}
+            {booking.hotel?.rooms.map((r, i) => (
+              <li key={`${r.rateId}-${i}`} className="flex flex-wrap justify-between gap-2 py-2">
+                <span className="font-semibold">
+                  {titleLabel(r.leadGuest.title)} {r.leadGuest.firstName} {r.leadGuest.lastName}
+                </span>
+                <span className="text-xs text-muted">
+                  Room {i + 1} · {r.roomName}
+                </span>
+              </li>
+            ))}
+            {!booking.hotel &&
+              booking.passengers.map((p) => {
+                const tickets = p.seatNumber
+                  ? [`Seat ${p.seatNumber}`]
+                  : booking.flights
+                      .map((f) => f.tickets.find((t) => t.passengerId === p.id)?.ticketNumber)
+                      .filter(Boolean);
+                return (
+                  <li key={p.id} className="flex flex-wrap justify-between gap-2 py-2">
+                    <span className="font-semibold">
+                      {titleLabel(p.title)} {p.firstName} {p.lastName}{' '}
+                      <Badge variant="outline" className="ml-1">
+                        {p.age !== null ? `${p.age} yrs` : p.type.toLowerCase()}
+                      </Badge>
+                    </span>
+                    <span className="font-mono text-xs text-muted">
+                      {tickets.join(' · ') || 'Ticket pending'}
+                    </span>
+                  </li>
+                );
+              })}
           </ol>
         </CardContent>
       </Card>

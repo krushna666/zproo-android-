@@ -14,17 +14,16 @@ import { Building2, CreditCard, Lock, Smartphone, Wallet } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useSearchParams } from 'react-router';
 import { errorMessage } from '@/features/auth/errors';
-import { useBusDraft } from '@/features/buses/draft';
 import { bookingKeys, checkoutApi, useBooking } from '@/features/checkout/api';
 import { CHECKOUT_STEP, type CheckoutService } from '@/features/checkout/steps';
-import { confirmationUrl, searchHome, serviceOf } from '@/features/checkout/links';
+import { confirmationUrl, searchHome, serviceFromPath, serviceOf } from '@/features/checkout/links';
 import { isAwaitingPayment, isConfirmed, isConfirming } from '@/features/checkout/status';
 import { TripSummary } from '@/features/checkout/TripSummary';
 import { CheckoutShell } from '@/features/checkout/CheckoutShell';
 import { HoldExpired, HoldTimer } from '@/features/checkout/HoldTimer';
 import { UpiQr } from '@/features/checkout/UpiQr';
 import { PriceSummary } from '@/features/checkout/PriceSummary';
-import { useFlightDraft } from '@/features/flights/draft';
+import { clearDraft, useDraftReference } from '@/features/checkout/drafts';
 import { inr } from '@/features/flights/format';
 import { useCountdown } from '@/hooks/useCountdown';
 
@@ -42,13 +41,12 @@ const METHODS = [
   { id: 'wallet', label: 'Wallet', hint: 'ZPROO Wallet and others', icon: Wallet },
 ] as const;
 
-/** Payment for any booking (flights and buses), at /flights/payment and /buses/payment. */
+/** Payment for any booking, at /flights/payment, /buses/payment and /hotels/payment. */
 export default function PaymentPage() {
   const [params] = useSearchParams();
-  const service: CheckoutService = useLocation().pathname.startsWith('/buses') ? 'bus' : 'flight';
-  const flightReference = useFlightDraft((s) => s.reference);
-  const busReference = useBusDraft((s) => s.reference);
-  const reference = params.get('ref') ?? (service === 'bus' ? busReference : flightReference);
+  const service: CheckoutService = serviceFromPath(useLocation().pathname);
+  const draftReference = useDraftReference(service);
+  const reference = params.get('ref') ?? draftReference;
   const { data: booking, isPending, error } = useBooking(reference);
   const step = CHECKOUT_STEP[service].payment;
 
@@ -76,8 +74,6 @@ export default function PaymentPage() {
 function Payment({ booking }: { booking: BookingDetails }) {
   const queryClient = useQueryClient();
   const service = serviceOf(booking);
-  const clearFlight = useFlightDraft((s) => s.clear);
-  const clearBus = useBusDraft((s) => s.clear);
   const [method, setMethod] = useState<(typeof METHODS)[number]['id']>('upi');
   const [paid, setPaid] = useState<string | null>(null);
   const paying = useRef(false);
@@ -107,8 +103,7 @@ function Payment({ booking }: { booking: BookingDetails }) {
         createOrder();
         return;
       }
-      if (service === 'bus') clearBus();
-      else clearFlight();
+      clearDraft(service);
       setPaid(booking.reference);
     },
   });

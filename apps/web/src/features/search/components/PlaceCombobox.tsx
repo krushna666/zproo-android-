@@ -17,6 +17,8 @@ interface PlaceComboboxProps {
   className?: string;
   /** data-testid of the text input (e.g. bus-search-from) */
   testId?: string;
+  /** Shown before anything is typed, when the full list is too long to browse */
+  browseOptions?: readonly PlaceOption[];
 }
 
 /**
@@ -33,6 +35,7 @@ export function PlaceCombobox({
   error,
   className,
   testId,
+  browseOptions,
 }: PlaceComboboxProps) {
   const id = useId();
   const listId = `${id}-list`;
@@ -43,10 +46,11 @@ export function PlaceCombobox({
   const input = useRef<HTMLInputElement>(null);
   // Browsing (empty query) shows every place under its heading; typing narrows to the best matches.
   const results = useMemo(
-    () => (query.trim() ? filterPlaces(options, query).slice(0, 10) : [...options]),
-    [options, query],
+    () =>
+      query.trim() ? filterPlaces(options, query).slice(0, 10) : [...(browseOptions ?? options)],
+    [options, browseOptions, query],
   );
-  const grouped = !query.trim() && options.some((o) => o.group);
+  const grouped = !query.trim() && results.some((o) => o.group);
 
   const choose = (option: PlaceOption) => {
     onChange(option.value);
@@ -150,6 +154,14 @@ export function PlaceCombobox({
                 i === active && 'bg-primary-light',
               )}
             >
+              {option.icon && (
+                <span
+                  aria-hidden
+                  className="grid size-9 shrink-0 place-items-center rounded-lg bg-background text-foreground/70 [&_svg]:size-4"
+                >
+                  {option.icon}
+                </span>
+              )}
               {option.badge && (
                 <span className="w-12 shrink-0 rounded-lg bg-background py-1 text-center text-xs font-bold text-foreground/80">
                   {option.badge}

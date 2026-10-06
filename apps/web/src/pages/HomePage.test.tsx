@@ -1,6 +1,8 @@
 import { screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { renderRoute } from '@/test/render';
+import { DEMO_COUPONS } from '@zproo/config';
+import { OFFERS } from '@/features/home/content';
 
 describe('home page', () => {
   it('renders every section in order', async () => {
@@ -36,10 +38,13 @@ describe('home page', () => {
     expect(screen.getByText(/Indicative lowest one-way fares/)).toBeInTheDocument();
   });
 
-  it('shows the coupon codes', async () => {
+  it('shows coupon codes that checkout accepts', async () => {
     renderRoute('/');
-    for (const code of ['WELCOME500', 'FIRSTFLIGHT', 'BUS100', 'HOTEL10']) {
-      expect(await screen.findByRole('button', { name: `Copy code ${code}` })).toBeInTheDocument();
+    for (const offer of OFFERS) {
+      expect(DEMO_COUPONS.map((c) => c.code)).toContain(offer.code);
+      expect(
+        await screen.findByRole('button', { name: `Copy code ${offer.code}` }),
+      ).toBeInTheDocument();
     }
   });
 });

@@ -11,6 +11,9 @@ import type {
   FlightBookResponse,
   FlightOfferDetails,
   FlightSearchResponse,
+  HotelBookResponse,
+  HotelRoomsResponse,
+  HotelSearchResponse,
   OtpSent,
   PaymentOrder,
   VerifyOtpResult,
@@ -270,6 +273,76 @@ describe('static engine: buses', () => {
       code: 'PRICE_CHANGED',
       details: { oldTotal: 100, newTotal: seat.price },
     });
+  });
+});
+
+describe('static engine: hotels', () => {
+  const stay = { checkIn: day(20), checkOut: day(23) };
+
+  it('searches with server-side filters and pages like the API', async () => {
+    const page1 = await data<HotelSearchResponse>(
+      api.get('/hotels/search', { params: { destinationId: 'city_GOI', ...stay, rooms: '2-0' } }),
+    );
+    expect(page1.nights).toBe(3);
+    expect(page1.hotels).toHaveLength(20);
+    const filtered = await data<HotelSearchResponse>(
+      api.get('/hotels/search', {
+        params: { destinationId: 'city_GOI', ...stay, rooms: '2-0', stars: '4', sort: 'price_asc' },
+      }),
+    );
+    expect(filtered.hotels.every((h) => h.stars === 4)).toBe(true);
+    const bad = await fail(
+      api.get('/hotels/search', { params: { destinationId: 'city_GOI', ...stay, rooms: '2-1' } }),
+    );
+    expect(bad.status).toBe(400);
+  });
+
+  it('holds the last room once, confirms with a number and refunds ₹0 for non-refundable', async () => {
+    await signUp();
+    const rooms = await data<HotelRoomsResponse>(
+      api.get('/hotels/htl_GOI007/rooms', { params: { ...stay, rooms: '2-0' } }),
+    );
+    const type = rooms.roomTypes.find(
+      (t) => t.rates.some((r) => !r.refundable) && t.maxAdults >= 2,
+    );
+    if (!type) throw new Error('no non-refundable rate');
+    const rate = type.rates.find((r) => !r.refundable) as (typeof type.rates)[number];
+    const body = {
+      hotelId: 'htl_GOI007',
+      ...stay,
+      rooms: [
+        {
+          roomTypeId: type.roomTypeId,
+          rateId: rate.rateId,
+          adults: 2,
+          childAges: [],
+          leadGuest: { title: 'MR', firstName: 'Amit', lastName: 'Sharma' },
+        },
+      ],
+      contact: { email: 'amit@example.com', mobile: '9876543210' },
+      specialRequests: '<b>Late</b> check-in',
+      expectedTotal: rate.totalPrice + rate.taxes,
+    };
+    const held = await data<HotelBookResponse>(
+      api.post('/hotels/book', body, { headers: { 'Idempotency-Key': 'hotel-key-1' } }),
+    );
+    expect(held.priceBreakdown.totalPaise).toBe(body.expectedTotal);
+    const after = await data<HotelRoomsResponse>(
+      api.get('/hotels/htl_GOI007/rooms', { params: { ...stay, rooms: '2-0' } }),
+    );
+    expect(after.roomTypes.find((t) => t.roomTypeId === type.roomTypeId)?.rates[0]?.roomsLeft).toBe(
+      rate.roomsLeft - 1,
+    );
+    expect((await pay(held.bookingRef)).status).toBe('CONFIRMED');
+    const details = await data<BookingDetails>(api.get(`/bookings/${held.bookingRef}`));
+    expect(details.hotel?.confirmationNo).toMatch(/^GOI\d{7}$/);
+    expect(details.hotel?.specialRequests).toBe('Late check-in');
+    const quote = await data<CancellationQuote>(
+      api.get(`/bookings/${held.bookingRef}/cancellation`),
+    );
+    expect(quote).toMatchObject({ cancellable: true, refundAmount: 0 });
+    const cancelled = await data<{ status: string }>(api.post(`/hotels/${held.bookingRef}/cancel`));
+    expect(cancelled.status).toBe('CANCELLED');
   });
 });
 

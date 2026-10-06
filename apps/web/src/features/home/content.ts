@@ -84,6 +84,7 @@ export const TRAIN_ROUTES = [
 
 export const HOTEL_DESTINATIONS: readonly {
   city: string;
+  /** City code (destination `city_<code>`) */
   code: string;
   image: ImageId;
   fromPaise: number;
@@ -91,45 +92,45 @@ export const HOTEL_DESTINATIONS: readonly {
 }[] = [
   {
     city: 'Goa',
-    code: 'goa',
+    code: 'GOI',
     image: 'hotels/goa',
-    fromPaise: 249900,
+    fromPaise: 179900,
     tagline: 'Beach resorts & villas',
   },
   {
-    city: 'Udaipur',
-    code: 'udaipur',
-    image: 'hotels/udaipur',
-    fromPaise: 319900,
-    tagline: 'Lake-view heritage stays',
-  },
-  {
-    city: 'Manali',
-    code: 'manali',
-    image: 'hotels/manali',
-    fromPaise: 179900,
-    tagline: 'Mountain lodges & cottages',
-  },
-  {
     city: 'Mumbai',
-    code: 'mumbai',
+    code: 'BOM',
     image: 'hotels/mumbai',
-    fromPaise: 299900,
+    fromPaise: 179900,
     tagline: 'Sea-facing city hotels',
   },
   {
-    city: 'Kerala',
-    code: 'alleppey',
-    image: 'hotels/kerala',
-    fromPaise: 229900,
-    tagline: 'Backwater resorts',
+    city: 'Jaipur',
+    code: 'JAI',
+    image: 'destinations/rajasthan',
+    fromPaise: 159900,
+    tagline: 'Heritage havelis & palaces',
   },
   {
-    city: 'Dubai',
-    code: 'dubai',
-    image: 'hotels/dubai',
-    fromPaise: 849900,
-    tagline: 'Skyline luxury',
+    city: 'New Delhi',
+    code: 'DEL',
+    image: 'destinations/delhi',
+    fromPaise: 149900,
+    tagline: 'Business & boutique stays',
+  },
+  {
+    city: 'Bengaluru',
+    code: 'BLR',
+    image: 'destinations/bangalore',
+    fromPaise: 149900,
+    tagline: 'Tech-park & garden hotels',
+  },
+  {
+    city: 'Pune',
+    code: 'PNQ',
+    image: 'destinations/pune',
+    fromPaise: 119900,
+    tagline: 'Weekend & business stays',
   },
 ];
 
@@ -147,29 +148,30 @@ export const DESTINATIONS: readonly { name: string; image: ImageId; tagline: str
   { name: 'Hyderabad', image: 'destinations/hyderabad', tagline: 'Biryani & heritage' },
 ];
 
+/** Codes from the live coupon list (DEMO_COUPONS); a test keeps them in step. */
 export const OFFERS = [
   {
-    code: 'WELCOME500',
-    title: '₹500 off your first booking',
-    detail: 'On any service, minimum spend ₹2,000.',
+    code: 'ZPROOFIRST',
+    title: '₹150 off your first booking',
+    detail: 'Any service, minimum booking ₹500. Once per customer.',
     service: 'All services',
   },
   {
-    code: 'FIRSTFLIGHT',
-    title: 'Flat ₹750 off your first flight',
-    detail: 'Domestic flights, minimum fare ₹4,000.',
+    code: 'FLY500',
+    title: '₹500 off flights',
+    detail: 'Fares above ₹4,000, up to three times.',
     service: 'Flights',
   },
   {
-    code: 'BUS100',
-    title: '₹100 off bus tickets',
-    detail: 'Minimum booking ₹500, twice per user.',
+    code: 'BUS10',
+    title: '10% off bus tickets',
+    detail: 'Up to ₹200 off, minimum booking ₹400.',
     service: 'Buses',
   },
   {
-    code: 'HOTEL10',
-    title: '10% off hotels',
-    detail: 'Up to ₹1,500 off, stays of 2+ nights.',
+    code: 'STAY15',
+    title: '15% off hotel stays',
+    detail: 'Up to ₹1,500 off, minimum booking ₹2,000.',
     service: 'Hotels',
   },
 ] as const;

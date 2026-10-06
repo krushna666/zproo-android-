@@ -208,6 +208,7 @@ export function busRoutes(req: StaticRequest): StaticResult | null {
         droppingPoint: dropping as NonNullable<typeof dropping>,
         pnr: null,
       },
+      hotel: null,
     });
     db().bookings.push({
       userId: user.id,

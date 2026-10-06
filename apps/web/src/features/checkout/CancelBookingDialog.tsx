@@ -15,9 +15,11 @@ import { useState } from 'react';
 import { userMessage } from '@/lib/apiErrors';
 import { apiGet, apiPost } from '@/services/http';
 import { bookingKeys } from './api';
+import { searchHome, serviceOf } from './links';
 
+/** Each service cancels at its own endpoint (/flights, /buses, /hotels). */
 const cancelPath = (serviceType: string, ref: string) =>
-  serviceType === 'FLIGHT' ? `/flights/${ref}/cancel` : `/buses/${ref}/cancel`;
+  `${searchHome(serviceOf({ serviceType }))}/${ref}/cancel`;
 
 /** "Cancel" for a confirmed booking: shows the server's refund estimate, then cancels. */
 export function CancelBooking({ booking }: { booking: BookingListItem }) {

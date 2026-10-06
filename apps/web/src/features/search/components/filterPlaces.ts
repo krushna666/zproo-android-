@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 export interface PlaceOption {
   value: string;
   /** Shown in the field when selected, e.g. "Pune". */
@@ -10,6 +12,8 @@ export interface PlaceOption {
   badge?: string;
   /** Heading the option is listed under, e.g. "Maharashtra". */
   group?: string;
+  /** Icon before the name in the list (e.g. city / area / hotel). */
+  icon?: ReactNode;
 }
 
 /**

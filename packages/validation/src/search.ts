@@ -212,41 +212,6 @@ export type BikeSearch = z.output<typeof bikeSearchSchema>;
 
 // ───────────────────────────── Stays & packages ─────────────────────────────
 
-export const hotelSearchSchema = z
-  .object({
-    city: cityCode,
-    checkIn: travelDate('Check-in'),
-    checkOut: isoDateSchema,
-    rooms: count(1, 8),
-    adults: count(1, 24),
-    children: count(0, 12).default(0),
-  })
-  .superRefine((s, ctx) => {
-    const nights = daysBetween(s.checkIn, s.checkOut);
-    if (nights < 1)
-      ctx.addIssue({
-        code: 'custom',
-        path: ['checkOut'],
-        message: 'Check-out must be after check-in',
-      });
-    if (nights > 30)
-      ctx.addIssue({ code: 'custom', path: ['checkOut'], message: 'Stays can be up to 30 nights' });
-    if (s.adults < s.rooms)
-      ctx.addIssue({
-        code: 'custom',
-        path: ['adults'],
-        message: 'Each room needs at least one adult',
-      });
-    if (s.adults + s.children > s.rooms * 4) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['rooms'],
-        message: 'Up to 4 guests per room — add a room',
-      });
-    }
-  });
-export type HotelSearch = z.output<typeof hotelSearchSchema>;
-
 export const HOLIDAY_CATEGORIES = [
   'DOMESTIC',
   'INTERNATIONAL',

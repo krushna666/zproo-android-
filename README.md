@@ -21,20 +21,31 @@ This release is a working **flights and buses** booking platform, built Maharash
 | Accounts    | Sign up and sign in with mobile OTP, password, or Google; sessions with rotating refresh tokens; profile; role-based admin access                                                         |
 | Flights     | One way, round trip and multi-city search; filters and sorting; fare details; traveller details; review; payment; PNR and PDF e-ticket                                                    |
 | Buses       | City-to-city search; filters and sorting; live seat map (sleeper/seater, both decks, ladies-only seats); boarding and dropping points; travellers; payment; operator PNR and PDF e-ticket |
-| My bookings | Upcoming, past and cancelled flight and bus bookings, each linking to its ticket or payment                                                                                               |
+| Hotels      | Destination (city, area or hotel) search; filters, sort and pages; gallery; rooms per guest; lead guests; review; payment; hotel confirmation number and PDF voucher                      |
+| My bookings | Upcoming, past and cancelled flight, bus and hotel bookings, each linking to its ticket, voucher or payment                                                                               |
 | Payments    | Server-side priced orders, signature verification, idempotent booking, seat holds that expire                                                                                             |
 | Admin       | Admin panel with user management (other sections show "Coming soon")                                                                                                                      |
 | Platform    | REST API with OpenAPI docs, PostgreSQL (Prisma), Redis caching and rate limits, PDF tickets, 330+ automated tests, CI                                                                     |
 
-Other services in the navigation (trains, hotels, cabs, bikes, holidays, parcel, corporate, wallet,
+Other services in the navigation (trains, cabs, bikes, holidays, parcel, corporate, wallet,
 offers) show a **Coming soon** page. The plan for them is in
 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
 
-> **Demo inventory.** Development uses built-in mock providers: fictional airlines and bus
-> operators and a simulated payment gateway (no money moves; tickets are watermarked "not valid
-> for travel"). Production refuses to start with these mocks — connect real flight, bus and
+> **Demo inventory.** Development uses built-in mock providers: fictional airlines, bus
+> operators and hotels and a simulated payment gateway (no money moves; tickets are watermarked "not valid
+> for travel"). Production refuses to start with these mocks — connect real flight, bus, hotel and
 > payment (e.g. Razorpay) providers and an SMS provider before going live. See
 > [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
+
+### Integrations
+
+| Setting            | Today     | Planned vendor                         |
+| ------------------ | --------- | -------------------------------------- |
+| `FLIGHT_PROVIDER`  | `mock`    | Airline aggregator / NDC API           |
+| `BUS_PROVIDER`     | `mock`    | Bus inventory aggregator               |
+| `HOTEL_PROVIDER`   | `mock`    | Hotel aggregator / bed-bank API        |
+| `PAYMENT_PROVIDER` | `mock`    | Razorpay (`razorpay` adapter included) |
+| `SMS_PROVIDER`     | `console` | SMS gateway                            |
 
 ## Tech stack
 

@@ -7,6 +7,7 @@ import { AUTH } from './config/constants';
 import { createBusProvider, type BusProvider } from './providers/bus';
 import { createEmailProvider, type EmailProvider } from './providers/email';
 import { createFlightProvider, type FlightProvider } from './providers/flight';
+import { createHotelProvider, type HotelProvider } from './providers/hotel';
 import { createPaymentProvider, type PaymentProvider } from './providers/payment';
 import { withResilience } from './providers/resilience';
 import { createIdentityVerifiers, type IdentityVerifiers } from './providers/identity';
@@ -26,6 +27,7 @@ import { CouponService } from './services/coupon.service';
 import { CacheService } from './services/cache.service';
 import { hmacSigner } from './lib/crypto';
 import { FlightService } from './services/flight.service';
+import { HotelService } from './services/hotel.service';
 import { PaymentService } from './services/payment.service';
 import { TicketService } from './services/ticket.service';
 import { HealthService, type DependencyCheck } from './services/health.service';
@@ -42,6 +44,7 @@ export interface Providers {
   identityVerifiers: IdentityVerifiers;
   flights: FlightProvider;
   buses: BusProvider;
+  hotels: HotelProvider;
   payments: PaymentProvider;
 }
 
@@ -85,6 +88,11 @@ export function createServices({
     logger,
     reads: ['cities', 'search', 'getTrip', 'getSeatMap', 'reprice'],
   });
+  const hotelProvider = withResilience(providers.hotels ?? createHotelProvider(env, prisma), {
+    name: `hotel:${env.HOTEL_PROVIDER}`,
+    logger,
+    reads: ['destinations', 'search', 'details', 'rooms', 'quote'],
+  });
   const paymentProvider = providers.payments ?? createPaymentProvider(env);
 
   const users = new UserRepository(prisma);
@@ -108,6 +116,7 @@ export function createServices({
     prisma,
     flights: flightProvider,
     buses: busProvider,
+    hotels: hotelProvider,
     audit,
     logger,
     holdMinutes: env.BOOKING_HOLD_MINUTES,
@@ -139,6 +148,7 @@ export function createServices({
       internationalEnabled: env.INTL_FLIGHTS,
     }),
     buses: new BusService(busProvider, new CacheService(redis, logger)),
+    hotels: new HotelService(hotelProvider, new CacheService(redis, logger)),
     bookings,
     idempotency: new IdempotencyService(prisma),
     coupons: new CouponService({ prisma, bookings, audit }),
@@ -147,6 +157,7 @@ export function createServices({
       bookings,
       buses: busProvider,
       flights: flightProvider,
+      hotels: hotelProvider,
       payments: paymentProvider,
       audit,
       logger,
@@ -156,6 +167,7 @@ export function createServices({
       provider: paymentProvider,
       flights: flightProvider,
       buses: busProvider,
+      hotels: hotelProvider,
       bookings,
       audit,
       logger,

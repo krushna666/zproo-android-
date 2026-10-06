@@ -47,6 +47,11 @@ export const routes: RouteObject[] = [
       { path: '/buses/results', lazy: page(() => import('@/pages/buses/BusResultsPage')) },
       { path: '/buses/:id', lazy: page(() => import('@/pages/buses/BusDetailsPage')) },
       { path: '/buses/:id/seats', lazy: page(() => import('@/pages/buses/BusSeatsPage')) },
+      { path: '/hotels', lazy: page(() => import('@/pages/hotels/HotelsPage')) },
+      { path: '/hotels/search', lazy: page(() => import('@/pages/hotels/HotelResultsPage')) },
+      // Old results URL (shared links): same page.
+      { path: '/hotels/results', lazy: page(() => import('@/pages/hotels/HotelResultsPage')) },
+      { path: '/hotels/:hotelId', lazy: page(() => import('@/pages/hotels/HotelDetailsPage')) },
       ...publicPlanned.map((meta) => ({ path: meta.path, handle: meta, lazy: plannedPage })),
       {
         element: <RequireAuth />,
@@ -76,6 +81,13 @@ export const routes: RouteObject[] = [
           { path: '/buses/payment', lazy: page(() => import('@/pages/checkout/PaymentPage')) },
           {
             path: '/buses/confirmation',
+            lazy: page(() => import('@/pages/checkout/ConfirmationPage')),
+          },
+          { path: '/hotels/booking', lazy: page(() => import('@/pages/hotels/HotelGuestsPage')) },
+          { path: '/hotels/review', lazy: page(() => import('@/pages/hotels/HotelReviewPage')) },
+          { path: '/hotels/payment', lazy: page(() => import('@/pages/checkout/PaymentPage')) },
+          {
+            path: '/hotels/confirmation',
             lazy: page(() => import('@/pages/checkout/ConfirmationPage')),
           },
           ...accountPlanned.map((meta) => ({ path: meta.path, handle: meta, lazy: plannedPage })),

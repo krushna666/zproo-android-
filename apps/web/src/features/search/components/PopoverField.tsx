@@ -48,7 +48,11 @@ export function PopoverField({
           </span>
           <ChevronDown aria-hidden className="mt-6 size-4 shrink-0 text-muted" />
         </PopoverTrigger>
-        <PopoverContent aria-label={label}>
+        <PopoverContent
+          aria-label={label}
+          // Never taller than the space below/above the field, so Done stays reachable.
+          className="max-h-[var(--radix-popover-content-available-height)] overflow-y-auto"
+        >
           {children}
           <PopoverClose asChild>
             <Button className="mt-3 w-full" size="sm" data-testid={testIds?.done}>

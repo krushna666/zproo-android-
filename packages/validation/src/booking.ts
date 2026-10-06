@@ -46,7 +46,8 @@ export const FLIGHT_MESSAGES = {
   returnFare: 'Choose a fare for the return flight',
 } as const;
 
-const flightName = (min: number) =>
+/** A name as on a government ID: letters and single spaces, `min`–32 characters. */
+export const idNameSchema = (min: number) =>
   z
     .string()
     .trim()
@@ -73,8 +74,8 @@ export const flightTravellerSchema = z
   .strictObject({
     type: z.enum(['ADULT', 'CHILD', 'INFANT']),
     title: z.enum(['MR', 'MRS', 'MS', 'MSTR', 'MISS'], { message: FLIGHT_MESSAGES.title }),
-    firstName: flightName(1),
-    lastName: flightName(2),
+    firstName: idNameSchema(1),
+    lastName: idNameSchema(2),
     dob: isoDateSchema.optional(),
     gender: z.enum(['MALE', 'FEMALE', 'OTHER']),
     /** Infants: index of the adult (in `travellers`) they sit with */

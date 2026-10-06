@@ -368,14 +368,17 @@ model Booking {
   createdAt           DateTime      @default(now()) @map("created_at")
   updatedAt           DateTime      @updatedAt @map("updated_at")
 
-  user        User               @relation(fields: [userId], references: [id])
-  coupon      Coupon?            @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  user        User                @relation(fields: [userId], references: [id])
+  coupon      Coupon?             @relation(fields: [couponId], references: [id], onDelete: SetNull)
   redemption  CouponRedemption?
   passengers  BookingPassenger[]
   flights     FlightBooking[]
   bus         BusBooking?
   busSeats    BusSeatHold[]
   flightSeats FlightSeatHold[]
+  hotel       HotelBookingDetail?
+  hotelRooms  HotelBookingRoom[]
+  hotelHolds  HotelRoomHold[]
   payments    Payment[]
   events      BookingEvent[]
 
@@ -553,6 +556,78 @@ model BusSeatHold {
 }
 
 // ────────────────────────────── Payments ─────────────────────────────
+
+model HotelBookingDetail {
+  id              String   @id @default(cuid())
+  bookingId       String   @unique @map("booking_id")
+  provider        String
+  hotelId         String   @map("hotel_id")
+  hotelName       String   @map("hotel_name")
+  address         String
+  /// IST calendar dates; nights = checkOut − checkIn in days
+  checkIn         DateTime @map("check_in") @db.Date
+  checkOut        DateTime @map("check_out") @db.Date
+  nights          Int
+  /// Hotel's confirmation number and the supplier's reference, set on confirmation.
+  confirmationNo  String?  @map("confirmation_no")
+  supplierRef     String?  @map("supplier_ref")
+  /// Plain text (markup and control characters removed before storing).
+  specialRequests String?  @map("special_requests")
+  /// Property as sold: name, stars, phone, times, images, house rules.
+  hotel           Json
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([hotelId])
+  @@map("hotel_booking_details")
+}
+
+model HotelBookingRoom {
+  id                    String    @id @default(cuid())
+  bookingId             String    @map("booking_id")
+  sequence              Int
+  roomTypeId            String    @map("room_type_id")
+  roomName              String    @map("room_name")
+  rateId                String    @map("rate_id")
+  boardBasis            String    @map("board_basis")
+  refundable            Boolean
+  freeCancellationUntil DateTime? @map("free_cancellation_until")
+  adults                Int
+  childAges             Int[]     @map("child_ages")
+  /// { title, firstName, lastName }
+  leadGuest             Json      @map("lead_guest")
+  /// Whole stay for this room, before taxes (paise)
+  price                 Int
+  taxes                 Int
+  /// [{ date, price }] per night (paise)
+  nightly               Json
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, sequence])
+  @@map("hotel_booking_rooms")
+}
+
+/// Rooms held or sold through ZPROO GO on generated (mock) properties, per room type and stay.
+model HotelRoomHold {
+  id         String    @id @default(cuid())
+  hotelId    String    @map("hotel_id")
+  roomTypeId String    @map("room_type_id")
+  bookingId  String    @map("booking_id")
+  checkIn    DateTime  @map("check_in") @db.Date
+  checkOut   DateTime  @map("check_out") @db.Date
+  rooms      Int
+  /// Unpaid holds lapse at this time; null once paid.
+  expiresAt  DateTime? @map("expires_at")
+  active     Boolean?  @default(true)
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([hotelId, active])
+  @@index([bookingId])
+  @@map("hotel_room_holds")
+}
 
 model Payment {
   id                String        @id @default(cuid())

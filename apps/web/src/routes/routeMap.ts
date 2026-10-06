@@ -21,26 +21,6 @@ export const PUBLIC_ROUTES: readonly PlannedRoute[] = [
     description: 'Availability and fares by class.',
     phase: 6,
   },
-  // Hotels — Phase 7
-  { path: '/hotels', title: 'Hotels', description: 'Stays in top destinations.', phase: 7 },
-  {
-    path: '/hotels/results',
-    title: 'Hotel results',
-    description: 'Filter by price, rating, amenities and location.',
-    phase: 7,
-  },
-  {
-    path: '/hotels/:id',
-    title: 'Hotel details',
-    description: 'Photos, amenities, policies and reviews.',
-    phase: 7,
-  },
-  {
-    path: '/hotels/:id/rooms',
-    title: 'Choose a room',
-    description: 'Room types, inclusions and cancellation terms.',
-    phase: 7,
-  },
   // Mobility — Phases 8–9
   {
     path: '/cabs',
