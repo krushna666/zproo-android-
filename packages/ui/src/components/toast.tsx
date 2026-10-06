@@ -46,7 +46,9 @@ const subscribe = (listener: () => void) => {
   return () => listeners.delete(listener);
 };
 const snapshot = () => items;
-const serverSnapshot = (): ToastItem[] => [];
+// The same empty list every time: useSyncExternalStore needs a stable server snapshot.
+const NO_TOASTS: ToastItem[] = [];
+const serverSnapshot = () => NO_TOASTS;
 
 function ToastView({ item }: { item: ToastItem }) {
   useEffect(() => {

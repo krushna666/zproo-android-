@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { renderToString } from 'react-dom/server';
 import { createStaticHandler, createStaticRouter, StaticRouterProvider } from 'react-router';
+import { Toaster } from '@zproo/ui';
 import { routes } from '@/routes/routes';
 
 /**
@@ -18,6 +19,8 @@ export async function render(url: string): Promise<string> {
   return renderToString(
     <StrictMode>
       <QueryClientProvider client={new QueryClient()}>
+        {/* Same tree as App.tsx, so hydration (and useId) matches the prerendered HTML. */}
+        <Toaster />
         <StaticRouterProvider router={router} context={context} />
       </QueryClientProvider>
     </StrictMode>,

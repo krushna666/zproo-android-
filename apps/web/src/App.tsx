@@ -8,8 +8,10 @@ export function App({ router }: { router: DataRouter }) {
   const [queryClient] = useState(createQueryClient);
   return (
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      {/* Before the router, as in entry-server.tsx: the prerendered router ends with its data
+          <script>, so anything after it would not match on hydration. */}
       <Toaster />
+      <RouterProvider router={router} />
     </QueryClientProvider>
   );
 }

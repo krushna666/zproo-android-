@@ -28,15 +28,19 @@ OIDC verifier is tested against a local JWKS server with genuinely signed tokens
 
 ## Lighthouse (home page, production build, prerendered)
 
-Measured with Lighthouse 12 against `vite preview` (compressed), three runs each:
+Measured with Lighthouse 12.8 against `vite preview` (compressed), three runs each, after the
+P04 changes (2026-10-06, CI-class container, CPU benchmark ≈ 2,500):
 
 | Profile                            | Performance | Accessibility | Best practices | SEO |
 | ---------------------------------- | ----------- | ------------- | -------------- | --- |
-| Desktop                            | 100         | 100           | 100            | 100 |
-| Mobile (simulated slow 4G, 4× CPU) | 86–90       | 100           | 100            | 100 |
+| Desktop                            | 99          | 100           | 100            | 100 |
+| Mobile (simulated slow 4G, 4× CPU) | 81–83       | 100           | 100            | 100 |
 
-Mobile LCP ≈ 2.8 s and CLS 0. The remaining mobile cost is JavaScript execution (React and
-the router) under CPU throttling.
+Desktop LCP 0.7 s, TBT 0 ms. Mobile FCP 3.2 s, LCP 3.5 s, TBT 120–210 ms, CLS 0: the remaining
+cost is JavaScript execution (React and the router) under CPU throttling. Earlier phases measured
+86–90 on mobile on a different machine; simulated scores scale with the host CPU, so compare runs
+on the same host. `src/hydration.test.tsx` fails the build if a prerendered page stops hydrating
+cleanly (a mismatch makes React re-render the page and logs an error).
 
 ## CI
 
